@@ -1,0 +1,71 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Expense {
+  id              String   @id @default(cuid())
+  amount          Float
+  category        String
+  description     String?
+  date            DateTime
+  createdAt       DateTime @default(now())
+  lineUserId      String?
+  // Bank/wallet-issued transaction reference number read off a slip, if
+  // visible. Globally unique in the real world, so it doubles as a
+  // duplicate-slip guard — resubmitting the same slip hits this constraint
+  // instead of creating a second row.
+  referenceNumber String?  @unique
+  slipImageUrl    String?
+
+  @@index([date])
+  @@index([category])
+  // get_transaction_summary always filters by lineUserId, often together
+  // with a date range — a composite index serves that directly instead of
+  // Postgres bitmap-AND-ing two single-column indexes. Still usable for
+  // lineUserId-only lookups since it's the leading column, so the old
+  // standalone index([lineUserId]) is redundant with this.
+  @@index([lineUserId, date])
+}
+
+// Records LINE webhook events that have already been processed, so a
+// retried delivery (LINE re-sends on timeout / non-2xx) is a no-op instead
+// of re-running the finance agent and creating a duplicate expense.
+model ProcessedLineEvent {
+  id        String   @id @default(cuid())
+  eventId   String   @unique
+  createdAt DateTime @default(now())
+}
+
+// A transaction whose amount/date the agent already read off a slip but
+// couldn't find a stated purpose for. Holds it per LINE user (stateless
+// webhook calls have no other way to remember it) until the user's next
+// text reply supplies the purpose, or it expires unanswered.
+model PendingTransaction {
+  id              String   @id @default(cuid())
+  lineUserId      String   @unique
+  amount          Float
+  date            DateTime
+  slipImageUrl    String?
+  referenceNumber String?
+  createdAt       DateTime @default(now())
+}
+
+// One row per LINE user who has ever messaged the bot, keyed by their LINE
+// userId. displayName is fetched from LINE's profile API the first time we
+// see a user (best-effort, may be null if that call fails); nickname is set
+// by the user themselves via the finance agent's set_nickname tool. Lets the
+// web dashboard show a name instead of a raw LINE userId. Deliberately not a
+// Prisma relation to Expense.lineUserId — that field predates this table and
+// can reference ids with no row here yet (or ever, for pre-existing data).
+model LineUser {
+  id          String   @id
+  displayName String?
+  nickname    String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
