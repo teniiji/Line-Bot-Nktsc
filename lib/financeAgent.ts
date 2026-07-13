@@ -158,6 +158,7 @@ type PendingInfo = {
   amount: number | null;
   description: string | null;
   date: Date | null;
+  hasSlip: boolean;
   slipImageUrl: string | null;
   referenceNumber: string | null;
   loanType: string | null;
@@ -170,12 +171,19 @@ function computeNextRequirement(
   pending: PendingInfo
 ): Requirement {
   if (!lineUser?.fullName || !lineUser?.memberNumber) return "member_info";
-  if (!pending.slipImageUrl) return "slip";
+  if (!pending.hasSlip) return "slip";
   if (pending.category === "ชำระหนี้" && !pending.loanType) return "loan_type";
   return null;
 }
 
-type ToolContext = { lineUserId: string; slipImageUrl: string | null };
+// slipImageUrl is the best-effort Vercel Blob backup (null if
+// BLOB_READ_WRITE_TOKEN isn't set or the upload failed) — never treat it as
+// evidence of whether a slip was shown; use hasSlipImage for that.
+type ToolContext = {
+  lineUserId: string;
+  slipImageUrl: string | null;
+  hasSlipImage: boolean;
+};
 
 function buildSystemPrompt(
   lineUser: LineUserInfo | null,
@@ -391,6 +399,7 @@ async function reportTransaction(
       amount: parsedAmount,
       description: parsedDescription,
       date: parsedDate,
+      hasSlip: ctx.hasSlipImage,
       slipImageUrl,
       referenceNumber: refNumber,
     },
@@ -402,6 +411,9 @@ async function reportTransaction(
       ...(parsedAmount !== null ? { amount: parsedAmount } : {}),
       ...(parsedDescription !== null ? { description: parsedDescription } : {}),
       date: parsedDate,
+      // Only ever set to true, never back to false, once a slip has been
+      // seen for this pending transaction.
+      ...(ctx.hasSlipImage ? { hasSlip: true } : {}),
       ...(slipImageUrl ? { slipImageUrl } : {}),
       ...(refNumber ? { referenceNumber: refNumber } : {}),
       createdAt: new Date(),
@@ -682,6 +694,7 @@ export async function runFinanceAgent(
     const ctx: ToolContext = {
       lineUserId,
       slipImageUrl: await resolveSlipImageUrl(),
+      hasSlipImage: hasImageContent(userContent),
     };
     const toolResults: Anthropic.ToolResultBlockParam[] = [];
     for (const block of toolUseBlocks) {

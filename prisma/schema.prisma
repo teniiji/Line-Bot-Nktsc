@@ -61,6 +61,11 @@ model PendingTransaction {
   amount          Float?
   description     String?
   date            DateTime?
+  // Whether a slip image has been seen for this transaction — tracked
+  // separately from slipImageUrl because the Blob upload it depends on is
+  // best-effort (skipped entirely if BLOB_READ_WRITE_TOKEN isn't set) and
+  // must never gate whether the flow can proceed.
+  hasSlip         Boolean   @default(false)
   slipImageUrl    String?
   referenceNumber String?
   loanType        String?
