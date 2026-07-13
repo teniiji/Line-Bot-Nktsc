@@ -21,6 +21,13 @@ model Expense {
   // instead of creating a second row.
   referenceNumber String?  @unique
   slipImageUrl    String?
+  // Snapshot of the member's identity and (for ชำระหนี้) the loan type at
+  // the moment this transaction was logged — copied from LineUser rather
+  // than joined live, so the record stays accurate even if the member's
+  // saved name changes later.
+  memberFullName  String?
+  memberNumber    String?
+  loanType        String?
 
   @@index([date])
   @@index([category])
@@ -41,31 +48,42 @@ model ProcessedLineEvent {
   createdAt DateTime @default(now())
 }
 
-// A transaction whose amount/date the agent already read off a slip but
-// couldn't find a stated purpose for. Holds it per LINE user (stateless
-// webhook calls have no other way to remember it) until the user's next
-// text reply supplies the purpose, or it expires unanswered.
+// An in-progress cooperative transaction the agent is still collecting
+// required info for (member identity, transfer slip, and — for ชำระหนี้ —
+// loan type) across multiple separate, stateless webhook calls. Holds
+// whatever has been supplied so far per LINE user until every requirement
+// is met (at which point it's converted into an Expense and deleted), or it
+// expires unanswered.
 model PendingTransaction {
-  id              String   @id @default(cuid())
-  lineUserId      String   @unique
-  amount          Float
-  date            DateTime
+  id              String    @id @default(cuid())
+  lineUserId      String    @unique
+  category        String?
+  amount          Float?
+  description     String?
+  date            DateTime?
   slipImageUrl    String?
   referenceNumber String?
-  createdAt       DateTime @default(now())
+  loanType        String?
+  createdAt       DateTime  @default(now())
 }
 
 // One row per LINE user who has ever messaged the bot, keyed by their LINE
 // userId. displayName is fetched from LINE's profile API the first time we
 // see a user (best-effort, may be null if that call fails); nickname is set
-// by the user themselves via the finance agent's set_nickname tool. Lets the
-// web dashboard show a name instead of a raw LINE userId. Deliberately not a
-// Prisma relation to Expense.lineUserId — that field predates this table and
-// can reference ids with no row here yet (or ever, for pre-existing data).
+// by the user themselves via the finance agent's set_nickname tool.
+// fullName/memberNumber are collected once via the finance agent's
+// submit_member_info tool the first time the user reports a cooperative
+// transaction, then reused for every later transaction without asking
+// again. Lets the web dashboard show a name instead of a raw LINE userId.
+// Deliberately not a Prisma relation to Expense.lineUserId — that field
+// predates this table and can reference ids with no row here yet (or ever,
+// for pre-existing data).
 model LineUser {
-  id          String   @id
-  displayName String?
-  nickname    String?
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  id           String   @id
+  displayName  String?
+  nickname     String?
+  fullName     String?
+  memberNumber String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
 }
