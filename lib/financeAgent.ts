@@ -25,14 +25,15 @@ const tools: Anthropic.Tool[] = [
   {
     name: "report_transaction",
     description:
-      "Call this whenever the user describes or shows (via a slip image) a completed cooperative transaction: a share purchase (ซื้อหุ้น), a loan repayment (ชำระหนี้), a savings deposit (ฝากเงิน), or one of the other cooperative payment categories. Call it every time, even if you don't yet have every detail — the system tracks what's still missing (member identity, transfer slip, loan type) and tells you exactly what to ask for next. Never log a transaction any other way.",
+      "Call this whenever the user describes or shows (via a slip image) a completed cooperative transaction: a share purchase (ซื้อหุ้น), a loan repayment (ชำระหนี้), a savings deposit (ฝากเงิน), or one of the other cooperative payment categories. Call it every time, even if you don't yet have every detail — the system tracks what's still missing (member identity, transfer slip, category, loan type) and tells you exactly what to ask for next. Also call this (with just the category filled in) when the user answers a question about which category a pending transaction is for. Never log a transaction any other way.",
     input_schema: {
       type: "object",
       properties: {
         category: {
           type: "string",
           enum: [...CATEGORIES],
-          description: "Best-fitting category for this transaction.",
+          description:
+            "Best-fitting category for this transaction, if it can be determined from the user's text or something actually written on the slip (a memo, bill name, or similar). Omit entirely if a slip shows no purpose at all and nothing else indicates the category — never guess one. The system will then ask the user directly.",
         },
         amount: {
           type: "number",
@@ -55,7 +56,6 @@ const tools: Anthropic.Tool[] = [
             "The bank/wallet transaction reference number (รหัสอ้างอิง) shown on a slip, if visible. Copy it exactly as printed, character for character. Omit if not shown or not applicable (e.g. a plain text message with no slip).",
         },
       },
-      required: ["category"],
     },
   },
   {
@@ -164,7 +164,7 @@ type PendingInfo = {
   loanType: string | null;
 };
 
-type Requirement = "member_info" | "slip" | "loan_type" | null;
+type Requirement = "member_info" | "slip" | "category" | "loan_type" | null;
 
 function computeNextRequirement(
   lineUser: LineUserInfo | null,
@@ -172,6 +172,7 @@ function computeNextRequirement(
 ): Requirement {
   if (!lineUser?.fullName || !lineUser?.memberNumber) return "member_info";
   if (!pending.hasSlip) return "slip";
+  if (!pending.category) return "category";
   if (pending.category === "ชำระหนี้" && !pending.loanType) return "loan_type";
   return null;
 }
@@ -199,6 +200,10 @@ function buildSystemPrompt(
       flowNote = `\n\nหมายเหตุระบบ (สำคัญ): มีธุรกรรมค้างอยู่ (${pending.category ?? "ยังไม่ทราบหมวดหมู่"}, ${amountNote}) กำลังรอข้อมูลสมาชิก (ชื่อ-นามสกุล และเลขสมาชิก) — นี่คือครั้งแรกที่ผู้ใช้คนนี้ทำธุรกรรม ถ้าข้อความปัจจุบันของผู้ใช้เป็นข้อความธรรมดาที่มีชื่อ-นามสกุลและเลขสมาชิกอยู่แล้ว ให้เรียก submit_member_info ทันทีด้วยข้อมูลนั้น ถ้าเป็นข้อความธรรมดาที่ไม่มีชื่อ-นามสกุลและเลขสมาชิก ให้ถามชื่อ-นามสกุลและเลขสมาชิกอีกครั้งสั้นๆ โดยไม่ต้องเรียก tool ใดๆ **ถ้าข้อความนี้เป็นรูปภาพ (สลิปใหม่) ให้ตรวจสอบตามกฎขั้นที่ 1-1.5 ด้านล่างตามปกติแล้วเรียก report_transaction เพื่อบันทึกข้อมูลสลิปไว้ก่อน (หรือ decline_unreadable_image ถ้าสลิปไม่ถูกต้องจริงๆ) — ระบบจะเก็บสลิปนี้ไว้และถามชื่อ-นามสกุล/เลขสมาชิกในข้อความถัดไปเอง ห้ามปฏิเสธสลิปที่ถูกต้องเพียงเพราะยังไม่มีข้อมูลสมาชิก**`;
     } else if (next === "slip") {
       flowNote = `\n\nหมายเหตุระบบ (สำคัญ): มีธุรกรรมค้างอยู่ (${pending.category ?? "ยังไม่ทราบหมวดหมู่"}, ${amountNote}) ข้อมูลสมาชิกครบแล้ว กำลังรอรูปสลิปการโอนเงิน ถ้าข้อความนี้เป็นรูปภาพ ให้ตรวจสอบตามกฎในขั้นที่ 1-4 ด้านล่างแล้วเรียก report_transaction (พร้อมส่ง category เดิมคือ "${pending.category}" ซ้ำไปด้วย) หรือ decline_unreadable_image ถ้าไม่ใช่สลิปที่ถูกต้อง ถ้าข้อความนี้ไม่ใช่รูปภาพ ให้ขอให้ผู้ใช้ส่งรูปสลิปการโอนเงินอีกครั้งสั้นๆ โดยไม่ต้องเรียก tool ใดๆ`;
+    } else if (next === "category") {
+      flowNote = `\n\nหมายเหตุระบบ (สำคัญ): มีธุรกรรมค้างอยู่ (${amountNote}) ได้รับสลิปแล้วแต่สลิปไม่ได้ระบุจุดประสงค์/หมายเหตุไว้เลย ทำให้ยังไม่ทราบว่าเป็นธุรกรรมหมวดไหน ถ้าข้อความปัจจุบันของผู้ใช้ระบุว่าเป็นธุรกรรมประเภทไหน (${CATEGORIES.join(
+        ", "
+      )} หรือความหมายใกล้เคียง) ให้เรียก report_transaction ทันทีโดยใส่ category ตามที่ตอบมา (ไม่ต้องใส่ amount ซ้ำ ระบบมีอยู่แล้ว) ถ้ายังไม่ชัดเจนให้ถามย้ำสั้นๆ พร้อมบอกตัวเลือกทั้งหมด ห้ามเดาหมวดหมู่เองเด็ดขาด`;
     } else if (next === "loan_type") {
       flowNote = `\n\nหมายเหตุระบบ (สำคัญ): มีธุรกรรมชำระหนี้ค้างอยู่ (${amountNote}) ข้อมูลสมาชิกและสลิปครบแล้ว กำลังรอประเภทเงินกู้ ตัวเลือกคือ: ${LOAN_TYPES.join(
         ", "
@@ -319,6 +324,11 @@ function requirementMessage(next: Requirement): string {
   if (next === "slip") {
     return "Still missing: a photo of the transfer slip. Ask the user to send it next, in Thai. Do not log yet.";
   }
+  if (next === "category") {
+    return `Still missing: which category this transaction is for — the slip showed no stated purpose. Ask the user directly, in Thai, listing the options: ${CATEGORIES.join(
+      ", "
+    )}. Do not guess. Do not log yet.`;
+  }
   if (next === "loan_type") {
     return `Still missing: loan type for this ชำระหนี้ repayment. Ask the user to specify one of: ${LOAN_TYPES.join(
       ", "
@@ -341,12 +351,18 @@ async function reportTransaction(
 ): Promise<string> {
   const { category, amount, description, date, referenceNumber } = input;
 
+  // category is optional — a slip with no stated purpose legitimately has
+  // none yet, and the system will ask the user for it (computeNextRequirement
+  // returns "category"). Only reject a category that was actually supplied
+  // but isn't one of the fixed options.
   if (
-    typeof category !== "string" ||
-    !CATEGORIES.includes(category as (typeof CATEGORIES)[number])
+    category !== undefined &&
+    (typeof category !== "string" ||
+      !CATEGORIES.includes(category as (typeof CATEGORIES)[number]))
   ) {
     return `Error: category must be one of ${CATEGORIES.join(", ")}.`;
   }
+  const parsedCategory = typeof category === "string" ? category : null;
 
   const parsedAmount =
     typeof amount === "number" && Number.isFinite(amount) && amount > 0 ? amount : null;
@@ -395,7 +411,7 @@ async function reportTransaction(
     where: { lineUserId: ctx.lineUserId },
     create: {
       lineUserId: ctx.lineUserId,
-      category,
+      category: parsedCategory,
       amount: parsedAmount,
       description: parsedDescription,
       date: parsedDate,
@@ -404,10 +420,10 @@ async function reportTransaction(
       referenceNumber: refNumber,
     },
     update: {
-      category,
       // Only overwrite fields we actually have new info for, so a slip
       // arriving after the amount was already known from text (or vice
       // versa) doesn't clobber it with null.
+      ...(parsedCategory !== null ? { category: parsedCategory } : {}),
       ...(parsedAmount !== null ? { amount: parsedAmount } : {}),
       ...(parsedDescription !== null ? { description: parsedDescription } : {}),
       date: parsedDate,
@@ -651,6 +667,8 @@ export async function runFinanceAgent(
     const next = pending ? computeNextRequirement(lineUser, pending) : null;
     if (turn === 0 && next === "member_info" && !hasImageContent(userContent)) {
       toolChoice = { type: "tool", name: "submit_member_info" };
+    } else if (turn === 0 && next === "category" && !hasImageContent(userContent)) {
+      toolChoice = { type: "tool", name: "report_transaction" };
     } else if (turn === 0 && next === "loan_type" && !hasImageContent(userContent)) {
       toolChoice = { type: "tool", name: "submit_loan_type" };
     } else if (turn === 0 && hasImageContent(userContent)) {
