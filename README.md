@@ -44,3 +44,63 @@
 สมาคมฌาปนกิจ (สสค.): 042-413276, 064-8766432
 เว็บไซต์: www.nktscoop.com
 อีเมล: nktsc.org@gmail.com
+
+---
+
+## 🤖 การพัฒนา (Development)
+
+โปรเจกต์นี้เป็น LINE Official Account bot ที่สร้างด้วย Next.js (App Router) + TypeScript รับข้อความ/รูปสลิปจากสมาชิกผ่าน LINE webhook แล้วใช้ Claude (Anthropic) เป็น tool-use agent เพื่อจำแนกประเภทและบันทึกธุรกรรมทางการเงินของสมาชิกลงฐานข้อมูลผ่าน Prisma
+
+### โครงสร้างหลัก
+
+- `app/api/line/webhook/route.ts` — LINE webhook handler (ตรวจ signature, กันข้อความซ้ำ, เรียก finance agent, ตอบกลับผ่าน LINE)
+- `app/api/line-users/route.ts`, `app/api/line-users/[id]/route.ts` — endpoint จัดการรายชื่อ/nickname สมาชิกที่เคยทักบอท
+- `lib/financeAgent.ts` — Claude tool-use agent ที่อ่านข้อความ/สลิป แล้วเลือกหมวดหมู่และบันทึกรายการ
+- `lib/lineClient.ts`, `lib/anthropicClient.ts`, `lib/lineUsers.ts`, `lib/categories.ts`, `lib/prisma.ts` — ไลบรารีสนับสนุน
+- `prisma/schema.prisma` — โมเดล `Expense`, `LineUser`, `ProcessedLineEvent`, `PendingTransaction`
+
+### เตรียมสภาพแวดล้อม
+
+ต้องมี Node.js 18+ และฐานข้อมูล PostgreSQL
+
+```bash
+npm install
+cp .env.example .env   # แล้วกรอกค่าจริงตามหัวข้อถัดไป
+```
+
+ตัวแปรที่ต้องตั้งค่าใน `.env` (ดูรายละเอียดใน `.env.example`):
+
+| ตัวแปร | ใช้ทำอะไร |
+| --- | --- |
+| `DATABASE_URL` | connection string ของ PostgreSQL |
+| `LINE_CHANNEL_SECRET` | จาก LINE Developers Console > channel > Messaging API tab ใช้ตรวจสอบลายเซ็น webhook |
+| `LINE_CHANNEL_ACCESS_TOKEN` | ใช้เรียก LINE Messaging API (ตอบข้อความ, ดึงรูปสลิป, ดึงโปรไฟล์ผู้ใช้) |
+| `ANTHROPIC_API_KEY` | จาก [console.anthropic.com](https://console.anthropic.com) ใช้เรียก Claude เป็น finance agent |
+| `BLOB_READ_WRITE_TOKEN` | (ไม่บังคับ) Vercel Blob storage สำหรับสำรองรูปสลิป — ถ้าไม่ตั้งค่า ระบบจะข้ามการอัปโหลดรูปแบบเงียบๆ โดยไม่กระทบการบันทึกรายการ |
+
+### ตั้งค่าฐานข้อมูล
+
+โปรเจกต์มี migration history อยู่แล้วใน `prisma/migrations/` ให้รันคำสั่งใดคำสั่งหนึ่งตามสถานการณ์:
+
+```bash
+# ฐานข้อมูล production/staging ที่ยังไม่มี schema นี้ (ใช้ migration ที่มีอยู่ตรงๆ)
+npx prisma migrate deploy
+
+# ระหว่างพัฒนาในเครื่อง ต้องการให้ Prisma ตรวจสอบ/สร้าง migration ใหม่ถ้ามีการแก้ schema
+npx prisma migrate dev
+```
+
+### รันในเครื่อง
+
+```bash
+npm run dev
+```
+
+จากนั้นตั้งค่า Webhook URL ใน LINE Developers Console ให้ชี้ไปที่ `https://<your-domain>/api/line/webhook` (ต้องเป็น HTTPS ที่เข้าถึงได้จากอินเทอร์เน็ต เช่น ngrok ตอน dev หรือโดเมนจริงตอน deploy) และเปิด "Use webhook" ไว้
+
+### ตรวจสอบก่อน deploy
+
+```bash
+npx tsc --noEmit
+npm run build
+```
