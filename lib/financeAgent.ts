@@ -248,11 +248,17 @@ type ToolContext = {
   hasSlipImage: boolean;
 };
 
+// Returns the system prompt in two parts: `base` is fully static
+// (identical on every call) so it can be prompt-cached, and `dynamic`
+// holds the day's date plus the per-message "หมายเหตุระบบ" flow note. The
+// caller sends them as two system blocks with a cache breakpoint after
+// base, so the large static instructions + tools aren't re-billed at full
+// price on every message.
 function buildSystemPrompt(
   lineUser: LineUserInfo | null,
   pending: PendingInfo | null,
   pendingService: PendingServiceInfo | null
-): string {
+): { base: string; dynamic: string } {
   const today = new Date().toISOString().slice(0, 10);
 
   let flowNote = "";
@@ -281,7 +287,7 @@ function buildSystemPrompt(
     }
   }
 
-  return `คุณคือผู้ช่วยด้านการเงินส่วนตัวที่ทำงานผ่าน LINE ให้กับสหกรณ์ออมทรัพย์ครูหนองคาย จำกัด วันนี้คือวันที่ ${today}
+  const base = `คุณคือผู้ช่วยด้านการเงินส่วนตัวที่ทำงานผ่าน LINE ให้กับสหกรณ์ออมทรัพย์ครูหนองคาย จำกัด
 
 หมวดหมู่ธุรกรรมที่ใช้ในระบบมีเฉพาะ: ${CATEGORIES.join(", ")}
 
@@ -316,7 +322,10 @@ function buildSystemPrompt(
 
 ขั้นที่ 5 ยอดเงินต้องตรงกัน: ให้ใส่ amount เป็นยอดที่อ่านได้จากสลิปจริงเสมอเมื่อมีรูปภาพ (ไม่ใช่ยอดที่ผู้ใช้เคยพิมพ์บอกไว้ก่อนหน้า) ถ้ายอดในสลิปไม่ตรงกับยอดที่ผู้ใช้เคยแจ้งไว้ทางข้อความ ระบบจะตรวจพบเองและแจ้งกลับมาให้คุณถามผู้ใช้ยืนยันยอดที่ถูกต้องก่อนบันทึก ไม่ต้องพยายามตัดสินใจเองว่ายอดไหนถูก
 
-ตอบสั้น กระชับ เป็นกันเอง และเป็นภาษาไทยเสมอ เว้นแต่ผู้ใช้พิมพ์มาเป็นภาษาอื่น ใช้บุคลิกผู้หญิงสม่ำเสมอทุกคำตอบ (สรรพนามแทนตัวเอง "ดิฉัน" ถ้าต้องใช้ และคำลงท้าย "ค่ะ"/"คะ" เท่านั้น) **ห้ามใช้ "ผม"/"ครับ" เด็ดขาดไม่ว่ากรณีใด**${flowNote}`;
+ตอบสั้น กระชับ เป็นกันเอง และเป็นภาษาไทยเสมอ เว้นแต่ผู้ใช้พิมพ์มาเป็นภาษาอื่น ใช้บุคลิกผู้หญิงสม่ำเสมอทุกคำตอบ (สรรพนามแทนตัวเอง "ดิฉัน" ถ้าต้องใช้ และคำลงท้าย "ค่ะ"/"คะ" เท่านั้น) **ห้ามใช้ "ผม"/"ครับ" เด็ดขาดไม่ว่ากรณีใด**`;
+
+  const dynamic = `วันนี้คือวันที่ ${today}${flowNote}`;
+  return { base, dynamic };
 }
 
 const PENDING_TRANSACTION_EXPIRY_MS = 30 * 60 * 1000;
@@ -980,7 +989,17 @@ export async function runFinanceAgent(
     return resolvedSlipImageUrl;
   }
 
-  const system = buildSystemPrompt(lineUser, pending, pendingService);
+  const { base, dynamic } = buildSystemPrompt(lineUser, pending, pendingService);
+  // A cache breakpoint on the static base block caches everything before it
+  // in the request (all tool definitions + this base system prompt), since
+  // Anthropic's cacheable prefix runs tools → system → messages. The
+  // dynamic block (date + flow note) sits after the breakpoint and is read
+  // fresh each message. Cuts the per-message cost of the large, unchanging
+  // instructions to a fraction after the first call.
+  const system: Anthropic.TextBlockParam[] = [
+    { type: "text", text: base, cache_control: { type: "ephemeral" } },
+    { type: "text", text: dynamic },
+  ];
   const model = hasImageContent(userContent) ? VISION_MODEL : TEXT_MODEL;
   const messages: Anthropic.MessageParam[] = [
     { role: "user", content: userContent },
