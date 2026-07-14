@@ -6,3 +6,8 @@ npm-debug.log*
 .DS_Store
 *.tsbuildinfo
 .vercel
+
+# Never commit real member/organization data spreadsheets — contains PII
+# (names, LINE user IDs) imported via scripts/import-org-data.ts.
+*.xlsx
+*.xls

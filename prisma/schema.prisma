@@ -92,6 +92,9 @@ model PendingServiceRequest {
   lineUserId   String   @unique
   documentType String
   requestType  String?
+  // "สินเชื่อ" | "อื่นๆ" — which forwarding pool this request routes
+  // through. Set together with requestType by submit_service_purpose.
+  department   String?
   createdAt    DateTime @default(now())
 }
 
@@ -114,4 +117,58 @@ model LineUser {
   memberNumber String?
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
+}
+
+// Reference directory of cooperative-affiliated organizations (schools,
+// government units, pension groups by district) — imported from an
+// existing spreadsheet maintained outside this app (scripts/import-org-data.ts).
+// lineUserId here is whoever currently receives that unit's monthly
+// deduction-report ("รายการหัก") notification — NOT automatically the
+// right person for a new loan service request; see LoanDistrictContact
+// for that, which is deliberately kept separate.
+model OrganizationUnit {
+  id            String   @id @default(cuid())
+  name          String   @unique
+  groupName     String?
+  contactMethod String?
+  contactName   String?
+  email         String?
+  lineUserId    String?
+  note          String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+}
+
+// Roster of cooperative members already known from the LINE OA — imported
+// from an existing spreadsheet (scripts/import-org-data.ts), including
+// which organizational unit/district they're affiliated with. Used to look
+// up a member's district when routing a loan service request. A separate,
+// richer source than LineUser, which this bot only populates from what
+// members type in via submit_member_info.
+model MemberRoster {
+  id           String   @id @default(cuid())
+  memberNumber String   @unique
+  memberName   String
+  unitName     String?
+  lineUserId   String?
+  nickname     String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([lineUserId])
+}
+
+// Who to forward a loan (สินเชื่อ/กู้เงิน) service request to for a given
+// district, extracted from MemberRoster.unitName (e.g. "อ.เมือง").
+// Deliberately separate from OrganizationUnit.lineUserId and starts empty
+// — populated only once a district's actual loan contact is confirmed. A
+// district with no row here (including every district until first
+// populated) falls back to LINE_FORWARD_LOAN_ID.
+model LoanDistrictContact {
+  id         String   @id @default(cuid())
+  district   String   @unique
+  lineUserId String
+  note       String?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
 }

@@ -138,8 +138,14 @@ const tools: Anthropic.Tool[] = [
           type: "string",
           description: "The request/purpose exactly as the user stated it.",
         },
+        department: {
+          type: "string",
+          enum: ["สินเชื่อ", "อื่นๆ"],
+          description:
+            "Which team should handle this: 'สินเชื่อ' for anything loan-related (กู้เงิน, สินเชื่อ, any loan type), 'อื่นๆ' for everything else (membership, general inquiries, etc.).",
+        },
       },
-      required: ["purpose"],
+      required: ["purpose", "department"],
     },
   },
   {
@@ -248,7 +254,7 @@ function buildSystemPrompt(
   } else if (pendingService) {
     const next = computeServiceRequirement(lineUser, pendingService);
     if (next === "purpose") {
-      flowNote = `\n\nหมายเหตุระบบ (สำคัญ): ผู้ใช้เพิ่งส่งเอกสารประกอบ (${pendingService.documentType}) มา ยังไม่ทราบว่าต้องการทำรายการอะไร ถ้าข้อความปัจจุบันของผู้ใช้ระบุว่าต้องการทำอะไร (เช่น ขอกู้เงิน, สมัครสมาชิก) ให้เรียก submit_service_purpose ทันทีด้วยข้อความนั้น ถ้ายังไม่ชัดเจนให้ถามย้ำสั้นๆ ด้วยคำสุภาพว่าต้องการทำรายการอะไร`;
+      flowNote = `\n\nหมายเหตุระบบ (สำคัญ): ผู้ใช้เพิ่งส่งเอกสารประกอบ (${pendingService.documentType}) มา ยังไม่ทราบว่าต้องการทำรายการอะไร ถ้าข้อความปัจจุบันของผู้ใช้ระบุว่าต้องการทำอะไร (เช่น ขอกู้เงิน, สมัครสมาชิก) ให้เรียก submit_service_purpose ทันทีด้วยข้อความนั้น พร้อมระบุ department ด้วย: "สินเชื่อ" ถ้าเกี่ยวกับเงินกู้ไม่ว่าประเภทไหน หรือ "อื่นๆ" ถ้าไม่เกี่ยวกับเงินกู้ ถ้ายังไม่ชัดเจนให้ถามย้ำสั้นๆ ด้วยคำสุภาพว่าต้องการทำรายการอะไร`;
     } else if (next === "member_info") {
       flowNote = `\n\nหมายเหตุระบบ (สำคัญ): ผู้ใช้ต้องการทำรายการ "${pendingService.requestType}" (จากเอกสาร ${pendingService.documentType}) ทราบจุดประสงค์แล้ว แต่ยังต้องขอชื่อ-นามสกุลและเลขสมาชิกก่อนจะส่งต่อให้ฝ่ายที่เกี่ยวข้อง ถ้าข้อความปัจจุบันของผู้ใช้มีชื่อ-นามสกุลและเลขสมาชิกอยู่แล้ว ให้เรียก submit_member_info ทันที ถ้ายังไม่มีให้ถามอีกครั้งสั้นๆ`;
     }
@@ -317,6 +323,7 @@ async function loadPending(lineUserId: string): Promise<PendingInfo | null> {
 type PendingServiceInfo = {
   documentType: string;
   requestType: string | null;
+  department: string | null;
 };
 
 type ServiceRequirement = "purpose" | "member_info" | null;
@@ -347,26 +354,55 @@ async function loadPendingServiceRequest(
   return pending;
 }
 
-// Pushes the collected request to LINE_FORWARD_TARGET_ID (a LINE group or
-// user ID the bot has been added to) and clears the pending record. If
-// forwarding isn't configured or fails, the user is told honestly instead
-// of being falsely reassured that staff were notified.
+// Extracts a "อ.XXX" district token from a unit name like
+// "บำนาญ บึงกาฬ อ.ปากคาด" — returns null if the unit name has no district
+// (e.g. a school name, or "หน่วยงานกลาง").
+function extractDistrict(unitName: string): string | null {
+  const match = unitName.match(/อ\.[ก-๙A-Za-z]+/);
+  return match ? match[0] : null;
+}
+
+// Picks where to forward: loan requests try the district-specific contact
+// first (via the member roster imported from the cooperative's existing
+// spreadsheet), falling back to LINE_FORWARD_LOAN_ID if the member's
+// district isn't known or has no confirmed contact yet. Everything else
+// goes to LINE_FORWARD_GENERAL_ID.
+async function resolveForwardTarget(
+  lineUserId: string,
+  department: string | null
+): Promise<string | null> {
+  if (department === "สินเชื่อ") {
+    const roster = await prisma.memberRoster.findFirst({ where: { lineUserId } });
+    const district = roster?.unitName ? extractDistrict(roster.unitName) : null;
+    if (district) {
+      const contact = await prisma.loanDistrictContact.findUnique({ where: { district } });
+      if (contact) return contact.lineUserId;
+    }
+    return process.env.LINE_FORWARD_LOAN_ID ?? null;
+  }
+  return process.env.LINE_FORWARD_GENERAL_ID ?? null;
+}
+
+// Pushes the collected request to the resolved target and clears the
+// pending record. If forwarding isn't configured or fails, the user is
+// told honestly instead of being falsely reassured that staff were
+// notified.
 async function forwardServiceRequest(
   lineUserId: string,
   pendingService: PendingServiceInfo,
   lineUser: LineUserInfo
 ): Promise<string> {
-  const targetId = process.env.LINE_FORWARD_TARGET_ID;
+  const targetId = await resolveForwardTarget(lineUserId, pendingService.department);
   if (!targetId) {
     await prisma.pendingServiceRequest.delete({ where: { lineUserId } }).catch(() => {});
     console.warn(
-      "[financeAgent] LINE_FORWARD_TARGET_ID not set — service request not forwarded:",
+      "[financeAgent] no forward target configured — service request not forwarded:",
       JSON.stringify(pendingService)
     );
     return "Error: forwarding isn't configured on this system. Apologize to the user and tell them to contact the cooperative office directly instead — do not claim the request was forwarded.";
   }
 
-  const text = `📋 คำขอจากสมาชิก (ผ่าน LINE Bot)\nเอกสารที่ส่งมา: ${pendingService.documentType}\nคำขอ: ${pendingService.requestType}\nชื่อ-นามสกุล: ${lineUser.fullName}\nเลขสมาชิก: ${lineUser.memberNumber}`;
+  const text = `📋 คำขอจากสมาชิก (ผ่าน LINE Bot)\nเอกสารที่ส่งมา: ${pendingService.documentType}\nแผนก: ${pendingService.department}\nคำขอ: ${pendingService.requestType}\nชื่อ-นามสกุล: ${lineUser.fullName}\nเลขสมาชิก: ${lineUser.memberNumber}`;
 
   try {
     await lineClient.pushMessage({ to: targetId, messages: [{ type: "text", text }] });
@@ -732,7 +768,7 @@ async function flagSupportingDocument(
   await prisma.pendingServiceRequest.upsert({
     where: { lineUserId: ctx.lineUserId },
     create: { lineUserId: ctx.lineUserId, documentType },
-    update: { documentType, requestType: null, createdAt: new Date() },
+    update: { documentType, requestType: null, department: null, createdAt: new Date() },
   });
 
   return `Noted a ${documentType} document. Ask the user, politely and in Thai, what request/service this document is for. Do not decline or log anything yet.`;
@@ -740,6 +776,7 @@ async function flagSupportingDocument(
 
 type SubmitServicePurposeInput = {
   purpose?: unknown;
+  department?: unknown;
 };
 
 async function submitServicePurpose(
@@ -750,6 +787,11 @@ async function submitServicePurpose(
   if (!purpose) {
     return "Error: purpose must be a non-empty string.";
   }
+  const department =
+    input.department === "สินเชื่อ" || input.department === "อื่นๆ" ? input.department : null;
+  if (!department) {
+    return `Error: department must be one of สินเชื่อ, อื่นๆ.`;
+  }
 
   const pendingService = await loadPendingServiceRequest(ctx.lineUserId);
   if (!pendingService) {
@@ -758,7 +800,7 @@ async function submitServicePurpose(
 
   const updated = await prisma.pendingServiceRequest.update({
     where: { lineUserId: ctx.lineUserId },
-    data: { requestType: purpose, createdAt: new Date() },
+    data: { requestType: purpose, department, createdAt: new Date() },
   });
 
   const lineUser = await loadLineUser(ctx.lineUserId);
