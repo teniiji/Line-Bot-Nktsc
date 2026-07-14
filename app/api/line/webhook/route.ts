@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { validateSignature, webhook } from "@line/bot-sdk";
 import type Anthropic from "@anthropic-ai/sdk";
+import { createHash } from "crypto";
 import { Prisma } from "@prisma/client";
 import { put } from "@vercel/blob";
 import { lineClient, lineBlobClient } from "@/lib/lineClient";
@@ -22,6 +23,7 @@ async function streamToBuffer(stream: NodeJS.ReadableStream): Promise<Buffer> {
 type UserContentResult = {
   content: Anthropic.MessageParam["content"];
   slipImageUrlPromise: Promise<string | null>;
+  slipImageHash: string | null;
 };
 
 async function buildUserContent(
@@ -32,12 +34,19 @@ async function buildUserContent(
     return {
       content: (message as webhook.TextMessageContent).text,
       slipImageUrlPromise: Promise.resolve(null),
+      slipImageHash: null,
     };
   }
 
   const image = message as webhook.ImageMessageContent;
   const stream = await lineBlobClient.getMessageContent(image.id);
   const buffer = await streamToBuffer(stream);
+  // Deterministic identity for the exact image bytes — resending the same
+  // photo (e.g. re-testing, or a member accidentally forwarding a slip
+  // twice) always hashes identically, unlike the reference number the
+  // vision model reads off it, which isn't guaranteed consistent between
+  // two separate OCR passes over two separate uploads of the same slip.
+  const slipImageHash = createHash("sha256").update(buffer).digest("hex");
 
   // Back up every image message to Blob storage regardless of what the
   // agent decides to do with it — a failed upload shouldn't block logging.
@@ -72,6 +81,7 @@ async function buildUserContent(
       },
     ],
     slipImageUrlPromise,
+    slipImageHash,
   };
 }
 
@@ -112,11 +122,16 @@ async function handleEvent(event: webhook.Event): Promise<void> {
     // Independent of building the message content — run concurrently
     // instead of adding its (usually skipped, but occasionally a real LINE
     // API call) latency in front of the agent call.
-    const [{ content: userContent, slipImageUrlPromise }] = await Promise.all([
+    const [{ content: userContent, slipImageUrlPromise, slipImageHash }] = await Promise.all([
       buildUserContent(event.message, lineUserId),
       ensureLineUser(lineUserId),
     ]);
-    replyText = await runFinanceAgent(userContent, lineUserId, slipImageUrlPromise);
+    replyText = await runFinanceAgent(
+      userContent,
+      lineUserId,
+      slipImageUrlPromise,
+      slipImageHash
+    );
   } catch (err) {
     console.error("[line/webhook] finance agent error:", err);
     replyText = "ขอโทษค่ะ เกิดข้อผิดพลาด ลองใหม่อีกครั้งนะคะ";

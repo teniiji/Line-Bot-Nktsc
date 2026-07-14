@@ -159,6 +159,7 @@ type PendingInfo = {
   description: string | null;
   date: Date | null;
   hasSlip: boolean;
+  slipImageHash: string | null;
   slipImageUrl: string | null;
   referenceNumber: string | null;
   loanType: string | null;
@@ -183,6 +184,7 @@ function computeNextRequirement(
 type ToolContext = {
   lineUserId: string;
   slipImageUrl: string | null;
+  slipImageHash: string | null;
   hasSlipImage: boolean;
 };
 
@@ -293,6 +295,7 @@ async function finalizeTransaction(
         date: pending.date ?? new Date(),
         lineUserId,
         referenceNumber: pending.referenceNumber,
+        slipImageHash: pending.slipImageHash,
         slipImageUrl: pending.slipImageUrl,
         memberFullName: lineUser.fullName,
         memberNumber: lineUser.memberNumber,
@@ -308,10 +311,11 @@ async function finalizeTransaction(
     if (
       err instanceof Prisma.PrismaClientKnownRequestError &&
       err.code === "P2002" &&
-      (err.meta?.target as string[] | undefined)?.includes("referenceNumber")
+      ((err.meta?.target as string[] | undefined)?.includes("referenceNumber") ||
+        (err.meta?.target as string[] | undefined)?.includes("slipImageHash"))
     ) {
       await prisma.pendingTransaction.delete({ where: { lineUserId } }).catch(() => {});
-      return "Error: a transaction with this exact reference number was already recorded — this looks like a duplicate slip. Tell the user it was already logged and do not log it again.";
+      return "Error: this exact transaction (same slip image or same reference number) was already recorded — this looks like a duplicate slip. Tell the user it was already logged and do not log it again.";
     }
     throw err;
   }
@@ -377,7 +381,17 @@ async function reportTransaction(
 
   // Catch a duplicate slip as early as possible instead of only at the
   // final commit, which may be several messages away once member info and
-  // loan type are also collected.
+  // loan type are also collected. Check the image hash first — it's exact
+  // and doesn't depend on the model reading the same reference number
+  // twice, which isn't guaranteed across two separate OCR passes.
+  if (ctx.slipImageHash) {
+    const existingByHash = await prisma.expense.findUnique({
+      where: { slipImageHash: ctx.slipImageHash },
+    });
+    if (existingByHash) {
+      return "Error: this exact slip image was already recorded previously — this is a duplicate. Tell the user it was already logged and do not log or hold it again.";
+    }
+  }
   if (refNumber) {
     const existing = await prisma.expense.findUnique({ where: { referenceNumber: refNumber } });
     if (existing) {
@@ -416,6 +430,7 @@ async function reportTransaction(
       description: parsedDescription,
       date: parsedDate,
       hasSlip: ctx.hasSlipImage,
+      slipImageHash: ctx.slipImageHash,
       slipImageUrl,
       referenceNumber: refNumber,
     },
@@ -430,6 +445,7 @@ async function reportTransaction(
       // Only ever set to true, never back to false, once a slip has been
       // seen for this pending transaction.
       ...(ctx.hasSlipImage ? { hasSlip: true } : {}),
+      ...(ctx.slipImageHash ? { slipImageHash: ctx.slipImageHash } : {}),
       ...(slipImageUrl ? { slipImageUrl } : {}),
       ...(refNumber ? { referenceNumber: refNumber } : {}),
       createdAt: new Date(),
@@ -631,7 +647,8 @@ async function executeTool(
 export async function runFinanceAgent(
   userContent: Anthropic.MessageParam["content"],
   lineUserId: string,
-  slipImageUrlPromise: Promise<string | null> = Promise.resolve(null)
+  slipImageUrlPromise: Promise<string | null> = Promise.resolve(null),
+  slipImageHash: string | null = null
 ): Promise<string> {
   const [lineUser, pending] = await Promise.all([
     loadLineUser(lineUserId),
@@ -712,6 +729,7 @@ export async function runFinanceAgent(
     const ctx: ToolContext = {
       lineUserId,
       slipImageUrl: await resolveSlipImageUrl(),
+      slipImageHash,
       hasSlipImage: hasImageContent(userContent),
     };
     const toolResults: Anthropic.ToolResultBlockParam[] = [];

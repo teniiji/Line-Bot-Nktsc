@@ -18,8 +18,16 @@ model Expense {
   // Bank/wallet-issued transaction reference number read off a slip, if
   // visible. Globally unique in the real world, so it doubles as a
   // duplicate-slip guard — resubmitting the same slip hits this constraint
-  // instead of creating a second row.
+  // instead of creating a second row. Not fully reliable on its own since
+  // it depends on the vision model reading the exact same text on every
+  // submission — slipImageHash below is the more robust guard.
   referenceNumber String?  @unique
+  // SHA-256 of the raw slip image bytes. Unlike referenceNumber, this is
+  // deterministic — resending the literal same photo always hashes
+  // identically regardless of what the model manages to read off it — so
+  // it's the primary duplicate-slip guard; referenceNumber is a secondary
+  // one for cases where the same transaction is photographed twice.
+  slipImageHash   String?  @unique
   slipImageUrl    String?
   // Snapshot of the member's identity and (for ชำระหนี้) the loan type at
   // the moment this transaction was logged — copied from LineUser rather
@@ -66,6 +74,7 @@ model PendingTransaction {
   // best-effort (skipped entirely if BLOB_READ_WRITE_TOKEN isn't set) and
   // must never gate whether the flow can proceed.
   hasSlip         Boolean   @default(false)
+  slipImageHash   String?
   slipImageUrl    String?
   referenceNumber String?
   loanType        String?
