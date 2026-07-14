@@ -53,17 +53,20 @@ async function buildUserContent(
   // Deliberately not awaited here: the upload has no dependency on the
   // Claude vision call below, so kicking it off and handing back the
   // in-flight promise lets the two network calls run concurrently instead
-  // of the vision call waiting for the upload to finish first.
-  const slipImageUrlPromise = put(
-    `slips/${lineUserId}/${Date.now()}-${image.id}.jpg`,
-    buffer,
-    { access: "public", contentType: "image/jpeg" }
-  )
-    .then((blob) => blob.url)
-    .catch((err) => {
-      console.error("[line/webhook] blob upload error:", err);
-      return null;
-    });
+  // of the vision call waiting for the upload to finish first. Skipped
+  // entirely (not attempted-and-caught) when the token isn't configured,
+  // so we don't throw a full stack trace on every image in that setup.
+  const slipImageUrlPromise = process.env.BLOB_READ_WRITE_TOKEN
+    ? put(`slips/${lineUserId}/${Date.now()}-${image.id}.jpg`, buffer, {
+        access: "public",
+        contentType: "image/jpeg",
+      })
+        .then((blob) => blob.url)
+        .catch((err) => {
+          console.error("[line/webhook] blob upload error:", err);
+          return null;
+        })
+    : Promise.resolve(null);
 
   return {
     content: [
@@ -113,6 +116,17 @@ async function handleEvent(event: webhook.Event): Promise<void> {
       console.error("[line/webhook] dedupe check failed:", err);
     }
     return;
+  }
+
+  // These rows only guard against LINE's retry window (minutes), so they're
+  // useless once a day old and would otherwise grow forever. Prune opportunistically
+  // on ~1% of events (fire-and-forget, never blocks handling) instead of
+  // needing a separate scheduled job.
+  if (Math.random() < 0.01) {
+    const cutoff = new Date(Date.now() - 24 * 60 * 60 * 1000);
+    prisma.processedLineEvent
+      .deleteMany({ where: { createdAt: { lt: cutoff } } })
+      .catch((err) => console.error("[line/webhook] processed-event prune failed:", err));
   }
 
   const lineUserId = event.source.userId;
@@ -165,11 +179,14 @@ export async function POST(request: NextRequest) {
 
   const events = body.events ?? [];
 
-  // TEMPORARY DEBUG LOG — used to read off a LINE group's ID (for
-  // LINE_FORWARD_TARGET_ID) by having someone message in the target group.
-  // Remove this once you have the ID; group messages aren't otherwise
-  // processed since handleEvent only handles event.source.type === "user".
-  console.log("[DEBUG] webhook event sources:", JSON.stringify(events.map((e) => e.source)));
+  // Opt-in helper for reading off a LINE user/group ID (e.g. when setting
+  // up LINE_FORWARD_LOAN_ID / LINE_FORWARD_GENERAL_ID for a staff member):
+  // set LOG_EVENT_SOURCES=1, have that person message the bot, read the id
+  // from the logs, then unset it. Off by default so member user IDs aren't
+  // logged in normal operation.
+  if (process.env.LOG_EVENT_SOURCES === "1") {
+    console.log("[line/webhook] event sources:", JSON.stringify(events.map((e) => e.source)));
+  }
 
   // Process events but never let a single failure block the 200 response —
   // LINE retries the whole webhook delivery on a non-2xx, which would
