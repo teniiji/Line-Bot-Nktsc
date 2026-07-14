@@ -81,6 +81,20 @@ model PendingTransaction {
   createdAt       DateTime  @default(now())
 }
 
+// A supporting document (payslip, ID card copy, house registration copy,
+// marriage certificate) the user sent that isn't a transfer slip — these
+// are typically submitted for some other cooperative service (e.g. a loan
+// application) this bot doesn't itself process. Holds the document type
+// while the agent asks what it's for, then — once member identity is also
+// known — forwards the request to LINE_FORWARD_TARGET_ID and clears.
+model PendingServiceRequest {
+  id           String   @id @default(cuid())
+  lineUserId   String   @unique
+  documentType String
+  requestType  String?
+  createdAt    DateTime @default(now())
+}
+
 // One row per LINE user who has ever messaged the bot, keyed by their LINE
 // userId. displayName is fetched from LINE's profile API the first time we
 // see a user (best-effort, may be null if that call fails); nickname is set

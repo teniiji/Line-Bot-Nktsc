@@ -1,9 +1,11 @@
 import type Anthropic from "@anthropic-ai/sdk";
 import { Prisma } from "@prisma/client";
 import { anthropic } from "./anthropicClient";
+import { lineClient } from "./lineClient";
 import { prisma } from "./prisma";
 import { CATEGORIES } from "./categories";
 import { LOAN_TYPES } from "./loanTypes";
+import { DOCUMENT_TYPES } from "./documentTypes";
 import { formatAmount } from "./format";
 
 // Haiku is fast/cheap and reliable for plain text, but has repeatedly
@@ -96,7 +98,7 @@ const tools: Anthropic.Tool[] = [
   {
     name: "decline_unreadable_image",
     description:
-      "Use only for an image that genuinely isn't a bank/wallet transaction slip at all (a random unrelated photo, a document, or a slip whose own text explicitly says the transaction failed/is pending/was cancelled). Call this instead of replying with plain text — your reply text afterward explains why to the user.",
+      "Use only for an image that genuinely isn't a bank/wallet transaction slip and isn't one of the known supporting-document types either (a random unrelated photo, or a slip whose own text explicitly says the transaction failed/is pending/was cancelled). For a payslip, ID card copy, house registration copy, or marriage certificate, use flag_supporting_document instead — those aren't declined, they're routed to ask what the user needs. Call this instead of replying with plain text — your reply text afterward explains why to the user.",
     input_schema: {
       type: "object",
       properties: {
@@ -107,6 +109,37 @@ const tools: Anthropic.Tool[] = [
         },
       },
       required: ["reason"],
+    },
+  },
+  {
+    name: "flag_supporting_document",
+    description:
+      "Call when the user sends an image that is a supporting document — a payslip (สลิปเงินเดือน), ID card copy (สำเนาบัตรประชาชน), house registration copy (สำเนาทะเบียนบ้าน), or marriage certificate (ทะเบียนสมรส) — rather than a bank/wallet transfer slip. These are usually submitted for some other cooperative service (e.g. a loan application) that this bot doesn't process directly; it asks what the request is for and forwards it to the right department. Never use this for an actual transfer slip or a genuinely unrelated image.",
+    input_schema: {
+      type: "object",
+      properties: {
+        documentType: {
+          type: "string",
+          enum: [...DOCUMENT_TYPES],
+          description: "Best-matching type of supporting document.",
+        },
+      },
+      required: ["documentType"],
+    },
+  },
+  {
+    name: "submit_service_purpose",
+    description:
+      "Call when the user states what request/service a previously-flagged supporting document is for (e.g. 'ขอกู้เงินสามัญ', 'สมัครสมาชิกใหม่'). Only relevant when there's an in-progress supporting-document flow awaiting this.",
+    input_schema: {
+      type: "object",
+      properties: {
+        purpose: {
+          type: "string",
+          description: "The request/purpose exactly as the user stated it.",
+        },
+      },
+      required: ["purpose"],
     },
   },
   {
@@ -190,7 +223,8 @@ type ToolContext = {
 
 function buildSystemPrompt(
   lineUser: LineUserInfo | null,
-  pending: PendingInfo | null
+  pending: PendingInfo | null,
+  pendingService: PendingServiceInfo | null
 ): string {
   const today = new Date().toISOString().slice(0, 10);
 
@@ -211,6 +245,13 @@ function buildSystemPrompt(
         ", "
       )} ถ้าข้อความปัจจุบันของผู้ใช้ระบุประเภทเงินกู้ (หรือความหมายใกล้เคียง) ให้เรียก submit_loan_type ทันทีโดยเลือกตัวเลือกที่ใกล้เคียงที่สุด ถ้ายังไม่ชัดเจนให้ถามย้ำสั้นๆ พร้อมบอกตัวเลือกทั้ง 5 แบบ`;
     }
+  } else if (pendingService) {
+    const next = computeServiceRequirement(lineUser, pendingService);
+    if (next === "purpose") {
+      flowNote = `\n\nหมายเหตุระบบ (สำคัญ): ผู้ใช้เพิ่งส่งเอกสารประกอบ (${pendingService.documentType}) มา ยังไม่ทราบว่าต้องการทำรายการอะไร ถ้าข้อความปัจจุบันของผู้ใช้ระบุว่าต้องการทำอะไร (เช่น ขอกู้เงิน, สมัครสมาชิก) ให้เรียก submit_service_purpose ทันทีด้วยข้อความนั้น ถ้ายังไม่ชัดเจนให้ถามย้ำสั้นๆ ด้วยคำสุภาพว่าต้องการทำรายการอะไร`;
+    } else if (next === "member_info") {
+      flowNote = `\n\nหมายเหตุระบบ (สำคัญ): ผู้ใช้ต้องการทำรายการ "${pendingService.requestType}" (จากเอกสาร ${pendingService.documentType}) ทราบจุดประสงค์แล้ว แต่ยังต้องขอชื่อ-นามสกุลและเลขสมาชิกก่อนจะส่งต่อให้ฝ่ายที่เกี่ยวข้อง ถ้าข้อความปัจจุบันของผู้ใช้มีชื่อ-นามสกุลและเลขสมาชิกอยู่แล้ว ให้เรียก submit_member_info ทันที ถ้ายังไม่มีให้ถามอีกครั้งสั้นๆ`;
+    }
   }
 
   return `คุณคือผู้ช่วยด้านการเงินส่วนตัวที่ทำงานผ่าน LINE ให้กับสหกรณ์ออมทรัพย์ครูหนองคาย จำกัด วันนี้คือวันที่ ${today}
@@ -221,14 +262,16 @@ function buildSystemPrompt(
 
 **กฎที่ห้ามฝ่าฝืนเด็ดขาด**: เมื่อผู้ใช้พิมพ์บอกจำนวนเงิน+หมวดหมู่ธุรกรรม (แม้จะยังไม่มีสลิปก็ตาม) **ห้ามตอบเป็นข้อความเปล่าๆ ถามข้อมูลเพิ่มโดยไม่เรียก report_transaction ก่อนเด็ดขาด** ต่อให้ยอดเงินดูสูงผิดปกติหรือคุณอยากถามอะไรเพิ่มก็ตาม ให้เรียก report_transaction ด้วยข้อมูลที่มีก่อนเสมอ (ระบบจะเก็บยอดนี้ไว้เทียบกับสลิปที่จะตามมาทีหลังเองด้วย) แล้วค่อยใส่คำถามหรือข้อสังเกตของคุณลงในข้อความตอบกลับได้ตามปกติ — การเรียก tool กับการถามคำถามทำพร้อมกันได้ในคำตอบเดียว ไม่ต้องเลือกอย่างใดอย่างหนึ่ง
 
-หน้าที่ของคุณมี 6 อย่าง:
+หน้าที่ของคุณมี 8 อย่าง:
 
 1. เมื่อผู้ใช้เล่าถึงหรือส่งรูปสลิปธุรกรรมกับสหกรณ์ที่เกิดขึ้นแล้ว (ซื้อหุ้น, ชำระหนี้, ฝากเงิน, ชำระเก็บไม่ได้รายเดือน, ชำระประกัน, ชำระฌาปนกิจ, สสค, สสอค, สสชสอ, สสสก, สสสท) ให้เรียก report_transaction ทันทีเพื่อเริ่ม/อัปเดตการบันทึก **ทุกธุรกรรมต้องผ่านการยืนยันตัวตนสมาชิก (ชื่อ-นามสกุล + เลขสมาชิก, ถามครั้งเดียวแล้วจำไว้ถาวร) และมีรูปสลิปการโอนเงินก่อนจะบันทึกจริงเสมอ — ธุรกรรมชำระหนี้ต้องระบุประเภทเงินกู้เพิ่มด้วย** คุณไม่ต้องตัดสินใจเองว่าต้องขอข้อมูลอะไรต่อ ระบบจะตรวจสอบให้อัตโนมัติหลังจากเรียก tool แล้วบอกกลับมาว่ายังขาดอะไร ให้ทำตามนั้น
 2. เมื่อผู้ใช้ให้ชื่อ-นามสกุลและเลขสมาชิก (ไม่ว่าจะเสนอเองหรือตอบคำถามที่ถามไป) ให้เรียก submit_member_info
 3. เมื่อผู้ใช้ระบุประเภทเงินกู้สำหรับธุรกรรมชำระหนี้ที่ค้างอยู่ ให้เรียก submit_loan_type
-4. เมื่อผู้ใช้ถามเกี่ยวกับประวัติการเงินของตัวเอง (เช่น "เดือนนี้จ่ายหนี้ไปเท่าไหร่") ให้เรียกใช้ get_transaction_summary แล้วสรุปคำตอบเป็นภาษาไทย
-5. เมื่อผู้ใช้ถามคำถามความรู้ทั่วไปเกี่ยวกับการเงิน (เช่น อัตราดอกเบี้ย, วิธีลงทุน, การกู้ยืม) ที่ไม่เกี่ยวกับข้อมูลส่วนตัวของเขา ให้ตอบด้วยความรู้ทั่วไปโดยตรง ไม่ต้องเรียกเครื่องมือใดๆ และควรระบุว่าเป็นข้อมูลทั่วไป ไม่ใช่คำแนะนำทางการเงินจากผู้เชี่ยวชาญที่มีใบอนุญาต
-6. เมื่อผู้ใช้ขอเปลี่ยน/ตั้งชื่อเล่นของตัวเอง (เช่น "เปลี่ยนชื่อเรียกฉันเป็น...", "ตั้งชื่อเล่นว่า...") ให้เรียก set_nickname ด้วยชื่อที่ผู้ใช้ระบุ แล้วตอบยืนยันสั้นๆ ห้ามเรียก tool นี้เพื่อเหตุผลอื่นนอกจากนี้เด็ดขาด (คนละเรื่องกับชื่อ-นามสกุลสมาชิกในข้อ 2)
+4. เมื่อผู้ใช้ส่งรูปที่เป็น**เอกสารประกอบ** (สลิปเงินเดือน, สำเนาบัตรประชาชน, สำเนาทะเบียนบ้าน, ทะเบียนสมรส) แทนที่จะเป็นสลิปโอนเงิน ให้เรียก flag_supporting_document ทันที (ห้ามใช้ decline_unreadable_image สำหรับเอกสารกลุ่มนี้) แล้วถามด้วยคำสุภาพว่าต้องการทำรายการอะไร
+5. เมื่อผู้ใช้ตอบว่าเอกสารประกอบนั้นส่งมาเพื่อทำรายการอะไร (เช่น "ขอกู้เงินสามัญ") ให้เรียก submit_service_purpose ด้วยข้อความนั้น
+6. เมื่อผู้ใช้ถามเกี่ยวกับประวัติการเงินของตัวเอง (เช่น "เดือนนี้จ่ายหนี้ไปเท่าไหร่") ให้เรียกใช้ get_transaction_summary แล้วสรุปคำตอบเป็นภาษาไทย
+7. เมื่อผู้ใช้ถามคำถามความรู้ทั่วไปเกี่ยวกับการเงิน (เช่น อัตราดอกเบี้ย, วิธีลงทุน, การกู้ยืม) ที่ไม่เกี่ยวกับข้อมูลส่วนตัวของเขา ให้ตอบด้วยความรู้ทั่วไปโดยตรง ไม่ต้องเรียกเครื่องมือใดๆ และควรระบุว่าเป็นข้อมูลทั่วไป ไม่ใช่คำแนะนำทางการเงินจากผู้เชี่ยวชาญที่มีใบอนุญาต
+8. เมื่อผู้ใช้ขอเปลี่ยน/ตั้งชื่อเล่นของตัวเอง (เช่น "เปลี่ยนชื่อเรียกฉันเป็น...", "ตั้งชื่อเล่นว่า...") ให้เรียก set_nickname ด้วยชื่อที่ผู้ใช้ระบุ แล้วตอบยืนยันสั้นๆ ห้ามเรียก tool นี้เพื่อเหตุผลอื่นนอกจากนี้เด็ดขาด (คนละเรื่องกับชื่อ-นามสกุลสมาชิกในข้อ 2)
 
 กฎการตรวจสอบรูปสลิป (ใช้ทุกครั้งที่มีรูปภาพเข้ามา ไม่ว่าจะอยู่ขั้นตอนไหนของการเก็บข้อมูล):
 
@@ -267,6 +310,72 @@ async function loadPending(lineUserId: string): Promise<PendingInfo | null> {
     return null;
   }
   return pending;
+}
+
+type PendingServiceInfo = {
+  documentType: string;
+  requestType: string | null;
+};
+
+type ServiceRequirement = "purpose" | "member_info" | null;
+
+// Purpose is asked before member info, matching the natural conversational
+// order: the user has already shown a document, so "what's this for" comes
+// first; member identity only matters once we know what to attach it to.
+function computeServiceRequirement(
+  lineUser: LineUserInfo | null,
+  pendingService: PendingServiceInfo
+): ServiceRequirement {
+  if (!pendingService.requestType) return "purpose";
+  if (!lineUser?.fullName || !lineUser?.memberNumber) return "member_info";
+  return null;
+}
+
+async function loadPendingServiceRequest(
+  lineUserId: string
+): Promise<PendingServiceInfo | null> {
+  const pending = await prisma.pendingServiceRequest.findUnique({
+    where: { lineUserId },
+  });
+  if (!pending) return null;
+  if (Date.now() - pending.createdAt.getTime() > PENDING_TRANSACTION_EXPIRY_MS) {
+    await prisma.pendingServiceRequest.delete({ where: { lineUserId } }).catch(() => {});
+    return null;
+  }
+  return pending;
+}
+
+// Pushes the collected request to LINE_FORWARD_TARGET_ID (a LINE group or
+// user ID the bot has been added to) and clears the pending record. If
+// forwarding isn't configured or fails, the user is told honestly instead
+// of being falsely reassured that staff were notified.
+async function forwardServiceRequest(
+  lineUserId: string,
+  pendingService: PendingServiceInfo,
+  lineUser: LineUserInfo
+): Promise<string> {
+  const targetId = process.env.LINE_FORWARD_TARGET_ID;
+  if (!targetId) {
+    await prisma.pendingServiceRequest.delete({ where: { lineUserId } }).catch(() => {});
+    console.warn(
+      "[financeAgent] LINE_FORWARD_TARGET_ID not set — service request not forwarded:",
+      JSON.stringify(pendingService)
+    );
+    return "Error: forwarding isn't configured on this system. Apologize to the user and tell them to contact the cooperative office directly instead — do not claim the request was forwarded.";
+  }
+
+  const text = `📋 คำขอจากสมาชิก (ผ่าน LINE Bot)\nเอกสารที่ส่งมา: ${pendingService.documentType}\nคำขอ: ${pendingService.requestType}\nชื่อ-นามสกุล: ${lineUser.fullName}\nเลขสมาชิก: ${lineUser.memberNumber}`;
+
+  try {
+    await lineClient.pushMessage({ to: targetId, messages: [{ type: "text", text }] });
+  } catch (err) {
+    console.error("[financeAgent] forward service request push error:", err);
+    await prisma.pendingServiceRequest.delete({ where: { lineUserId } }).catch(() => {});
+    return "Error: failed to forward the request. Apologize to the user and tell them to contact the cooperative office directly instead — do not claim the request was forwarded.";
+  }
+
+  await prisma.pendingServiceRequest.delete({ where: { lineUserId } }).catch(() => {});
+  return `Forwarded to the relevant department: "${pendingService.requestType}" for member ${lineUser.fullName} (${lineUser.memberNumber}). Confirm to the user, in Thai, that their request was sent and staff will contact them.`;
 }
 
 // Creates the Expense row from a now-complete pending transaction plus the
@@ -486,15 +595,29 @@ async function submitMemberInfo(
   });
 
   const pending = await loadPending(ctx.lineUserId);
-  if (!pending) {
-    return `Member info saved (${fullName}, ${memberNumber}). No transaction is currently in progress — just confirm to the user that their info was saved.`;
+  if (pending) {
+    const next = computeNextRequirement({ fullName, memberNumber }, pending);
+    if (next === null) {
+      return await finalizeTransaction(ctx.lineUserId, pending, { fullName, memberNumber });
+    }
+    return requirementMessage(next);
   }
 
-  const next = computeNextRequirement({ fullName, memberNumber }, pending);
-  if (next === null) {
-    return await finalizeTransaction(ctx.lineUserId, pending, { fullName, memberNumber });
+  const pendingService = await loadPendingServiceRequest(ctx.lineUserId);
+  if (pendingService) {
+    const next = computeServiceRequirement({ fullName, memberNumber }, pendingService);
+    if (next === null) {
+      return await forwardServiceRequest(ctx.lineUserId, pendingService, {
+        fullName,
+        memberNumber,
+      });
+    }
+    // next can only be "purpose" here (member info just got filled in) —
+    // ask for it since forwarding still needs it.
+    return "Still missing: what request/service the supporting document is for. Ask the user next, in Thai.";
   }
-  return requirementMessage(next);
+
+  return `Member info saved (${fullName}, ${memberNumber}). No transaction is currently in progress — just confirm to the user that their info was saved.`;
 }
 
 type SubmitLoanTypeInput = {
@@ -587,6 +710,63 @@ async function getTransactionSummary(
   return `Total: ${formatAmount(total)}. Breakdown: ${breakdown}.`;
 }
 
+type FlagSupportingDocumentInput = {
+  documentType?: unknown;
+};
+
+async function flagSupportingDocument(
+  input: FlagSupportingDocumentInput,
+  ctx: ToolContext
+): Promise<string> {
+  const documentType =
+    typeof input.documentType === "string" &&
+    DOCUMENT_TYPES.includes(input.documentType as (typeof DOCUMENT_TYPES)[number])
+      ? input.documentType
+      : null;
+  if (!documentType) {
+    return `Error: documentType must be one of ${DOCUMENT_TYPES.join(", ")}.`;
+  }
+
+  await prisma.pendingServiceRequest.upsert({
+    where: { lineUserId: ctx.lineUserId },
+    create: { lineUserId: ctx.lineUserId, documentType },
+    update: { documentType, requestType: null, createdAt: new Date() },
+  });
+
+  return `Noted a ${documentType} document. Ask the user, politely and in Thai, what request/service this document is for. Do not decline or log anything yet.`;
+}
+
+type SubmitServicePurposeInput = {
+  purpose?: unknown;
+};
+
+async function submitServicePurpose(
+  input: SubmitServicePurposeInput,
+  ctx: ToolContext
+): Promise<string> {
+  const purpose = typeof input.purpose === "string" ? input.purpose.trim() : "";
+  if (!purpose) {
+    return "Error: purpose must be a non-empty string.";
+  }
+
+  const pendingService = await loadPendingServiceRequest(ctx.lineUserId);
+  if (!pendingService) {
+    return "Error: no in-progress supporting-document flow to attach this purpose to.";
+  }
+
+  const updated = await prisma.pendingServiceRequest.update({
+    where: { lineUserId: ctx.lineUserId },
+    data: { requestType: purpose, createdAt: new Date() },
+  });
+
+  const lineUser = await loadLineUser(ctx.lineUserId);
+  const next = computeServiceRequirement(lineUser, updated);
+  if (next === "member_info") {
+    return "Still missing: member full name and member number, needed to forward this request. Ask the user for their ชื่อ-นามสกุล and เลขสมาชิก next, in Thai.";
+  }
+  return await forwardServiceRequest(ctx.lineUserId, updated, lineUser as LineUserInfo);
+}
+
 type SetNicknameInput = {
   nickname?: unknown;
 };
@@ -625,6 +805,12 @@ async function executeTool(
     if (name === "submit_loan_type") {
       return await submitLoanType(input as SubmitLoanTypeInput, ctx);
     }
+    if (name === "flag_supporting_document") {
+      return await flagSupportingDocument(input as FlagSupportingDocumentInput, ctx);
+    }
+    if (name === "submit_service_purpose") {
+      return await submitServicePurpose(input as SubmitServicePurposeInput, ctx);
+    }
     if (name === "get_transaction_summary") {
       return await getTransactionSummary(input as SummaryInput, ctx.lineUserId);
     }
@@ -652,9 +838,10 @@ export async function runFinanceAgent(
   slipImageUrlPromise: Promise<string | null> = Promise.resolve(null),
   slipImageHash: string | null = null
 ): Promise<string> {
-  const [lineUser, pending] = await Promise.all([
+  const [lineUser, pending, pendingService] = await Promise.all([
     loadLineUser(lineUserId),
     loadPending(lineUserId),
+    loadPendingServiceRequest(lineUserId),
   ]);
 
   // The caller kicks off the Blob upload before calling this function but
@@ -669,7 +856,7 @@ export async function runFinanceAgent(
     return resolvedSlipImageUrl;
   }
 
-  const system = buildSystemPrompt(lineUser, pending);
+  const system = buildSystemPrompt(lineUser, pending, pendingService);
   const model = hasImageContent(userContent) ? VISION_MODEL : TEXT_MODEL;
   const messages: Anthropic.MessageParam[] = [
     { role: "user", content: userContent },
@@ -684,12 +871,18 @@ export async function runFinanceAgent(
     // "any" tool rather than a single named one.
     let toolChoice: Anthropic.ToolChoice | undefined;
     const next = pending ? computeNextRequirement(lineUser, pending) : null;
+    const serviceNext =
+      !pending && pendingService ? computeServiceRequirement(lineUser, pendingService) : null;
     if (turn === 0 && next === "member_info" && !hasImageContent(userContent)) {
       toolChoice = { type: "tool", name: "submit_member_info" };
     } else if (turn === 0 && next === "category" && !hasImageContent(userContent)) {
       toolChoice = { type: "tool", name: "report_transaction" };
     } else if (turn === 0 && next === "loan_type" && !hasImageContent(userContent)) {
       toolChoice = { type: "tool", name: "submit_loan_type" };
+    } else if (turn === 0 && serviceNext === "purpose" && !hasImageContent(userContent)) {
+      toolChoice = { type: "tool", name: "submit_service_purpose" };
+    } else if (turn === 0 && serviceNext === "member_info" && !hasImageContent(userContent)) {
+      toolChoice = { type: "tool", name: "submit_member_info" };
     } else if (turn === 0 && hasImageContent(userContent)) {
       toolChoice = { type: "any" };
     }
