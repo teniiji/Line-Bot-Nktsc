@@ -132,6 +132,7 @@ async function handleEvent(event: webhook.Event): Promise<void> {
   const lineUserId = event.source.userId;
 
   let replyText: string;
+  let quickReplies: string[] = [];
   try {
     // Independent of building the message content — run concurrently
     // instead of adding its (usually skipped, but occasionally a real LINE
@@ -140,21 +141,42 @@ async function handleEvent(event: webhook.Event): Promise<void> {
       buildUserContent(event.message, lineUserId),
       ensureLineUser(lineUserId),
     ]);
-    replyText = await runFinanceAgent(
+    const result = await runFinanceAgent(
       userContent,
       lineUserId,
       slipImageUrlPromise,
       slipImageHash
     );
+    replyText = result.text;
+    quickReplies = result.quickReplies;
   } catch (err) {
     console.error("[line/webhook] finance agent error:", err);
     replyText = "ขอโทษค่ะ เกิดข้อผิดพลาด ลองใหม่อีกครั้งนะคะ";
   }
 
+  // Attach tappable buttons for pick-one prompts (category, loan type) so
+  // the member selects instead of typing — the tapped value is exact, and
+  // it's far easier for less tech-savvy users. LINE caps the button label
+  // at 20 chars but the sent text at 300, so long category names still
+  // send in full while showing a truncated label.
+  const quickReply =
+    quickReplies.length > 0
+      ? {
+          items: quickReplies.slice(0, 13).map((value) => ({
+            type: "action" as const,
+            action: {
+              type: "message" as const,
+              label: value.length > 20 ? value.slice(0, 20) : value,
+              text: value,
+            },
+          })),
+        }
+      : undefined;
+
   try {
     await lineClient.replyMessage({
       replyToken: event.replyToken,
-      messages: [{ type: "text", text: replyText }],
+      messages: [{ type: "text", text: replyText, ...(quickReply ? { quickReply } : {}) }],
     });
   } catch (err) {
     console.error("[line/webhook] LINE reply error:", err);

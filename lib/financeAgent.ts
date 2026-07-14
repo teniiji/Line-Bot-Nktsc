@@ -221,6 +221,23 @@ function computeNextRequirement(
   return null;
 }
 
+// After a reply is produced, re-derive what the bot is now waiting on and
+// offer tappable buttons for the pick-one steps (category, loan type) so
+// the member selects instead of typing a free-form answer the model then
+// has to interpret. Other steps (member info, slip, purpose) are free-form
+// or image-based, so no buttons.
+async function computeQuickReplies(lineUserId: string): Promise<string[]> {
+  const [lineUser, pending] = await Promise.all([
+    loadLineUser(lineUserId),
+    loadPending(lineUserId),
+  ]);
+  if (!pending) return [];
+  const next = computeNextRequirement(lineUser, pending);
+  if (next === "category") return [...CATEGORIES];
+  if (next === "loan_type") return [...LOAN_TYPES];
+  return [];
+}
+
 // slipImageUrl is the best-effort Vercel Blob backup (null if
 // BLOB_READ_WRITE_TOKEN isn't set or the upload failed) — never treat it as
 // evidence of whether a slip was shown; use hasSlipImage for that.
@@ -937,12 +954,14 @@ async function executeTool(
   }
 }
 
+export type FinanceAgentReply = { text: string; quickReplies: string[] };
+
 export async function runFinanceAgent(
   userContent: Anthropic.MessageParam["content"],
   lineUserId: string,
   slipImageUrlPromise: Promise<string | null> = Promise.resolve(null),
   slipImageHash: string | null = null
-): Promise<string> {
+): Promise<FinanceAgentReply> {
   const [lineUser, pending, pendingService] = await Promise.all([
     loadLineUser(lineUserId),
     loadPending(lineUserId),
@@ -1021,7 +1040,10 @@ export async function runFinanceAgent(
           })
         );
       }
-      return text || "ขอโทษค่ะ ไม่สามารถตอบได้ในตอนนี้";
+      return {
+        text: text || "ขอโทษค่ะ ไม่สามารถตอบได้ในตอนนี้",
+        quickReplies: await computeQuickReplies(lineUserId),
+      };
     }
 
     messages.push({ role: "assistant", content: response.content });
@@ -1058,5 +1080,8 @@ export async function runFinanceAgent(
   const finalText = finalResponse.content.find(
     (block): block is Anthropic.TextBlock => block.type === "text"
   );
-  return finalText?.text.trim() || "ขอโทษค่ะ ดำเนินการไม่สำเร็จ ลองใหม่อีกครั้งนะคะ";
+  return {
+    text: finalText?.text.trim() || "ขอโทษค่ะ ดำเนินการไม่สำเร็จ ลองใหม่อีกครั้งนะคะ",
+    quickReplies: await computeQuickReplies(lineUserId),
+  };
 }
