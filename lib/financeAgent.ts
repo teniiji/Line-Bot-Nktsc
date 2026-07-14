@@ -190,6 +190,10 @@ const tools: Anthropic.Tool[] = [
 type LineUserInfo = {
   fullName: string | null;
   memberNumber: string | null;
+  // true when the identity came from MemberRoster keyed by this LINE
+  // account's own userId (cryptographically tied to the account, can't be
+  // spoofed). false when it's only what the user typed via submit_member_info.
+  verified: boolean;
 };
 
 type PendingInfo = {
@@ -301,11 +305,32 @@ function buildSystemPrompt(
 const PENDING_TRANSACTION_EXPIRY_MS = 30 * 60 * 1000;
 
 async function loadLineUser(lineUserId: string): Promise<LineUserInfo | null> {
+  // Prefer the imported roster keyed by this LINE account's own userId —
+  // that's LINE's account identity, so it can't be spoofed by typing
+  // someone else's name/number. Covers members whose LINE is already
+  // linked in the roster; they never get asked for their info at all.
+  const roster = await prisma.memberRoster.findFirst({
+    where: { lineUserId },
+    select: { memberName: true, memberNumber: true },
+  });
+  if (roster) {
+    return {
+      fullName: roster.memberName,
+      memberNumber: roster.memberNumber,
+      verified: true,
+    };
+  }
+
   const user = await prisma.lineUser.findUnique({
     where: { id: lineUserId },
     select: { fullName: true, memberNumber: true },
   });
-  return user;
+  if (!user) return null;
+  return {
+    fullName: user.fullName,
+    memberNumber: user.memberNumber,
+    verified: false,
+  };
 }
 
 async function loadPending(lineUserId: string): Promise<PendingInfo | null> {
@@ -402,7 +427,10 @@ async function forwardServiceRequest(
     return "Error: forwarding isn't configured on this system. Apologize to the user and tell them to contact the cooperative office directly instead — do not claim the request was forwarded.";
   }
 
-  const text = `📋 คำขอจากสมาชิก (ผ่าน LINE Bot)\nเอกสารที่ส่งมา: ${pendingService.documentType}\nแผนก: ${pendingService.department}\nคำขอ: ${pendingService.requestType}\nชื่อ-นามสกุล: ${lineUser.fullName}\nเลขสมาชิก: ${lineUser.memberNumber}`;
+  const verifyMark = lineUser.verified
+    ? "✅ ยืนยันตัวตนจากทะเบียน"
+    : "⚠️ ยังไม่ยืนยัน (เลขสมาชิกไม่พบในทะเบียน — กรุณาตรวจสอบ)";
+  const text = `📋 คำขอจากสมาชิก (ผ่าน LINE Bot)\nเอกสารที่ส่งมา: ${pendingService.documentType}\nแผนก: ${pendingService.department}\nคำขอ: ${pendingService.requestType}\nชื่อ-นามสกุล: ${lineUser.fullName}\nเลขสมาชิก: ${lineUser.memberNumber}\nสถานะ: ${verifyMark}`;
 
   try {
     await lineClient.pushMessage({ to: targetId, messages: [{ type: "text", text }] });
@@ -448,6 +476,7 @@ async function finalizeTransaction(
         slipImageUrl: pending.slipImageUrl,
         memberFullName: lineUser.fullName,
         memberNumber: lineUser.memberNumber,
+        memberVerified: lineUser.verified,
         loanType: pending.loanType,
       },
     });
@@ -626,36 +655,68 @@ async function submitMemberInfo(
     return "Error: both fullName and memberNumber must be non-empty strings.";
   }
 
+  // Verify the claimed member number against the imported roster.
+  const roster = await prisma.memberRoster.findUnique({ where: { memberNumber } });
+
+  // Block impersonation: this member number is already bound to a
+  // different LINE account in the roster. Do not save or proceed.
+  if (roster?.lineUserId && roster.lineUserId !== ctx.lineUserId) {
+    return "Error: this member number is already linked to a different LINE account. Do not proceed. Tell the user, in Thai, that this member number is registered to another LINE account, and ask them to contact the cooperative office if they believe this is a mistake.";
+  }
+
+  const verified = roster !== null;
+
+  // Link this LINE account to the roster row the first time a known member
+  // identifies, so their future messages auto-identify without asking.
+  if (roster && !roster.lineUserId) {
+    await prisma.memberRoster
+      .update({ where: { memberNumber }, data: { lineUserId: ctx.lineUserId } })
+      .catch(() => {});
+  }
+
   await prisma.lineUser.upsert({
     where: { id: ctx.lineUserId },
     create: { id: ctx.lineUserId, fullName, memberNumber },
     update: { fullName, memberNumber },
   });
 
+  // Use the roster's canonical name when verified, so a small typo in what
+  // the user typed doesn't end up on the logged record.
+  const identity: LineUserInfo = {
+    fullName: roster?.memberName ?? fullName,
+    memberNumber,
+    verified,
+  };
+  const unverifiedNote = verified
+    ? ""
+    : " (Note to you: this member number is NOT in the cooperative roster, so it could not be verified — proceed, but mention gently in Thai that staff will verify their membership.)";
+
   const pending = await loadPending(ctx.lineUserId);
   if (pending) {
-    const next = computeNextRequirement({ fullName, memberNumber }, pending);
+    const next = computeNextRequirement(identity, pending);
     if (next === null) {
-      return await finalizeTransaction(ctx.lineUserId, pending, { fullName, memberNumber });
+      const result = await finalizeTransaction(ctx.lineUserId, pending, identity);
+      return result + unverifiedNote;
     }
-    return requirementMessage(next);
+    return requirementMessage(next) + unverifiedNote;
   }
 
   const pendingService = await loadPendingServiceRequest(ctx.lineUserId);
   if (pendingService) {
-    const next = computeServiceRequirement({ fullName, memberNumber }, pendingService);
+    const next = computeServiceRequirement(identity, pendingService);
     if (next === null) {
-      return await forwardServiceRequest(ctx.lineUserId, pendingService, {
-        fullName,
-        memberNumber,
-      });
+      const result = await forwardServiceRequest(ctx.lineUserId, pendingService, identity);
+      return result + unverifiedNote;
     }
     // next can only be "purpose" here (member info just got filled in) —
     // ask for it since forwarding still needs it.
-    return "Still missing: what request/service the supporting document is for. Ask the user next, in Thai.";
+    return (
+      "Still missing: what request/service the supporting document is for. Ask the user next, in Thai." +
+      unverifiedNote
+    );
   }
 
-  return `Member info saved (${fullName}, ${memberNumber}). No transaction is currently in progress — just confirm to the user that their info was saved.`;
+  return `Member info saved (${fullName}, ${memberNumber}). No transaction is currently in progress — just confirm to the user that their info was saved.${unverifiedNote}`;
 }
 
 type SubmitLoanTypeInput = {

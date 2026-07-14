@@ -35,6 +35,9 @@ model Expense {
   // saved name changes later.
   memberFullName  String?
   memberNumber    String?
+  // Whether the member's number matched the imported roster at log time —
+  // false means it was self-asserted and unverified, so staff should check.
+  memberVerified  Boolean  @default(false)
   loanType        String?
 
   @@index([date])
