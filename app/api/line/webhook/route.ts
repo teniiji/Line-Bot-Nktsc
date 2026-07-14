@@ -165,6 +165,12 @@ export async function POST(request: NextRequest) {
 
   const events = body.events ?? [];
 
+  // TEMPORARY DEBUG LOG — used to read off a LINE group's ID (for
+  // LINE_FORWARD_TARGET_ID) by having someone message in the target group.
+  // Remove this once you have the ID; group messages aren't otherwise
+  // processed since handleEvent only handles event.source.type === "user".
+  console.log("[DEBUG] webhook event sources:", JSON.stringify(events.map((e) => e.source)));
+
   // Process events but never let a single failure block the 200 response —
   // LINE retries the whole webhook delivery on a non-2xx, which would
   // re-trigger already-handled messages.
