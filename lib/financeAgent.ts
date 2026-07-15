@@ -23,17 +23,12 @@ function hasImageContent(content: Anthropic.MessageParam["content"]): boolean {
   );
 }
 
-// สหกรณ์ออมทรัพย์ครูหนองคาย จำกัด's official website — the only domain the
-// web_fetch tool below is allowed to reach. Mentioning the literal URL here
-// (in the cached static system prompt) is also what satisfies web_fetch's
-// requirement that a URL be already present in the conversation before the
-// model can fetch it.
+// สหกรณ์ออมทรัพย์ครูหนองคาย จำกัด's official website — referenced in the
+// static reference data below (interest rates, forms link). No longer used
+// to configure a live-browsing tool — see the note above `tools` for why.
 const COOPERATIVE_WEBSITE = "https://www.nktscoop.com";
 
-// Mixed array: custom tools (Anthropic.Tool) plus the server-executed
-// web_fetch tool below, which is a different variant — Anthropic.Tool alone
-// can't type it, hence the wider ToolUnion annotation.
-const tools: Anthropic.Messages.ToolUnion[] = [
+const tools: Anthropic.Tool[] = [
   {
     name: "report_transaction",
     description:
@@ -195,28 +190,15 @@ const tools: Anthropic.Messages.ToolUnion[] = [
       required: ["nickname"],
     },
   },
-  // Server-executed, restricted to the cooperative's own domain via
-  // allowed_domains so a member can never get the bot to fetch/search
-  // arbitrary sites. web_fetch refuses any URL that hasn't already
-  // appeared as real content in the conversation (error
-  // "url_not_in_prior_context") — mentioning the URL in the system prompt
-  // does NOT count, so web_fetch alone always failed. web_search must run
-  // first: its results land in the conversation as a genuine tool result,
-  // which is what makes the URL fetchable afterward. Both use the basic
-  // (non-"_2026...") variant because TEXT_MODEL is Haiku 4.5, which the
-  // newer dynamic-filtering variants don't support.
-  {
-    type: "web_search_20250305",
-    name: "web_search",
-    max_uses: 3,
-    allowed_domains: ["www.nktscoop.com", "nktscoop.com"],
-  },
-  {
-    type: "web_fetch_20250910",
-    name: "web_fetch",
-    max_uses: 2,
-    allowed_domains: ["www.nktscoop.com", "nktscoop.com"],
-  },
+  // web_search + web_fetch (restricted to the cooperative's own domain via
+  // allowed_domains) were removed after a live test surfaced a gambling-spam
+  // link preview in a bot reply — the cooperative's WordPress site appears
+  // to have injected/compromised spam content indexed under its own domain,
+  // which the domain allowlist cannot filter out since it's scoped to the
+  // whole domain, not specific known-good pages. Answering only from the
+  // static reference data below (member-verified content we control
+  // directly) is safer than live-browsing a site we can't currently vouch
+  // for. Re-add server tools only after the site is confirmed clean.
 ];
 
 type LineUserInfo = {
@@ -342,8 +324,8 @@ function buildSystemPrompt(
 4. เมื่อผู้ใช้ส่งรูปที่เป็น**เอกสารประกอบ** (สลิปเงินเดือน, สำเนาบัตรประชาชน, สำเนาทะเบียนบ้าน, ทะเบียนสมรส) แทนที่จะเป็นสลิปโอนเงิน ให้เรียก flag_supporting_document ทันที (ห้ามใช้ decline_unreadable_image สำหรับเอกสารกลุ่มนี้) แล้วถามด้วยคำสุภาพว่าต้องการทำรายการอะไร
 5. เมื่อผู้ใช้ตอบว่าเอกสารประกอบนั้นส่งมาเพื่อทำรายการอะไร (เช่น "ขอกู้เงินสามัญ") ให้เรียก submit_service_purpose ด้วยข้อความนั้น
 6. เมื่อผู้ใช้ถามเกี่ยวกับประวัติการเงินของตัวเอง (เช่น "เดือนนี้จ่ายหนี้ไปเท่าไหร่") ให้เรียกใช้ get_transaction_summary แล้วสรุปคำตอบเป็นภาษาไทย
-7. เมื่อผู้ใช้ถามข้อมูลเกี่ยวกับสหกรณ์เอง (อัตราดอกเบี้ยเงินฝาก/เงินกู้, สวัสดิการสมาชิก, ข้อมูลติดต่อ) **ให้ตอบจาก "ข้อมูลอ้างอิงของสหกรณ์" ด้านบนได้ทันที ไม่ต้องเรียก tool ใดๆ** เพราะเป็นข้อมูลที่เปลี่ยนไม่บ่อย แต่ให้บอกด้วยว่าเป็นข้อมูล ณ สิ้นปี 2568 อาจมีการเปลี่ยนแปลง ถ้าต้องการยืนยันตัวเลขล่าสุดให้ติดต่อสำนักงานสหกรณ์โดยตรง — ถ้าผู้ใช้ถามเรื่องที่ไม่มีในข้อมูลอ้างอิงนี้ (เช่น ข่าวสาร, ประกาศ, กิจกรรมล่าสุด) ให้เรียก web_search ค้นจากเว็บไซต์สหกรณ์ก่อนเสมอ (**ห้ามเรียก web_fetch ตรงๆ เด็ดขาด — web_fetch จะปฏิเสธ URL ที่ยังไม่เคยปรากฏในบทสนทนาจริง ต้องผ่าน web_search มาก่อนเท่านั้น**) ถ้าผลค้นหายังไม่ครบให้เรียก web_fetch ดึงเนื้อหาเต็มจากลิงก์ที่ได้ต่อ แล้วสรุปคำตอบจากเนื้อหาที่ดึงมาได้จริงเท่านั้น ห้ามตอบจากความจำหรือเดา ถ้าค้นหา/ดึงข้อมูลไม่สำเร็จหรือหาคำตอบไม่เจอ ให้บอกตรงๆ ว่าหาไม่พบและแนะนำให้ติดต่อสำนักงานสหกรณ์โดยตรง
-8. เมื่อผู้ใช้ขอแบบฟอร์ม/เอกสารของสหกรณ์ (เช่น แบบฟอร์มเปลี่ยนแปลงคนค้ำประกัน, ใบสมัครสมาชิก, แบบฟอร์ม สสค./สสอค./สส.ชสอ./สส.สก./สส.สท.) ให้เรียก web_search ค้นชื่อแบบฟอร์มนั้นในเว็บไซต์สหกรณ์ก่อนเสมอ (**ห้ามเรียก web_fetch ตรงๆ เด็ดขาด ต้องผ่าน web_search ก่อน**) เพราะลิงก์แบบฟอร์มอาจเปลี่ยนแปลงได้ ถ้าค้นเจอลิงก์เฉพาะของแบบฟอร์มนั้น ให้เรียก web_fetch ดึงเนื้อหาหน้านั้นมายืนยัน/หาลิงก์ดาวน์โหลดที่แน่ชัด แล้วส่งลิงก์นั้นตรงๆ ให้ผู้ใช้ ถ้าค้นหา/ดึงข้อมูลไม่สำเร็จหรือหาลิงก์เฉพาะเจาะจงไม่เจอ ให้ส่งลิงก์หน้ารวมแบบฟอร์มสหกรณ์ (ในข้อมูลอ้างอิงด้านบน) แทน พร้อมบอกให้เลือกหมวดที่ต้องการเอง ห้ามเดาลิงก์หรือแต่ง URL เอง
+7. เมื่อผู้ใช้ถามข้อมูลเกี่ยวกับสหกรณ์เอง (อัตราดอกเบี้ยเงินฝาก/เงินกู้, สวัสดิการสมาชิก, ข้อมูลติดต่อ) **ให้ตอบจาก "ข้อมูลอ้างอิงของสหกรณ์" ด้านบนได้ทันที ไม่ต้องเรียก tool ใดๆ** เพราะเป็นข้อมูลที่เปลี่ยนไม่บ่อย แต่ให้บอกด้วยว่าเป็นข้อมูล ณ สิ้นปี 2568 อาจมีการเปลี่ยนแปลง ถ้าต้องการยืนยันตัวเลขล่าสุดให้ติดต่อสำนักงานสหกรณ์โดยตรง — ถ้าผู้ใช้ถามเรื่องที่ไม่มีในข้อมูลอ้างอิงนี้ (เช่น ข่าวสาร, ประกาศ, กิจกรรมล่าสุด) **ให้บอกตรงๆ ว่าไม่มีข้อมูลนี้ในระบบ แนะนำให้ติดต่อสำนักงานสหกรณ์โดยตรงหรือดูที่เว็บไซต์สหกรณ์เอง (${COOPERATIVE_WEBSITE}) ห้ามตอบจากความจำหรือเดาเด็ดขาด**
+8. เมื่อผู้ใช้ขอแบบฟอร์ม/เอกสารของสหกรณ์ (เช่น แบบฟอร์มเปลี่ยนแปลงคนค้ำประกัน, ใบสมัครสมาชิก, แบบฟอร์ม สสค./สสอค./สส.ชสอ./สส.สก./สส.สท.) **ให้ส่งลิงก์หน้ารวมแบบฟอร์มสหกรณ์ (ในข้อมูลอ้างอิงด้านบน) ทันที ไม่ต้องเรียก tool ใดๆ** พร้อมบอกให้เลือกหมวดที่ต้องการเองในหน้านั้น ห้ามเดาลิงก์เฉพาะของแบบฟอร์มแต่ละอย่างเอง
 9. เมื่อผู้ใช้ถามคำถามความรู้ทั่วไปเกี่ยวกับการเงิน (เช่น วิธีลงทุน, หลักการกู้ยืมทั่วไป) ที่ไม่เกี่ยวกับข้อมูลของสหกรณ์นี้โดยเฉพาะและไม่เกี่ยวกับข้อมูลส่วนตัวของเขา ให้ตอบด้วยความรู้ทั่วไปโดยตรง ไม่ต้องเรียกเครื่องมือใดๆ และควรระบุว่าเป็นข้อมูลทั่วไป ไม่ใช่คำแนะนำทางการเงินจากผู้เชี่ยวชาญที่มีใบอนุญาต
 10. เมื่อผู้ใช้ขอเปลี่ยน/ตั้งชื่อเล่นของตัวเอง (เช่น "เปลี่ยนชื่อเรียกฉันเป็น...", "ตั้งชื่อเล่นว่า...") ให้เรียก set_nickname ด้วยชื่อที่ผู้ใช้ระบุ แล้วตอบยืนยันสั้นๆ ห้ามเรียก tool นี้เพื่อเหตุผลอื่นนอกจากนี้เด็ดขาด (คนละเรื่องกับชื่อ-นามสกุลสมาชิกในข้อ 2)
 
