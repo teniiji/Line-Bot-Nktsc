@@ -28,6 +28,32 @@ function hasImageContent(content: Anthropic.MessageParam["content"]): boolean {
 // to configure a live-browsing tool — see the note above `tools` for why.
 const COOPERATIVE_WEBSITE = "https://www.nktscoop.com";
 
+// Hosts the bot is allowed to link to in a reply. Any other http(s) URL a
+// reply happens to contain — a hallucination, a stray copy from fetched
+// page content, an ad that slipped into scraped HTML, anything — is
+// stripped before the message goes out to LINE, rather than trusting the
+// model never to include one. This is defense in depth: it runs on every
+// reply regardless of whether any web-browsing tool is currently enabled,
+// so it stays protective even if one gets re-added later without this
+// specific incident being remembered.
+const ALLOWED_LINK_HOSTS = new Set(["nktscoop.com", "www.nktscoop.com"]);
+
+function stripDisallowedLinks(text: string): string {
+  return text.replace(/https?:\/\/[^\s<>()[\]{}"']+/gi, (url) => {
+    let hostname: string;
+    try {
+      hostname = new URL(url).hostname.toLowerCase();
+    } catch {
+      hostname = "";
+    }
+    if (ALLOWED_LINK_HOSTS.has(hostname)) {
+      return url;
+    }
+    console.warn("[financeAgent] stripped disallowed link from reply:", url);
+    return "[ลิงก์ถูกลบเพื่อความปลอดภัย]";
+  });
+}
+
 const tools: Anthropic.Tool[] = [
   {
     name: "report_transaction",
@@ -1104,7 +1130,7 @@ export async function runFinanceAgent(
         );
       }
       return {
-        text: text || "ขอโทษค่ะ ไม่สามารถตอบได้ในตอนนี้",
+        text: stripDisallowedLinks(text || "ขอโทษค่ะ ไม่สามารถตอบได้ในตอนนี้"),
         quickReplies: await computeQuickReplies(lineUserId),
       };
     }
@@ -1144,7 +1170,9 @@ export async function runFinanceAgent(
     (block): block is Anthropic.TextBlock => block.type === "text"
   );
   return {
-    text: finalText?.text.trim() || "ขอโทษค่ะ ดำเนินการไม่สำเร็จ ลองใหม่อีกครั้งนะคะ",
+    text: stripDisallowedLinks(
+      finalText?.text.trim() || "ขอโทษค่ะ ดำเนินการไม่สำเร็จ ลองใหม่อีกครั้งนะคะ"
+    ),
     quickReplies: await computeQuickReplies(lineUserId),
   };
 }
