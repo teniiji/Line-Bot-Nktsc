@@ -1069,8 +1069,24 @@ export async function runFinanceAgent(
         (block): block is Anthropic.TextBlock => block.type === "text"
       );
       const text = textBlock?.text.trim();
+      // web_fetch is a server tool — it resolves within this same response
+      // (server_tool_use + web_fetch_tool_result blocks) rather than as a
+      // client tool_use block, so it never shows up in toolUseBlocks above.
+      // Log whether it was actually invoked and what came back, so a reply
+      // that wrongly claims "no info available" can be diagnosed from
+      // Vercel logs instead of guessing whether the model even tried.
+      const webFetchResult = response.content.find(
+        (block) => block.type === "web_fetch_tool_result"
+      );
       console.log(
-        `[financeAgent] no tool called on turn ${turn}, replying with text only`
+        `[financeAgent] no client tool called on turn ${turn}`,
+        JSON.stringify({
+          contentTypes: response.content.map((b) => b.type),
+          webFetchCalled: response.content.some((b) => b.type === "server_tool_use"),
+          webFetchResult: webFetchResult
+            ? JSON.stringify(webFetchResult).slice(0, 800)
+            : null,
+        })
       );
       if (!text) {
         console.error(
