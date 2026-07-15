@@ -1,0 +1,177 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Expense {
+  id              String   @id @default(cuid())
+  amount          Float
+  category        String
+  description     String?
+  date            DateTime
+  createdAt       DateTime @default(now())
+  lineUserId      String?
+  // Bank/wallet-issued transaction reference number read off a slip, if
+  // visible. Globally unique in the real world, so it doubles as a
+  // duplicate-slip guard — resubmitting the same slip hits this constraint
+  // instead of creating a second row. Not fully reliable on its own since
+  // it depends on the vision model reading the exact same text on every
+  // submission — slipImageHash below is the more robust guard.
+  referenceNumber String?  @unique
+  // SHA-256 of the raw slip image bytes. Unlike referenceNumber, this is
+  // deterministic — resending the literal same photo always hashes
+  // identically regardless of what the model manages to read off it — so
+  // it's the primary duplicate-slip guard; referenceNumber is a secondary
+  // one for cases where the same transaction is photographed twice.
+  slipImageHash   String?  @unique
+  slipImageUrl    String?
+  // Snapshot of the member's identity and (for ชำระหนี้) the loan type at
+  // the moment this transaction was logged — copied from LineUser rather
+  // than joined live, so the record stays accurate even if the member's
+  // saved name changes later.
+  memberFullName  String?
+  memberNumber    String?
+  // Whether the member's number matched the imported roster at log time —
+  // false means it was self-asserted and unverified, so staff should check.
+  memberVerified  Boolean  @default(false)
+  loanType        String?
+
+  @@index([date])
+  @@index([category])
+  // get_transaction_summary always filters by lineUserId, often together
+  // with a date range — a composite index serves that directly instead of
+  // Postgres bitmap-AND-ing two single-column indexes. Still usable for
+  // lineUserId-only lookups since it's the leading column, so the old
+  // standalone index([lineUserId]) is redundant with this.
+  @@index([lineUserId, date])
+}
+
+// Records LINE webhook events that have already been processed, so a
+// retried delivery (LINE re-sends on timeout / non-2xx) is a no-op instead
+// of re-running the finance agent and creating a duplicate expense.
+model ProcessedLineEvent {
+  id        String   @id @default(cuid())
+  eventId   String   @unique
+  createdAt DateTime @default(now())
+}
+
+// An in-progress cooperative transaction the agent is still collecting
+// required info for (member identity, transfer slip, and — for ชำระหนี้ —
+// loan type) across multiple separate, stateless webhook calls. Holds
+// whatever has been supplied so far per LINE user until every requirement
+// is met (at which point it's converted into an Expense and deleted), or it
+// expires unanswered.
+model PendingTransaction {
+  id              String    @id @default(cuid())
+  lineUserId      String    @unique
+  category        String?
+  amount          Float?
+  description     String?
+  date            DateTime?
+  // Whether a slip image has been seen for this transaction — tracked
+  // separately from slipImageUrl because the Blob upload it depends on is
+  // best-effort (skipped entirely if BLOB_READ_WRITE_TOKEN isn't set) and
+  // must never gate whether the flow can proceed.
+  hasSlip         Boolean   @default(false)
+  slipImageHash   String?
+  slipImageUrl    String?
+  referenceNumber String?
+  loanType        String?
+  createdAt       DateTime  @default(now())
+}
+
+// A supporting document (payslip, ID card copy, house registration copy,
+// marriage certificate) the user sent that isn't a transfer slip — these
+// are typically submitted for some other cooperative service (e.g. a loan
+// application) this bot doesn't itself process. Holds the document type
+// while the agent asks what it's for, then — once member identity is also
+// known — forwards the request to LINE_FORWARD_TARGET_ID and clears.
+model PendingServiceRequest {
+  id           String   @id @default(cuid())
+  lineUserId   String   @unique
+  documentType String
+  requestType  String?
+  // "สินเชื่อ" | "อื่นๆ" — which forwarding pool this request routes
+  // through. Set together with requestType by submit_service_purpose.
+  department   String?
+  createdAt    DateTime @default(now())
+}
+
+// One row per LINE user who has ever messaged the bot, keyed by their LINE
+// userId. displayName is fetched from LINE's profile API the first time we
+// see a user (best-effort, may be null if that call fails); nickname is set
+// by the user themselves via the finance agent's set_nickname tool.
+// fullName/memberNumber are collected once via the finance agent's
+// submit_member_info tool the first time the user reports a cooperative
+// transaction, then reused for every later transaction without asking
+// again. Lets the web dashboard show a name instead of a raw LINE userId.
+// Deliberately not a Prisma relation to Expense.lineUserId — that field
+// predates this table and can reference ids with no row here yet (or ever,
+// for pre-existing data).
+model LineUser {
+  id           String   @id
+  displayName  String?
+  nickname     String?
+  fullName     String?
+  memberNumber String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+}
+
+// Reference directory of cooperative-affiliated organizations (schools,
+// government units, pension groups by district) — imported from an
+// existing spreadsheet maintained outside this app (scripts/import-org-data.ts).
+// lineUserId here is whoever currently receives that unit's monthly
+// deduction-report ("รายการหัก") notification — NOT automatically the
+// right person for a new loan service request; see LoanDistrictContact
+// for that, which is deliberately kept separate.
+model OrganizationUnit {
+  id            String   @id @default(cuid())
+  name          String   @unique
+  groupName     String?
+  contactMethod String?
+  contactName   String?
+  email         String?
+  lineUserId    String?
+  note          String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+}
+
+// Roster of cooperative members already known from the LINE OA — imported
+// from an existing spreadsheet (scripts/import-org-data.ts), including
+// which organizational unit/district they're affiliated with. Used to look
+// up a member's district when routing a loan service request. A separate,
+// richer source than LineUser, which this bot only populates from what
+// members type in via submit_member_info.
+model MemberRoster {
+  id           String   @id @default(cuid())
+  memberNumber String   @unique
+  memberName   String
+  unitName     String?
+  lineUserId   String?
+  nickname     String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([lineUserId])
+}
+
+// Who to forward a loan (สินเชื่อ/กู้เงิน) service request to for a given
+// district, extracted from MemberRoster.unitName (e.g. "อ.เมือง").
+// Deliberately separate from OrganizationUnit.lineUserId and starts empty
+// — populated only once a district's actual loan contact is confirmed. A
+// district with no row here (including every district until first
+// populated) falls back to LINE_FORWARD_LOAN_ID.
+model LoanDistrictContact {
+  id         String   @id @default(cuid())
+  district   String   @unique
+  lineUserId String
+  note       String?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+}
