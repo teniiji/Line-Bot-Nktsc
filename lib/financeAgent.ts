@@ -195,11 +195,22 @@ const tools: Anthropic.Messages.ToolUnion[] = [
       required: ["nickname"],
     },
   },
-  // Server-executed — Anthropic fetches the page, not the bot's own server.
-  // web_fetch_20250910 (not the newer _20260209 dynamic-filtering variant)
-  // because TEXT_MODEL is Haiku 4.5, which the newer variant doesn't
-  // support. Restricted to the cooperative's own domain via allowed_domains
-  // so a member can never get the bot to fetch an arbitrary URL.
+  // Server-executed, restricted to the cooperative's own domain via
+  // allowed_domains so a member can never get the bot to fetch/search
+  // arbitrary sites. web_fetch refuses any URL that hasn't already
+  // appeared as real content in the conversation (error
+  // "url_not_in_prior_context") — mentioning the URL in the system prompt
+  // does NOT count, so web_fetch alone always failed. web_search must run
+  // first: its results land in the conversation as a genuine tool result,
+  // which is what makes the URL fetchable afterward. Both use the basic
+  // (non-"_2026...") variant because TEXT_MODEL is Haiku 4.5, which the
+  // newer dynamic-filtering variants don't support.
+  {
+    type: "web_search_20250305",
+    name: "web_search",
+    max_uses: 3,
+    allowed_domains: ["www.nktscoop.com", "nktscoop.com"],
+  },
   {
     type: "web_fetch_20250910",
     name: "web_fetch",
@@ -324,7 +335,7 @@ function buildSystemPrompt(
 4. เมื่อผู้ใช้ส่งรูปที่เป็น**เอกสารประกอบ** (สลิปเงินเดือน, สำเนาบัตรประชาชน, สำเนาทะเบียนบ้าน, ทะเบียนสมรส) แทนที่จะเป็นสลิปโอนเงิน ให้เรียก flag_supporting_document ทันที (ห้ามใช้ decline_unreadable_image สำหรับเอกสารกลุ่มนี้) แล้วถามด้วยคำสุภาพว่าต้องการทำรายการอะไร
 5. เมื่อผู้ใช้ตอบว่าเอกสารประกอบนั้นส่งมาเพื่อทำรายการอะไร (เช่น "ขอกู้เงินสามัญ") ให้เรียก submit_service_purpose ด้วยข้อความนั้น
 6. เมื่อผู้ใช้ถามเกี่ยวกับประวัติการเงินของตัวเอง (เช่น "เดือนนี้จ่ายหนี้ไปเท่าไหร่") ให้เรียกใช้ get_transaction_summary แล้วสรุปคำตอบเป็นภาษาไทย
-7. เมื่อผู้ใช้ถามข้อมูลเกี่ยวกับสหกรณ์เอง (เช่น อัตราดอกเบี้ยเงินฝาก/เงินกู้ปัจจุบัน, สวัสดิการสมาชิก, ข้อมูลติดต่อ, ข่าวสาร, ประกาศ) ให้เรียก web_fetch ดึงข้อมูลจาก ${COOPERATIVE_WEBSITE} ก่อนเสมอ แล้วสรุปคำตอบจากเนื้อหาที่ดึงมาได้จริงเท่านั้น ห้ามตอบจากความจำหรือเดาตัวเลข ถ้าดึงข้อมูลไม่สำเร็จหรือหน้าเว็บไม่มีคำตอบ ให้บอกตรงๆ ว่าหาไม่พบและแนะนำให้ติดต่อสำนักงานสหกรณ์โดยตรง
+7. เมื่อผู้ใช้ถามข้อมูลเกี่ยวกับสหกรณ์เอง (เช่น อัตราดอกเบี้ยเงินฝาก/เงินกู้ปัจจุบัน, สวัสดิการสมาชิก, ข้อมูลติดต่อ, ข่าวสาร, ประกาศ) ให้เรียก web_search ค้นหาข้อมูลจากเว็บไซต์สหกรณ์ (${COOPERATIVE_WEBSITE}) ก่อนเสมอ **ห้ามข้ามขั้นตอนนี้ไปเรียก web_fetch ตรงๆ เด็ดขาด — web_fetch จะปฏิเสธ URL ที่ยังไม่เคยปรากฏในบทสนทนาจริง (ต้องผ่าน web_search มาก่อนเท่านั้น)** ถ้าผลค้นหาสรุปคำตอบได้พอแล้วให้ตอบจากผลนั้นได้เลย ถ้ายังไม่ครบให้เรียก web_fetch ดึงเนื้อหาเต็มจากลิงก์ที่ได้จากผลค้นหาต่อ แล้วสรุปคำตอบจากเนื้อหาที่ดึงมาได้จริงเท่านั้น ห้ามตอบจากความจำหรือเดาตัวเลข ถ้าค้นหา/ดึงข้อมูลไม่สำเร็จหรือหาคำตอบไม่เจอ ให้บอกตรงๆ ว่าหาไม่พบและแนะนำให้ติดต่อสำนักงานสหกรณ์โดยตรง
 8. เมื่อผู้ใช้ถามคำถามความรู้ทั่วไปเกี่ยวกับการเงิน (เช่น วิธีลงทุน, หลักการกู้ยืมทั่วไป) ที่ไม่เกี่ยวกับข้อมูลของสหกรณ์นี้โดยเฉพาะและไม่เกี่ยวกับข้อมูลส่วนตัวของเขา ให้ตอบด้วยความรู้ทั่วไปโดยตรง ไม่ต้องเรียกเครื่องมือใดๆ และควรระบุว่าเป็นข้อมูลทั่วไป ไม่ใช่คำแนะนำทางการเงินจากผู้เชี่ยวชาญที่มีใบอนุญาต
 9. เมื่อผู้ใช้ขอเปลี่ยน/ตั้งชื่อเล่นของตัวเอง (เช่น "เปลี่ยนชื่อเรียกฉันเป็น...", "ตั้งชื่อเล่นว่า...") ให้เรียก set_nickname ด้วยชื่อที่ผู้ใช้ระบุ แล้วตอบยืนยันสั้นๆ ห้ามเรียก tool นี้เพื่อเหตุผลอื่นนอกจากนี้เด็ดขาด (คนละเรื่องกับชื่อ-นามสกุลสมาชิกในข้อ 2)
 
