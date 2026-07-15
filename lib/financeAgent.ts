@@ -1076,27 +1076,32 @@ export async function runFinanceAgent(
     );
 
     if (toolUseBlocks.length === 0) {
-      const textBlock = response.content.find(
+      // When a server tool (web_search/web_fetch) runs mid-turn, the model
+      // often emits a text block *before* calling it (e.g. "กำลังค้นหาข้อมูล
+      // ให้ค่ะ...") in addition to the real answer *after* the tool result.
+      // The first text block was being sent to the user as the reply —
+      // always a filler acknowledgement, never the actual answer. Use the
+      // last text block instead, which is the one written with the tool
+      // result in hand.
+      const textBlock = response.content.findLast(
         (block): block is Anthropic.TextBlock => block.type === "text"
       );
       const text = textBlock?.text.trim();
-      // web_fetch is a server tool — it resolves within this same response
-      // (server_tool_use + web_fetch_tool_result blocks) rather than as a
-      // client tool_use block, so it never shows up in toolUseBlocks above.
-      // Log whether it was actually invoked and what came back, so a reply
-      // that wrongly claims "no info available" can be diagnosed from
-      // Vercel logs instead of guessing whether the model even tried.
-      const webFetchResult = response.content.find(
-        (block) => block.type === "web_fetch_tool_result"
+      // Server tools resolve within this same response (server_tool_use +
+      // a *_tool_result block) rather than as a client tool_use block, so
+      // they never show up in toolUseBlocks above. Log what ran and what
+      // came back so a reply that wrongly claims "no info available" (or,
+      // as above, sends only a pre-tool-call filler line) can be diagnosed
+      // from Vercel logs instead of guessing.
+      const serverToolResults = response.content.filter((b) =>
+        b.type === "web_fetch_tool_result" || b.type === "web_search_tool_result"
       );
       console.log(
         `[financeAgent] no client tool called on turn ${turn}`,
         JSON.stringify({
           contentTypes: response.content.map((b) => b.type),
-          webFetchCalled: response.content.some((b) => b.type === "server_tool_use"),
-          webFetchResult: webFetchResult
-            ? JSON.stringify(webFetchResult).slice(0, 800)
-            : null,
+          textBlockCount: response.content.filter((b) => b.type === "text").length,
+          serverToolResults: serverToolResults.map((b) => JSON.stringify(b).slice(0, 500)),
         })
       );
       if (!text) {
@@ -1145,7 +1150,7 @@ export async function runFinanceAgent(
     system,
     messages,
   });
-  const finalText = finalResponse.content.find(
+  const finalText = finalResponse.content.findLast(
     (block): block is Anthropic.TextBlock => block.type === "text"
   );
   return {
