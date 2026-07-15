@@ -23,7 +23,17 @@ function hasImageContent(content: Anthropic.MessageParam["content"]): boolean {
   );
 }
 
-const tools: Anthropic.Tool[] = [
+// สหกรณ์ออมทรัพย์ครูหนองคาย จำกัด's official website — the only domain the
+// web_fetch tool below is allowed to reach. Mentioning the literal URL here
+// (in the cached static system prompt) is also what satisfies web_fetch's
+// requirement that a URL be already present in the conversation before the
+// model can fetch it.
+const COOPERATIVE_WEBSITE = "https://www.nktscoop.com";
+
+// Mixed array: custom tools (Anthropic.Tool) plus the server-executed
+// web_fetch tool below, which is a different variant — Anthropic.Tool alone
+// can't type it, hence the wider ToolUnion annotation.
+const tools: Anthropic.Messages.ToolUnion[] = [
   {
     name: "report_transaction",
     description:
@@ -185,6 +195,17 @@ const tools: Anthropic.Tool[] = [
       required: ["nickname"],
     },
   },
+  // Server-executed — Anthropic fetches the page, not the bot's own server.
+  // web_fetch_20250910 (not the newer _20260209 dynamic-filtering variant)
+  // because TEXT_MODEL is Haiku 4.5, which the newer variant doesn't
+  // support. Restricted to the cooperative's own domain via allowed_domains
+  // so a member can never get the bot to fetch an arbitrary URL.
+  {
+    type: "web_fetch_20250910",
+    name: "web_fetch",
+    max_uses: 2,
+    allowed_domains: ["www.nktscoop.com", "nktscoop.com"],
+  },
 ];
 
 type LineUserInfo = {
@@ -295,7 +316,7 @@ function buildSystemPrompt(
 
 **กฎที่ห้ามฝ่าฝืนเด็ดขาด**: เมื่อผู้ใช้พิมพ์บอกจำนวนเงิน+หมวดหมู่ธุรกรรม (แม้จะยังไม่มีสลิปก็ตาม) **ห้ามตอบเป็นข้อความเปล่าๆ ถามข้อมูลเพิ่มโดยไม่เรียก report_transaction ก่อนเด็ดขาด** ต่อให้ยอดเงินดูสูงผิดปกติหรือคุณอยากถามอะไรเพิ่มก็ตาม ให้เรียก report_transaction ด้วยข้อมูลที่มีก่อนเสมอ (ระบบจะเก็บยอดนี้ไว้เทียบกับสลิปที่จะตามมาทีหลังเองด้วย) แล้วค่อยใส่คำถามหรือข้อสังเกตของคุณลงในข้อความตอบกลับได้ตามปกติ — การเรียก tool กับการถามคำถามทำพร้อมกันได้ในคำตอบเดียว ไม่ต้องเลือกอย่างใดอย่างหนึ่ง
 
-หน้าที่ของคุณมี 8 อย่าง:
+หน้าที่ของคุณมี 9 อย่าง:
 
 1. เมื่อผู้ใช้เล่าถึงหรือส่งรูปสลิปธุรกรรมกับสหกรณ์ที่เกิดขึ้นแล้ว (ซื้อหุ้น, ชำระหนี้, ฝากเงิน, ชำระเก็บไม่ได้รายเดือน, ชำระประกัน, ชำระฌาปนกิจ, สสค, สสอค, สสชสอ, สสสก, สสสท) ให้เรียก report_transaction ทันทีเพื่อเริ่ม/อัปเดตการบันทึก **ทุกธุรกรรมต้องผ่านการยืนยันตัวตนสมาชิก (ชื่อ-นามสกุล + เลขสมาชิก, ถามครั้งเดียวแล้วจำไว้ถาวร) และมีรูปสลิปการโอนเงินก่อนจะบันทึกจริงเสมอ — ธุรกรรมชำระหนี้ต้องระบุประเภทเงินกู้เพิ่มด้วย** คุณไม่ต้องตัดสินใจเองว่าต้องขอข้อมูลอะไรต่อ ระบบจะตรวจสอบให้อัตโนมัติหลังจากเรียก tool แล้วบอกกลับมาว่ายังขาดอะไร ให้ทำตามนั้น
 2. เมื่อผู้ใช้ให้ชื่อ-นามสกุลและเลขสมาชิก (ไม่ว่าจะเสนอเองหรือตอบคำถามที่ถามไป) ให้เรียก submit_member_info
@@ -303,8 +324,9 @@ function buildSystemPrompt(
 4. เมื่อผู้ใช้ส่งรูปที่เป็น**เอกสารประกอบ** (สลิปเงินเดือน, สำเนาบัตรประชาชน, สำเนาทะเบียนบ้าน, ทะเบียนสมรส) แทนที่จะเป็นสลิปโอนเงิน ให้เรียก flag_supporting_document ทันที (ห้ามใช้ decline_unreadable_image สำหรับเอกสารกลุ่มนี้) แล้วถามด้วยคำสุภาพว่าต้องการทำรายการอะไร
 5. เมื่อผู้ใช้ตอบว่าเอกสารประกอบนั้นส่งมาเพื่อทำรายการอะไร (เช่น "ขอกู้เงินสามัญ") ให้เรียก submit_service_purpose ด้วยข้อความนั้น
 6. เมื่อผู้ใช้ถามเกี่ยวกับประวัติการเงินของตัวเอง (เช่น "เดือนนี้จ่ายหนี้ไปเท่าไหร่") ให้เรียกใช้ get_transaction_summary แล้วสรุปคำตอบเป็นภาษาไทย
-7. เมื่อผู้ใช้ถามคำถามความรู้ทั่วไปเกี่ยวกับการเงิน (เช่น อัตราดอกเบี้ย, วิธีลงทุน, การกู้ยืม) ที่ไม่เกี่ยวกับข้อมูลส่วนตัวของเขา ให้ตอบด้วยความรู้ทั่วไปโดยตรง ไม่ต้องเรียกเครื่องมือใดๆ และควรระบุว่าเป็นข้อมูลทั่วไป ไม่ใช่คำแนะนำทางการเงินจากผู้เชี่ยวชาญที่มีใบอนุญาต
-8. เมื่อผู้ใช้ขอเปลี่ยน/ตั้งชื่อเล่นของตัวเอง (เช่น "เปลี่ยนชื่อเรียกฉันเป็น...", "ตั้งชื่อเล่นว่า...") ให้เรียก set_nickname ด้วยชื่อที่ผู้ใช้ระบุ แล้วตอบยืนยันสั้นๆ ห้ามเรียก tool นี้เพื่อเหตุผลอื่นนอกจากนี้เด็ดขาด (คนละเรื่องกับชื่อ-นามสกุลสมาชิกในข้อ 2)
+7. เมื่อผู้ใช้ถามข้อมูลเกี่ยวกับสหกรณ์เอง (เช่น อัตราดอกเบี้ยเงินฝาก/เงินกู้ปัจจุบัน, สวัสดิการสมาชิก, ข้อมูลติดต่อ, ข่าวสาร, ประกาศ) ให้เรียก web_fetch ดึงข้อมูลจาก ${COOPERATIVE_WEBSITE} ก่อนเสมอ แล้วสรุปคำตอบจากเนื้อหาที่ดึงมาได้จริงเท่านั้น ห้ามตอบจากความจำหรือเดาตัวเลข ถ้าดึงข้อมูลไม่สำเร็จหรือหน้าเว็บไม่มีคำตอบ ให้บอกตรงๆ ว่าหาไม่พบและแนะนำให้ติดต่อสำนักงานสหกรณ์โดยตรง
+8. เมื่อผู้ใช้ถามคำถามความรู้ทั่วไปเกี่ยวกับการเงิน (เช่น วิธีลงทุน, หลักการกู้ยืมทั่วไป) ที่ไม่เกี่ยวกับข้อมูลของสหกรณ์นี้โดยเฉพาะและไม่เกี่ยวกับข้อมูลส่วนตัวของเขา ให้ตอบด้วยความรู้ทั่วไปโดยตรง ไม่ต้องเรียกเครื่องมือใดๆ และควรระบุว่าเป็นข้อมูลทั่วไป ไม่ใช่คำแนะนำทางการเงินจากผู้เชี่ยวชาญที่มีใบอนุญาต
+9. เมื่อผู้ใช้ขอเปลี่ยน/ตั้งชื่อเล่นของตัวเอง (เช่น "เปลี่ยนชื่อเรียกฉันเป็น...", "ตั้งชื่อเล่นว่า...") ให้เรียก set_nickname ด้วยชื่อที่ผู้ใช้ระบุ แล้วตอบยืนยันสั้นๆ ห้ามเรียก tool นี้เพื่อเหตุผลอื่นนอกจากนี้เด็ดขาด (คนละเรื่องกับชื่อ-นามสกุลสมาชิกในข้อ 2)
 
 กฎการตรวจสอบรูปสลิป (ใช้ทุกครั้งที่มีรูปภาพเข้ามา ไม่ว่าจะอยู่ขั้นตอนไหนของการเก็บข้อมูล):
 
@@ -1047,8 +1069,24 @@ export async function runFinanceAgent(
         (block): block is Anthropic.TextBlock => block.type === "text"
       );
       const text = textBlock?.text.trim();
+      // web_fetch is a server tool — it resolves within this same response
+      // (server_tool_use + web_fetch_tool_result blocks) rather than as a
+      // client tool_use block, so it never shows up in toolUseBlocks above.
+      // Log whether it was actually invoked and what came back, so a reply
+      // that wrongly claims "no info available" can be diagnosed from
+      // Vercel logs instead of guessing whether the model even tried.
+      const webFetchResult = response.content.find(
+        (block) => block.type === "web_fetch_tool_result"
+      );
       console.log(
-        `[financeAgent] no tool called on turn ${turn}, replying with text only`
+        `[financeAgent] no client tool called on turn ${turn}`,
+        JSON.stringify({
+          contentTypes: response.content.map((b) => b.type),
+          webFetchCalled: response.content.some((b) => b.type === "server_tool_use"),
+          webFetchResult: webFetchResult
+            ? JSON.stringify(webFetchResult).slice(0, 800)
+            : null,
+        })
       );
       if (!text) {
         console.error(
