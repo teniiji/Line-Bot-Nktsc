@@ -451,6 +451,7 @@ type PendingServiceInfo = {
   documentType: string;
   requestType: string | null;
   department: string | null;
+  imageUrl: string | null;
 };
 
 type ServiceRequirement = "purpose" | "member_info" | "phone" | null;
@@ -538,8 +539,24 @@ async function forwardServiceRequest(
     : "⚠️ ยังไม่ยืนยัน (เลขสมาชิกไม่พบในทะเบียน — กรุณาตรวจสอบ)";
   const text = `📋 คำขอจากสมาชิก (ผ่าน LINE Bot)\nเอกสารที่ส่งมา: ${pendingService.documentType}\nแผนก: ${pendingService.department}\nคำขอ: ${pendingService.requestType}\nชื่อ-นามสกุล: ${lineUser.fullName}\nเลขสมาชิก: ${lineUser.memberNumber}\nเบอร์โทรติดต่อกลับ: ${lineUser.phone ?? "-"}\nสถานะ: ${verifyMark}`;
 
+  // imageUrl is the best-effort Blob backup of the document the member
+  // sent (null if BLOB_READ_WRITE_TOKEN isn't configured) — always
+  // uploaded as image/jpeg by the webhook, so it's safe to reuse as both
+  // the full image and the preview LINE requires for an image message.
+  const messages: Parameters<typeof lineClient.pushMessage>[0]["messages"] =
+    pendingService.imageUrl
+      ? [
+          { type: "text", text },
+          {
+            type: "image",
+            originalContentUrl: pendingService.imageUrl,
+            previewImageUrl: pendingService.imageUrl,
+          },
+        ]
+      : [{ type: "text", text }];
+
   try {
-    await lineClient.pushMessage({ to: targetId, messages: [{ type: "text", text }] });
+    await lineClient.pushMessage({ to: targetId, messages });
   } catch (err) {
     console.error("[financeAgent] forward service request push error:", err);
     await prisma.pendingServiceRequest.delete({ where: { lineUserId } }).catch(() => {});
@@ -941,8 +958,14 @@ async function flagSupportingDocument(
 
   await prisma.pendingServiceRequest.upsert({
     where: { lineUserId: ctx.lineUserId },
-    create: { lineUserId: ctx.lineUserId, documentType },
-    update: { documentType, requestType: null, department: null, createdAt: new Date() },
+    create: { lineUserId: ctx.lineUserId, documentType, imageUrl: ctx.slipImageUrl },
+    update: {
+      documentType,
+      requestType: null,
+      department: null,
+      imageUrl: ctx.slipImageUrl,
+      createdAt: new Date(),
+    },
   });
 
   return `Noted a ${documentType} document. Ask the user, politely and in Thai, what request/service this document is for. Do not decline or log anything yet.`;

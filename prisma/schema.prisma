@@ -98,6 +98,10 @@ model PendingServiceRequest {
   // "สินเชื่อ" | "อื่นๆ" — which forwarding pool this request routes
   // through. Set together with requestType by submit_service_purpose.
   department   String?
+  // Best-effort Vercel Blob URL of the document image the member sent
+  // (null if BLOB_READ_WRITE_TOKEN isn't set or the upload failed) —
+  // forwarded to staff as an image message alongside the text summary.
+  imageUrl     String?
   createdAt    DateTime @default(now())
 }
 
