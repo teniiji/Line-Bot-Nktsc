@@ -109,6 +109,9 @@ model PendingServiceRequest {
 // submit_member_info tool the first time the user reports a cooperative
 // transaction, then reused for every later transaction without asking
 // again. Lets the web dashboard show a name instead of a raw LINE userId.
+// phone is collected once via submit_contact_phone, only when a supporting-
+// document service request is being forwarded to staff (not needed for
+// ordinary transaction logging) — reused on later requests the same way.
 // Deliberately not a Prisma relation to Expense.lineUserId — that field
 // predates this table and can reference ids with no row here yet (or ever,
 // for pre-existing data).
@@ -118,6 +121,7 @@ model LineUser {
   nickname     String?
   fullName     String?
   memberNumber String?
+  phone        String?
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 }
