@@ -110,6 +110,21 @@ const tools: Anthropic.Tool[] = [
     },
   },
   {
+    name: "submit_contact_phone",
+    description:
+      "Call when the user provides a callback phone number for a supporting-document service request that's about to be forwarded to cooperative staff — either proactively, or in answer to being asked for it. Only relevant while such a request is pending; never call this for cooperative transaction logging (ซื้อหุ้น, ชำระหนี้, ฝากเงิน, etc.).",
+    input_schema: {
+      type: "object",
+      properties: {
+        phone: {
+          type: "string",
+          description: "The callback phone number, copied as stated.",
+        },
+      },
+      required: ["phone"],
+    },
+  },
+  {
     name: "submit_loan_type",
     description:
       "Call when the user specifies which type of loan an in-progress ชำระหนี้ (debt repayment) transaction is for. Map their wording to the closest of the fixed options.",
@@ -233,6 +248,10 @@ type LineUserInfo = {
   // account's own userId (cryptographically tied to the account, can't be
   // spoofed). false when it's only what the user typed via submit_member_info.
   verified: boolean;
+  // Callback phone number, collected via submit_contact_phone — only ever
+  // asked for when forwarding a supporting-document service request to
+  // staff, never for ordinary transaction logging.
+  phone: string | null;
 };
 
 type PendingInfo = {
@@ -323,6 +342,8 @@ function buildSystemPrompt(
       flowNote = `\n\nหมายเหตุระบบ (สำคัญ): ผู้ใช้เพิ่งส่งเอกสารประกอบ (${pendingService.documentType}) มา ยังไม่ทราบว่าต้องการทำรายการอะไร ถ้าข้อความปัจจุบันของผู้ใช้ระบุว่าต้องการทำอะไร (เช่น ขอกู้เงิน, สมัครสมาชิก) ให้เรียก submit_service_purpose ทันทีด้วยข้อความนั้น พร้อมระบุ department ด้วย: "สินเชื่อ" ถ้าเกี่ยวกับเงินกู้ไม่ว่าประเภทไหน หรือ "อื่นๆ" ถ้าไม่เกี่ยวกับเงินกู้ ถ้ายังไม่ชัดเจนให้ถามย้ำสั้นๆ ด้วยคำสุภาพว่าต้องการทำรายการอะไร`;
     } else if (next === "member_info") {
       flowNote = `\n\nหมายเหตุระบบ (สำคัญ): ผู้ใช้ต้องการทำรายการ "${pendingService.requestType}" (จากเอกสาร ${pendingService.documentType}) ทราบจุดประสงค์แล้ว แต่ยังต้องขอชื่อ-นามสกุลและเลขสมาชิกก่อนจะส่งต่อให้ฝ่ายที่เกี่ยวข้อง ถ้าข้อความปัจจุบันของผู้ใช้มีชื่อ-นามสกุลและเลขสมาชิกอยู่แล้ว ให้เรียก submit_member_info ทันที ถ้ายังไม่มีให้ถามอีกครั้งสั้นๆ`;
+    } else if (next === "phone") {
+      flowNote = `\n\nหมายเหตุระบบ (สำคัญ): ผู้ใช้ต้องการทำรายการ "${pendingService.requestType}" ทราบตัวตนสมาชิกแล้ว แต่ยังต้องขอเบอร์โทรติดต่อกลับก่อนจะส่งต่อให้ฝ่ายที่เกี่ยวข้อง (เจ้าหน้าที่จะใช้โทรกลับเรื่องคำขอนี้) ถ้าข้อความปัจจุบันของผู้ใช้มีเบอร์โทรอยู่แล้ว ให้เรียก submit_contact_phone ทันที ถ้ายังไม่มีให้ถามอีกครั้งสั้นๆ ว่าขอเบอร์โทรติดต่อกลับด้วยค่ะ`;
     }
   }
 
@@ -341,18 +362,19 @@ function buildSystemPrompt(
 
 **กฎที่ห้ามฝ่าฝืนเด็ดขาด**: เมื่อผู้ใช้พิมพ์บอกจำนวนเงิน+หมวดหมู่ธุรกรรม (แม้จะยังไม่มีสลิปก็ตาม) **ห้ามตอบเป็นข้อความเปล่าๆ ถามข้อมูลเพิ่มโดยไม่เรียก report_transaction ก่อนเด็ดขาด** ต่อให้ยอดเงินดูสูงผิดปกติหรือคุณอยากถามอะไรเพิ่มก็ตาม ให้เรียก report_transaction ด้วยข้อมูลที่มีก่อนเสมอ (ระบบจะเก็บยอดนี้ไว้เทียบกับสลิปที่จะตามมาทีหลังเองด้วย) แล้วค่อยใส่คำถามหรือข้อสังเกตของคุณลงในข้อความตอบกลับได้ตามปกติ — การเรียก tool กับการถามคำถามทำพร้อมกันได้ในคำตอบเดียว ไม่ต้องเลือกอย่างใดอย่างหนึ่ง
 
-หน้าที่ของคุณมี 10 อย่าง:
+หน้าที่ของคุณมี 11 อย่าง:
 
 1. เมื่อผู้ใช้เล่าถึงหรือส่งรูปสลิปธุรกรรมกับสหกรณ์ที่เกิดขึ้นแล้ว (ซื้อหุ้น, ชำระหนี้, ฝากเงิน, ชำระเก็บไม่ได้รายเดือน, ชำระประกัน, ชำระฌาปนกิจ, สสค, สสอค, สสชสอ, สสสก, สสสท) ให้เรียก report_transaction ทันทีเพื่อเริ่ม/อัปเดตการบันทึก **ทุกธุรกรรมต้องผ่านการยืนยันตัวตนสมาชิก (ชื่อ-นามสกุล + เลขสมาชิก, ถามครั้งเดียวแล้วจำไว้ถาวร) และมีรูปสลิปการโอนเงินก่อนจะบันทึกจริงเสมอ — ธุรกรรมชำระหนี้ต้องระบุประเภทเงินกู้เพิ่มด้วย** คุณไม่ต้องตัดสินใจเองว่าต้องขอข้อมูลอะไรต่อ ระบบจะตรวจสอบให้อัตโนมัติหลังจากเรียก tool แล้วบอกกลับมาว่ายังขาดอะไร ให้ทำตามนั้น
 2. เมื่อผู้ใช้ให้ชื่อ-นามสกุลและเลขสมาชิก (ไม่ว่าจะเสนอเองหรือตอบคำถามที่ถามไป) ให้เรียก submit_member_info
 3. เมื่อผู้ใช้ระบุประเภทเงินกู้สำหรับธุรกรรมชำระหนี้ที่ค้างอยู่ ให้เรียก submit_loan_type
 4. เมื่อผู้ใช้ส่งรูปที่เป็น**เอกสารประกอบ** (สลิปเงินเดือน, สำเนาบัตรประชาชน, สำเนาทะเบียนบ้าน, ทะเบียนสมรส) แทนที่จะเป็นสลิปโอนเงิน ให้เรียก flag_supporting_document ทันที (ห้ามใช้ decline_unreadable_image สำหรับเอกสารกลุ่มนี้) แล้วถามด้วยคำสุภาพว่าต้องการทำรายการอะไร
 5. เมื่อผู้ใช้ตอบว่าเอกสารประกอบนั้นส่งมาเพื่อทำรายการอะไร (เช่น "ขอกู้เงินสามัญ") ให้เรียก submit_service_purpose ด้วยข้อความนั้น
-6. เมื่อผู้ใช้ถามเกี่ยวกับประวัติการเงินของตัวเอง (เช่น "เดือนนี้จ่ายหนี้ไปเท่าไหร่") ให้เรียกใช้ get_transaction_summary แล้วสรุปคำตอบเป็นภาษาไทย
-7. เมื่อผู้ใช้ถามข้อมูลเกี่ยวกับสหกรณ์เอง (อัตราดอกเบี้ยเงินฝาก/เงินกู้, สวัสดิการสมาชิก, ข้อมูลติดต่อ) **ให้ตอบจาก "ข้อมูลอ้างอิงของสหกรณ์" ด้านบนได้ทันที ไม่ต้องเรียก tool ใดๆ** เพราะเป็นข้อมูลที่เปลี่ยนไม่บ่อย แต่ให้บอกด้วยว่าเป็นข้อมูล ณ สิ้นปี 2568 อาจมีการเปลี่ยนแปลง ถ้าต้องการยืนยันตัวเลขล่าสุดให้ติดต่อสำนักงานสหกรณ์โดยตรง — ถ้าผู้ใช้ถามเรื่องที่ไม่มีในข้อมูลอ้างอิงนี้ (เช่น ข่าวสาร, ประกาศ, กิจกรรมล่าสุด) **ให้บอกตรงๆ ว่าไม่มีข้อมูลนี้ในระบบ แนะนำให้ติดต่อสำนักงานสหกรณ์โดยตรงทางโทรศัพท์/อีเมล ห้ามตอบจากความจำหรือเดาเด็ดขาด และห้ามพิมพ์ลิงก์เว็บไซต์แบบเต็มเด็ดขาดตามกฎด้านบน**
-8. เมื่อผู้ใช้ขอแบบฟอร์ม/เอกสารของสหกรณ์ (เช่น แบบฟอร์มเปลี่ยนแปลงคนค้ำประกัน, ใบสมัครสมาชิก, แบบฟอร์ม สสค./สสอค./สส.ชสอ./สส.สก./สส.สท.) **ให้แนะนำให้ติดต่อขอรับแบบฟอร์มที่สำนักงานสหกรณ์โดยตรงทางโทรศัพท์/อีเมลตามข้อมูลติดต่อด้านบน ไม่ต้องเรียก tool ใดๆ และห้ามพิมพ์ลิงก์เว็บไซต์แบบเต็มเด็ดขาดตามกฎด้านบน**
-9. เมื่อผู้ใช้ถามคำถามความรู้ทั่วไปเกี่ยวกับการเงิน (เช่น วิธีลงทุน, หลักการกู้ยืมทั่วไป) ที่ไม่เกี่ยวกับข้อมูลของสหกรณ์นี้โดยเฉพาะและไม่เกี่ยวกับข้อมูลส่วนตัวของเขา ให้ตอบด้วยความรู้ทั่วไปโดยตรง ไม่ต้องเรียกเครื่องมือใดๆ และควรระบุว่าเป็นข้อมูลทั่วไป ไม่ใช่คำแนะนำทางการเงินจากผู้เชี่ยวชาญที่มีใบอนุญาต
-10. เมื่อผู้ใช้ขอเปลี่ยน/ตั้งชื่อเล่นของตัวเอง (เช่น "เปลี่ยนชื่อเรียกฉันเป็น...", "ตั้งชื่อเล่นว่า...") ให้เรียก set_nickname ด้วยชื่อที่ผู้ใช้ระบุ แล้วตอบยืนยันสั้นๆ ห้ามเรียก tool นี้เพื่อเหตุผลอื่นนอกจากนี้เด็ดขาด (คนละเรื่องกับชื่อ-นามสกุลสมาชิกในข้อ 2)
+6. เมื่อผู้ใช้ให้เบอร์โทรติดต่อกลับสำหรับคำขอเอกสารประกอบที่กำลังจะส่งต่อให้เจ้าหน้าที่ (ถามหลังทราบตัวตนสมาชิกแล้ว) ให้เรียก submit_contact_phone — ใช้เฉพาะกับคำขอส่งต่อเอกสารเท่านั้น ห้ามเรียกตอนบันทึกธุรกรรมสหกรณ์ปกติ (ซื้อหุ้น/ชำระหนี้/ฝากเงิน ฯลฯ) เด็ดขาด
+7. เมื่อผู้ใช้ถามเกี่ยวกับประวัติการเงินของตัวเอง (เช่น "เดือนนี้จ่ายหนี้ไปเท่าไหร่") ให้เรียกใช้ get_transaction_summary แล้วสรุปคำตอบเป็นภาษาไทย
+8. เมื่อผู้ใช้ถามข้อมูลเกี่ยวกับสหกรณ์เอง (อัตราดอกเบี้ยเงินฝาก/เงินกู้, สวัสดิการสมาชิก, ข้อมูลติดต่อ) **ให้ตอบจาก "ข้อมูลอ้างอิงของสหกรณ์" ด้านบนได้ทันที ไม่ต้องเรียก tool ใดๆ** เพราะเป็นข้อมูลที่เปลี่ยนไม่บ่อย แต่ให้บอกด้วยว่าเป็นข้อมูล ณ สิ้นปี 2568 อาจมีการเปลี่ยนแปลง ถ้าต้องการยืนยันตัวเลขล่าสุดให้ติดต่อสำนักงานสหกรณ์โดยตรง — ถ้าผู้ใช้ถามเรื่องที่ไม่มีในข้อมูลอ้างอิงนี้ (เช่น ข่าวสาร, ประกาศ, กิจกรรมล่าสุด) **ให้บอกตรงๆ ว่าไม่มีข้อมูลนี้ในระบบ แนะนำให้ติดต่อสำนักงานสหกรณ์โดยตรงทางโทรศัพท์/อีเมล ห้ามตอบจากความจำหรือเดาเด็ดขาด และห้ามพิมพ์ลิงก์เว็บไซต์แบบเต็มเด็ดขาดตามกฎด้านบน**
+9. เมื่อผู้ใช้ขอแบบฟอร์ม/เอกสารของสหกรณ์ (เช่น แบบฟอร์มเปลี่ยนแปลงคนค้ำประกัน, ใบสมัครสมาชิก, แบบฟอร์ม สสค./สสอค./สส.ชสอ./สส.สก./สส.สท.) **ให้แนะนำให้ติดต่อขอรับแบบฟอร์มที่สำนักงานสหกรณ์โดยตรงทางโทรศัพท์/อีเมลตามข้อมูลติดต่อด้านบน ไม่ต้องเรียก tool ใดๆ และห้ามพิมพ์ลิงก์เว็บไซต์แบบเต็มเด็ดขาดตามกฎด้านบน**
+10. เมื่อผู้ใช้ถามคำถามความรู้ทั่วไปเกี่ยวกับการเงิน (เช่น วิธีลงทุน, หลักการกู้ยืมทั่วไป) ที่ไม่เกี่ยวกับข้อมูลของสหกรณ์นี้โดยเฉพาะและไม่เกี่ยวกับข้อมูลส่วนตัวของเขา ให้ตอบด้วยความรู้ทั่วไปโดยตรง ไม่ต้องเรียกเครื่องมือใดๆ และควรระบุว่าเป็นข้อมูลทั่วไป ไม่ใช่คำแนะนำทางการเงินจากผู้เชี่ยวชาญที่มีใบอนุญาต
+11. เมื่อผู้ใช้ขอเปลี่ยน/ตั้งชื่อเล่นของตัวเอง (เช่น "เปลี่ยนชื่อเรียกฉันเป็น...", "ตั้งชื่อเล่นว่า...") ให้เรียก set_nickname ด้วยชื่อที่ผู้ใช้ระบุ แล้วตอบยืนยันสั้นๆ ห้ามเรียก tool นี้เพื่อเหตุผลอื่นนอกจากนี้เด็ดขาด (คนละเรื่องกับชื่อ-นามสกุลสมาชิกในข้อ 2)
 
 กฎการตรวจสอบรูปสลิป (ใช้ทุกครั้งที่มีรูปภาพเข้ามา ไม่ว่าจะอยู่ขั้นตอนไหนของการเก็บข้อมูล):
 
@@ -383,27 +405,33 @@ async function loadLineUser(lineUserId: string): Promise<LineUserInfo | null> {
   // that's LINE's account identity, so it can't be spoofed by typing
   // someone else's name/number. Covers members whose LINE is already
   // linked in the roster; they never get asked for their info at all.
-  const roster = await prisma.memberRoster.findFirst({
-    where: { lineUserId },
-    select: { memberName: true, memberNumber: true },
-  });
+  // phone always comes from LineUser regardless — MemberRoster has no
+  // phone column, and it's this bot's own self-reported field either way.
+  const [roster, user] = await Promise.all([
+    prisma.memberRoster.findFirst({
+      where: { lineUserId },
+      select: { memberName: true, memberNumber: true },
+    }),
+    prisma.lineUser.findUnique({
+      where: { id: lineUserId },
+      select: { fullName: true, memberNumber: true, phone: true },
+    }),
+  ]);
   if (roster) {
     return {
       fullName: roster.memberName,
       memberNumber: roster.memberNumber,
       verified: true,
+      phone: user?.phone ?? null,
     };
   }
 
-  const user = await prisma.lineUser.findUnique({
-    where: { id: lineUserId },
-    select: { fullName: true, memberNumber: true },
-  });
   if (!user) return null;
   return {
     fullName: user.fullName,
     memberNumber: user.memberNumber,
     verified: false,
+    phone: user.phone,
   };
 }
 
@@ -425,17 +453,21 @@ type PendingServiceInfo = {
   department: string | null;
 };
 
-type ServiceRequirement = "purpose" | "member_info" | null;
+type ServiceRequirement = "purpose" | "member_info" | "phone" | null;
 
 // Purpose is asked before member info, matching the natural conversational
 // order: the user has already shown a document, so "what's this for" comes
 // first; member identity only matters once we know what to attach it to.
+// Phone is asked last — it's only needed for staff to call the member back
+// about this specific request, so there's no point asking before we even
+// know who they are or what they want.
 function computeServiceRequirement(
   lineUser: LineUserInfo | null,
   pendingService: PendingServiceInfo
 ): ServiceRequirement {
   if (!pendingService.requestType) return "purpose";
   if (!lineUser?.fullName || !lineUser?.memberNumber) return "member_info";
+  if (!lineUser?.phone) return "phone";
   return null;
 }
 
@@ -504,7 +536,7 @@ async function forwardServiceRequest(
   const verifyMark = lineUser.verified
     ? "✅ ยืนยันตัวตนจากทะเบียน"
     : "⚠️ ยังไม่ยืนยัน (เลขสมาชิกไม่พบในทะเบียน — กรุณาตรวจสอบ)";
-  const text = `📋 คำขอจากสมาชิก (ผ่าน LINE Bot)\nเอกสารที่ส่งมา: ${pendingService.documentType}\nแผนก: ${pendingService.department}\nคำขอ: ${pendingService.requestType}\nชื่อ-นามสกุล: ${lineUser.fullName}\nเลขสมาชิก: ${lineUser.memberNumber}\nสถานะ: ${verifyMark}`;
+  const text = `📋 คำขอจากสมาชิก (ผ่าน LINE Bot)\nเอกสารที่ส่งมา: ${pendingService.documentType}\nแผนก: ${pendingService.department}\nคำขอ: ${pendingService.requestType}\nชื่อ-นามสกุล: ${lineUser.fullName}\nเลขสมาชิก: ${lineUser.memberNumber}\nเบอร์โทรติดต่อกลับ: ${lineUser.phone ?? "-"}\nสถานะ: ${verifyMark}`;
 
   try {
     await lineClient.pushMessage({ to: targetId, messages: [{ type: "text", text }] });
@@ -748,18 +780,20 @@ async function submitMemberInfo(
       .catch(() => {});
   }
 
-  await prisma.lineUser.upsert({
+  const savedUser = await prisma.lineUser.upsert({
     where: { id: ctx.lineUserId },
     create: { id: ctx.lineUserId, fullName, memberNumber },
     update: { fullName, memberNumber },
   });
 
   // Use the roster's canonical name when verified, so a small typo in what
-  // the user typed doesn't end up on the logged record.
+  // the user typed doesn't end up on the logged record. phone carries over
+  // from any earlier submit_contact_phone call — this tool never touches it.
   const identity: LineUserInfo = {
     fullName: roster?.memberName ?? fullName,
     memberNumber,
     verified,
+    phone: savedUser.phone,
   };
   const unverifiedNote = verified
     ? ""
@@ -782,10 +816,15 @@ async function submitMemberInfo(
       const result = await forwardServiceRequest(ctx.lineUserId, pendingService, identity);
       return result + unverifiedNote;
     }
-    // next can only be "purpose" here (member info just got filled in) —
-    // ask for it since forwarding still needs it.
+    if (next === "purpose") {
+      return (
+        "Still missing: what request/service the supporting document is for. Ask the user next, in Thai." +
+        unverifiedNote
+      );
+    }
+    // next === "phone" — purpose and member info are both known now.
     return (
-      "Still missing: what request/service the supporting document is for. Ask the user next, in Thai." +
+      "Still missing: a callback phone number for this request, needed to forward it. Ask the user next, in Thai." +
       unverifiedNote
     );
   }
@@ -943,7 +982,45 @@ async function submitServicePurpose(
   if (next === "member_info") {
     return "Still missing: member full name and member number, needed to forward this request. Ask the user for their ชื่อ-นามสกุล and เลขสมาชิก next, in Thai.";
   }
+  if (next === "phone") {
+    return "Still missing: a callback phone number for this request, needed to forward it. Ask the user next, in Thai.";
+  }
   return await forwardServiceRequest(ctx.lineUserId, updated, lineUser as LineUserInfo);
+}
+
+type SubmitContactPhoneInput = {
+  phone?: unknown;
+};
+
+async function submitContactPhone(
+  input: SubmitContactPhoneInput,
+  ctx: ToolContext
+): Promise<string> {
+  const phone = typeof input.phone === "string" ? input.phone.trim() : "";
+  if (!phone) {
+    return "Error: phone must be a non-empty string.";
+  }
+
+  const pendingService = await loadPendingServiceRequest(ctx.lineUserId);
+  if (!pendingService) {
+    return "Error: no in-progress supporting-document flow to attach this callback phone to.";
+  }
+
+  await prisma.lineUser.upsert({
+    where: { id: ctx.lineUserId },
+    create: { id: ctx.lineUserId, phone },
+    update: { phone },
+  });
+
+  const lineUser = await loadLineUser(ctx.lineUserId);
+  const next = computeServiceRequirement(lineUser, pendingService);
+  if (next === "purpose") {
+    return "Still missing: what request/service the supporting document is for. Ask the user next, in Thai.";
+  }
+  if (next === "member_info") {
+    return "Still missing: member full name and member number, needed to forward this request. Ask the user for their ชื่อ-นามสกุล and เลขสมาชิก next, in Thai.";
+  }
+  return await forwardServiceRequest(ctx.lineUserId, pendingService, lineUser as LineUserInfo);
 }
 
 type SetNicknameInput = {
@@ -980,6 +1057,9 @@ async function executeTool(
     }
     if (name === "submit_member_info") {
       return await submitMemberInfo(input as SubmitMemberInfoInput, ctx);
+    }
+    if (name === "submit_contact_phone") {
+      return await submitContactPhone(input as SubmitContactPhoneInput, ctx);
     }
     if (name === "submit_loan_type") {
       return await submitLoanType(input as SubmitLoanTypeInput, ctx);
@@ -1074,6 +1154,8 @@ export async function runFinanceAgent(
       toolChoice = { type: "tool", name: "submit_service_purpose" };
     } else if (turn === 0 && serviceNext === "member_info" && !hasImageContent(userContent)) {
       toolChoice = { type: "tool", name: "submit_member_info" };
+    } else if (turn === 0 && serviceNext === "phone" && !hasImageContent(userContent)) {
+      toolChoice = { type: "tool", name: "submit_contact_phone" };
     } else if (turn === 0 && hasImageContent(userContent)) {
       toolChoice = { type: "any" };
     }
