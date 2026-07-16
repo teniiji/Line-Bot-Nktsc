@@ -486,28 +486,21 @@ async function loadPendingServiceRequest(
   return pending;
 }
 
-// Extracts a "อ.XXX" district token from a unit name like
-// "บำนาญ บึงกาฬ อ.ปากคาด" — returns null if the unit name has no district
-// (e.g. a school name, or "หน่วยงานกลาง").
-function extractDistrict(unitName: string): string | null {
-  const match = unitName.match(/อ\.[ก-๙A-Za-z]+/);
-  return match ? match[0] : null;
-}
-
-// Picks where to forward: loan requests try the district-specific contact
-// first (via the member roster imported from the cooperative's existing
-// spreadsheet), falling back to LINE_FORWARD_LOAN_ID if the member's
-// district isn't known or has no confirmed contact yet. Everything else
-// goes to LINE_FORWARD_GENERAL_ID.
+// Picks where to forward: loan requests try the member's organizational
+// unit's confirmed contact first (exact match against MemberRoster.unitName,
+// imported from the cooperative's existing spreadsheet), falling back to
+// LINE_FORWARD_LOAN_ID if the member's unit isn't known or has no confirmed
+// contact yet. Everything else goes to LINE_FORWARD_GENERAL_ID.
 async function resolveForwardTarget(
   lineUserId: string,
   department: string | null
 ): Promise<string | null> {
   if (department === "สินเชื่อ") {
     const roster = await prisma.memberRoster.findFirst({ where: { lineUserId } });
-    const district = roster?.unitName ? extractDistrict(roster.unitName) : null;
-    if (district) {
-      const contact = await prisma.loanDistrictContact.findUnique({ where: { district } });
+    if (roster?.unitName) {
+      const contact = await prisma.loanDistrictContact.findUnique({
+        where: { unitName: roster.unitName },
+      });
       if (contact) return contact.lineUserId;
     }
     return process.env.LINE_FORWARD_LOAN_ID ?? null;

@@ -170,14 +170,17 @@ model MemberRoster {
 }
 
 // Who to forward a loan (สินเชื่อ/กู้เงิน) service request to for a given
-// district, extracted from MemberRoster.unitName (e.g. "อ.เมือง").
-// Deliberately separate from OrganizationUnit.lineUserId and starts empty
-// — populated only once a district's actual loan contact is confirmed. A
-// district with no row here (including every district until first
-// populated) falls back to LINE_FORWARD_LOAN_ID.
+// organizational unit, matched exactly against MemberRoster.unitName (e.g.
+// "บำนาญ อ.เมือง นค.") — the cooperative's staff assignments are per-unit,
+// not per-district, and one staff member typically covers many units, so
+// this is a many-to-one mapping keyed by the unit itself rather than a
+// coarser district code. Deliberately separate from OrganizationUnit.lineUserId
+// and starts empty — populated via scripts/import-loan-contacts.ts. A unit
+// with no row here (including every unit until first populated) falls back
+// to LINE_FORWARD_LOAN_ID.
 model LoanDistrictContact {
   id         String   @id @default(cuid())
-  district   String   @unique
+  unitName   String   @unique
   lineUserId String
   note       String?
   createdAt  DateTime @default(now())
