@@ -169,6 +169,35 @@ model MemberRoster {
   @@index([lineUserId])
 }
 
+// Audit log of every supporting-document service request the bot attempted
+// to forward to staff — written just before PendingServiceRequest is
+// cleared, which previously left no record of who asked for what, who it
+// went to, or whether the push succeeded. One row per attempt; status is
+// "forwarded" (push succeeded), "failed" (push errored), or
+// "unconfigured" (no forward target was set up). Member identity is
+// snapshotted here the same way Expense snapshots it, so the log stays
+// accurate if the member later changes their saved name.
+model ServiceRequestLog {
+  id             String   @id @default(cuid())
+  lineUserId     String
+  memberFullName String?
+  memberNumber   String?
+  memberVerified Boolean  @default(false)
+  phone          String?
+  documentType   String
+  requestType    String?
+  department     String?
+  imageUrl       String?
+  // LINE user ID of the staff member the request was pushed to (null when
+  // status is "unconfigured").
+  forwardedTo    String?
+  status         String
+  createdAt      DateTime @default(now())
+
+  @@index([createdAt])
+  @@index([lineUserId])
+}
+
 // Who to forward a loan (สินเชื่อ/กู้เงิน) service request to for a given
 // organizational unit, matched exactly against MemberRoster.unitName (e.g.
 // "บำนาญ อ.เมือง นค.") — the cooperative's staff assignments are per-unit,

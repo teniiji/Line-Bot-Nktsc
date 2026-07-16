@@ -508,6 +508,38 @@ async function resolveForwardTarget(
   return process.env.LINE_FORWARD_GENERAL_ID ?? null;
 }
 
+// Writes one ServiceRequestLog row per forward attempt so staff have an
+// audit trail after PendingServiceRequest is cleared. Best-effort: a
+// logging failure must never change what the member is told, so errors
+// are swallowed after being logged.
+async function logServiceRequest(
+  lineUserId: string,
+  pendingService: PendingServiceInfo,
+  lineUser: LineUserInfo,
+  status: "forwarded" | "failed" | "unconfigured",
+  forwardedTo: string | null
+): Promise<void> {
+  try {
+    await prisma.serviceRequestLog.create({
+      data: {
+        lineUserId,
+        memberFullName: lineUser.fullName ?? null,
+        memberNumber: lineUser.memberNumber ?? null,
+        memberVerified: lineUser.verified ?? false,
+        phone: lineUser.phone ?? null,
+        documentType: pendingService.documentType,
+        requestType: pendingService.requestType,
+        department: pendingService.department,
+        imageUrl: pendingService.imageUrl,
+        forwardedTo,
+        status,
+      },
+    });
+  } catch (err) {
+    console.error("[financeAgent] service request log write error:", err);
+  }
+}
+
 // Pushes the collected request to the resolved target and clears the
 // pending record. If forwarding isn't configured or fails, the user is
 // told honestly instead of being falsely reassured that staff were
@@ -519,6 +551,7 @@ async function forwardServiceRequest(
 ): Promise<string> {
   const targetId = await resolveForwardTarget(lineUserId, pendingService.department);
   if (!targetId) {
+    await logServiceRequest(lineUserId, pendingService, lineUser, "unconfigured", null);
     await prisma.pendingServiceRequest.delete({ where: { lineUserId } }).catch(() => {});
     console.warn(
       "[financeAgent] no forward target configured — service request not forwarded:",
@@ -552,10 +585,12 @@ async function forwardServiceRequest(
     await lineClient.pushMessage({ to: targetId, messages });
   } catch (err) {
     console.error("[financeAgent] forward service request push error:", err);
+    await logServiceRequest(lineUserId, pendingService, lineUser, "failed", targetId);
     await prisma.pendingServiceRequest.delete({ where: { lineUserId } }).catch(() => {});
     return "Error: failed to forward the request. Apologize to the user and tell them to contact the cooperative office directly instead — do not claim the request was forwarded.";
   }
 
+  await logServiceRequest(lineUserId, pendingService, lineUser, "forwarded", targetId);
   await prisma.pendingServiceRequest.delete({ where: { lineUserId } }).catch(() => {});
   return `Forwarded to the relevant department: "${pendingService.requestType}" for member ${lineUser.fullName} (${lineUser.memberNumber}). Confirm to the user, in Thai, that their request was sent and staff will contact them.`;
 }
