@@ -9,6 +9,7 @@ import ExpenseFilters, { Filters } from "@/components/ExpenseFilters";
 import ExpenseList from "@/components/ExpenseList";
 import LineUsersPanel from "@/components/LineUsersPanel";
 import ServiceRequestsPanel from "@/components/ServiceRequestsPanel";
+import KnowledgePanel from "@/components/KnowledgePanel";
 import SummaryCards from "@/components/SummaryCards";
 import CategoryChart from "@/components/CategoryChart";
 import TrendChart from "@/components/TrendChart";
@@ -196,6 +197,8 @@ export default function Dashboard() {
       />
 
       <ServiceRequestsPanel />
+
+      <KnowledgePanel />
 
       <LineUsersPanel />
 

@@ -169,6 +169,22 @@ model MemberRoster {
   @@index([lineUserId])
 }
 
+// One editable line of the agent's "ข้อมูลอ้างอิงของสหกรณ์" system-prompt
+// block (interest rates, welfare, contact info). Staff maintain these from
+// the dashboard so a rate change no longer requires a code edit + deploy.
+// Seeded by the migration with the values previously hard-coded in
+// lib/financeAgent.ts; lib/knowledge.ts falls back to the same defaults if
+// the table is ever empty.
+model KnowledgeEntry {
+  id        String   @id @default(cuid())
+  key       String   @unique
+  title     String
+  content   String
+  sortOrder Int      @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
 // Audit log of every supporting-document service request the bot attempted
 // to forward to staff — written just before PendingServiceRequest is
 // cleared, which previously left no record of who asked for what, who it
