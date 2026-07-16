@@ -3,6 +3,10 @@ import { Prisma } from "@prisma/client";
 import { anthropic } from "./anthropicClient";
 import { lineClient } from "./lineClient";
 import { prisma } from "./prisma";
+import { getKnowledgeText } from "./knowledge";
+// Link stripping lives in lib/links.ts so it's unit-testable without this
+// module's Anthropic/Prisma dependencies.
+import { stripDisallowedLinks } from "./links";
 import { CATEGORIES } from "./categories";
 import { LOAN_TYPES } from "./loanTypes";
 import { DOCUMENT_TYPES } from "./documentTypes";
@@ -23,35 +27,6 @@ function hasImageContent(content: Anthropic.MessageParam["content"]): boolean {
   );
 }
 
-// Hosts the bot is allowed to link to in a reply. TEMPORARILY EMPTY: a live
-// test showed LINE's own client-side link-preview fetch of the literal
-// https://www.nktscoop.com URL (the cooperative's own official homepage,
-// not a URL the model chose) rendering a gambling-site preview card
-// alongside the legitimate one — LINE unfurls any bare http(s) URL in a
-// message client-side, independent of anything this backend does, so
-// domain-allowlisting the cooperative's own site does not help while the
-// site itself is suspected of serving different content to automated
-// fetchers (a "cloaking" pattern that also explains why a manual Wordfence
-// scan and Google `site:` search came back clean). Strip every link until
-// nktscoop.com is confirmed not to do this. Re-add "nktscoop.com" /
-// "www.nktscoop.com" here once that's verified.
-const ALLOWED_LINK_HOSTS = new Set<string>([]);
-
-function stripDisallowedLinks(text: string): string {
-  return text.replace(/https?:\/\/[^\s<>()[\]{}"']+/gi, (url) => {
-    let hostname: string;
-    try {
-      hostname = new URL(url).hostname.toLowerCase();
-    } catch {
-      hostname = "";
-    }
-    if (ALLOWED_LINK_HOSTS.has(hostname)) {
-      return url;
-    }
-    console.warn("[financeAgent] stripped disallowed link from reply:", url);
-    return "[ลิงก์ถูกลบเพื่อความปลอดภัย]";
-  });
-}
 
 const tools: Anthropic.Tool[] = [
   {
@@ -315,7 +290,8 @@ type ToolContext = {
 function buildSystemPrompt(
   lineUser: LineUserInfo | null,
   pending: PendingInfo | null,
-  pendingService: PendingServiceInfo | null
+  pendingService: PendingServiceInfo | null,
+  knowledgeText: string
 ): { base: string; dynamic: string } {
   const today = new Date().toISOString().slice(0, 10);
 
@@ -349,11 +325,8 @@ function buildSystemPrompt(
 
   const base = `คุณคือผู้ช่วยด้านการเงินส่วนตัวที่ทำงานผ่าน LINE ให้กับสหกรณ์ออมทรัพย์ครูหนองคาย จำกัด
 
-ข้อมูลอ้างอิงของสหกรณ์ (ข้อมูล ณ สิ้นปี 2568 จากเว็บไซต์สหกรณ์ อาจมีการเปลี่ยนแปลงในภายหลังตามมติคณะกรรมการ):
-- อัตราดอกเบี้ยเงินฝาก (ต่อปี): ออมทรัพย์ / ออมทรัพย์ ATM 1.25% | ออมทรัพย์พิเศษ 3.00% | ประจำ 6 เดือน 2.75% | ประจำ 12 เดือน 3.50%
-- อัตราดอกเบี้ยเงินกู้ (ต่อปี): ทั่วไป (เงินกู้สามัญ, เพื่อการดำรงชีพ, เพื่อการโอนหนี้, ปรับโครงสร้างหนี้) 5.25% | โครงการพิเศษดอกเบี้ยต่ำ (72 งวด) 4.50%
-- สวัสดิการสมาชิก: ทุนการศึกษาบุตรสมาชิกจ่ายเป็นประจำทุกปี, การสงเคราะห์ผ่านสมาคมฌาปนกิจสงเคราะห์สมาชิกสหกรณ์ (ส.ส.ค.), เงินปันผลและเฉลี่ยคืนตามหุ้น/ธุรกิจ
-- ข้อมูลติดต่อ: ที่อยู่ 143 ถนนประจักษ์ ตำบลในเมือง อำเภอเมือง จังหวัดหนองคาย 43000 | โทรศัพท์บริหารสำนักงาน 042-411334, 042-423355, 042420746 | หุ้น-หนี้ 042-420495 | สมาคมฌาปนกิจ (สสค.) 042-413276, 064-8766432 | อีเมล nktsc.org@gmail.com
+ข้อมูลอ้างอิงของสหกรณ์ (ดูแลโดยเจ้าหน้าที่ผ่านแดชบอร์ด อาจมีการเปลี่ยนแปลงตามมติคณะกรรมการ):
+${knowledgeText}
 **ห้ามพิมพ์ลิงก์เว็บไซต์สหกรณ์แบบเต็ม (ห้ามใส่ "http://" หรือ "https://" นำหน้าเด็ดขาด) ในคำตอบใดๆ ทั้งสิ้น ไม่ว่ากรณีใด — ให้ใช้ข้อมูลติดต่อทางโทรศัพท์/อีเมลด้านบนแทนเสมอ (รายละเอียดเหตุผล: LINE จะดึงตัวอย่างหน้าเว็บมาแสดงอัตโนมัติเมื่อมีลิงก์แบบเต็มในข้อความ ซึ่งขณะนี้ตรวจพบเนื้อหาที่ไม่เกี่ยวข้องปนมาด้วย จึงงดใช้ลิงก์ไปก่อนจนกว่าจะยืนยันว่าปลอดภัย)**
 
 หมวดหมู่ธุรกรรมที่ใช้ในระบบมีเฉพาะ: ${CATEGORIES.join(", ")}
@@ -371,7 +344,7 @@ function buildSystemPrompt(
 5. เมื่อผู้ใช้ตอบว่าเอกสารประกอบนั้นส่งมาเพื่อทำรายการอะไร (เช่น "ขอกู้เงินสามัญ") ให้เรียก submit_service_purpose ด้วยข้อความนั้น
 6. เมื่อผู้ใช้ให้เบอร์โทรติดต่อกลับสำหรับคำขอเอกสารประกอบที่กำลังจะส่งต่อให้เจ้าหน้าที่ (ถามหลังทราบตัวตนสมาชิกแล้ว) ให้เรียก submit_contact_phone — ใช้เฉพาะกับคำขอส่งต่อเอกสารเท่านั้น ห้ามเรียกตอนบันทึกธุรกรรมสหกรณ์ปกติ (ซื้อหุ้น/ชำระหนี้/ฝากเงิน ฯลฯ) เด็ดขาด
 7. เมื่อผู้ใช้ถามเกี่ยวกับประวัติการเงินของตัวเอง (เช่น "เดือนนี้จ่ายหนี้ไปเท่าไหร่") ให้เรียกใช้ get_transaction_summary แล้วสรุปคำตอบเป็นภาษาไทย
-8. เมื่อผู้ใช้ถามข้อมูลเกี่ยวกับสหกรณ์เอง (อัตราดอกเบี้ยเงินฝาก/เงินกู้, สวัสดิการสมาชิก, ข้อมูลติดต่อ) **ให้ตอบจาก "ข้อมูลอ้างอิงของสหกรณ์" ด้านบนได้ทันที ไม่ต้องเรียก tool ใดๆ** เพราะเป็นข้อมูลที่เปลี่ยนไม่บ่อย แต่ให้บอกด้วยว่าเป็นข้อมูล ณ สิ้นปี 2568 อาจมีการเปลี่ยนแปลง ถ้าต้องการยืนยันตัวเลขล่าสุดให้ติดต่อสำนักงานสหกรณ์โดยตรง — ถ้าผู้ใช้ถามเรื่องที่ไม่มีในข้อมูลอ้างอิงนี้ (เช่น ข่าวสาร, ประกาศ, กิจกรรมล่าสุด) **ให้บอกตรงๆ ว่าไม่มีข้อมูลนี้ในระบบ แนะนำให้ติดต่อสำนักงานสหกรณ์โดยตรงทางโทรศัพท์/อีเมล ห้ามตอบจากความจำหรือเดาเด็ดขาด และห้ามพิมพ์ลิงก์เว็บไซต์แบบเต็มเด็ดขาดตามกฎด้านบน**
+8. เมื่อผู้ใช้ถามข้อมูลเกี่ยวกับสหกรณ์เอง (อัตราดอกเบี้ยเงินฝาก/เงินกู้, สวัสดิการสมาชิก, ข้อมูลติดต่อ) **ให้ตอบจาก "ข้อมูลอ้างอิงของสหกรณ์" ด้านบนได้ทันที ไม่ต้องเรียก tool ใดๆ** เพราะเป็นข้อมูลที่เปลี่ยนไม่บ่อย แต่ให้บอกด้วยว่าข้อมูลอาจมีการเปลี่ยนแปลงได้ ถ้าต้องการยืนยันตัวเลขล่าสุดให้ติดต่อสำนักงานสหกรณ์โดยตรง — ถ้าผู้ใช้ถามเรื่องที่ไม่มีในข้อมูลอ้างอิงนี้ (เช่น ข่าวสาร, ประกาศ, กิจกรรมล่าสุด) **ให้บอกตรงๆ ว่าไม่มีข้อมูลนี้ในระบบ แนะนำให้ติดต่อสำนักงานสหกรณ์โดยตรงทางโทรศัพท์/อีเมล ห้ามตอบจากความจำหรือเดาเด็ดขาด และห้ามพิมพ์ลิงก์เว็บไซต์แบบเต็มเด็ดขาดตามกฎด้านบน**
 9. เมื่อผู้ใช้ขอแบบฟอร์ม/เอกสารของสหกรณ์ (เช่น แบบฟอร์มเปลี่ยนแปลงคนค้ำประกัน, ใบสมัครสมาชิก, แบบฟอร์ม สสค./สสอค./สส.ชสอ./สส.สก./สส.สท.) **ให้แนะนำให้ติดต่อขอรับแบบฟอร์มที่สำนักงานสหกรณ์โดยตรงทางโทรศัพท์/อีเมลตามข้อมูลติดต่อด้านบน ไม่ต้องเรียก tool ใดๆ และห้ามพิมพ์ลิงก์เว็บไซต์แบบเต็มเด็ดขาดตามกฎด้านบน**
 10. เมื่อผู้ใช้ถามคำถามความรู้ทั่วไปเกี่ยวกับการเงิน (เช่น วิธีลงทุน, หลักการกู้ยืมทั่วไป) ที่ไม่เกี่ยวกับข้อมูลของสหกรณ์นี้โดยเฉพาะและไม่เกี่ยวกับข้อมูลส่วนตัวของเขา ให้ตอบด้วยความรู้ทั่วไปโดยตรง ไม่ต้องเรียกเครื่องมือใดๆ และควรระบุว่าเป็นข้อมูลทั่วไป ไม่ใช่คำแนะนำทางการเงินจากผู้เชี่ยวชาญที่มีใบอนุญาต
 11. เมื่อผู้ใช้ขอเปลี่ยน/ตั้งชื่อเล่นของตัวเอง (เช่น "เปลี่ยนชื่อเรียกฉันเป็น...", "ตั้งชื่อเล่นว่า...") ให้เรียก set_nickname ด้วยชื่อที่ผู้ใช้ระบุ แล้วตอบยืนยันสั้นๆ ห้ามเรียก tool นี้เพื่อเหตุผลอื่นนอกจากนี้เด็ดขาด (คนละเรื่องกับชื่อ-นามสกุลสมาชิกในข้อ 2)
@@ -508,6 +481,38 @@ async function resolveForwardTarget(
   return process.env.LINE_FORWARD_GENERAL_ID ?? null;
 }
 
+// Writes one ServiceRequestLog row per forward attempt so staff have an
+// audit trail after PendingServiceRequest is cleared. Best-effort: a
+// logging failure must never change what the member is told, so errors
+// are swallowed after being logged.
+async function logServiceRequest(
+  lineUserId: string,
+  pendingService: PendingServiceInfo,
+  lineUser: LineUserInfo,
+  status: "forwarded" | "failed" | "unconfigured",
+  forwardedTo: string | null
+): Promise<void> {
+  try {
+    await prisma.serviceRequestLog.create({
+      data: {
+        lineUserId,
+        memberFullName: lineUser.fullName ?? null,
+        memberNumber: lineUser.memberNumber ?? null,
+        memberVerified: lineUser.verified ?? false,
+        phone: lineUser.phone ?? null,
+        documentType: pendingService.documentType,
+        requestType: pendingService.requestType,
+        department: pendingService.department,
+        imageUrl: pendingService.imageUrl,
+        forwardedTo,
+        status,
+      },
+    });
+  } catch (err) {
+    console.error("[financeAgent] service request log write error:", err);
+  }
+}
+
 // Pushes the collected request to the resolved target and clears the
 // pending record. If forwarding isn't configured or fails, the user is
 // told honestly instead of being falsely reassured that staff were
@@ -519,6 +524,7 @@ async function forwardServiceRequest(
 ): Promise<string> {
   const targetId = await resolveForwardTarget(lineUserId, pendingService.department);
   if (!targetId) {
+    await logServiceRequest(lineUserId, pendingService, lineUser, "unconfigured", null);
     await prisma.pendingServiceRequest.delete({ where: { lineUserId } }).catch(() => {});
     console.warn(
       "[financeAgent] no forward target configured — service request not forwarded:",
@@ -552,10 +558,12 @@ async function forwardServiceRequest(
     await lineClient.pushMessage({ to: targetId, messages });
   } catch (err) {
     console.error("[financeAgent] forward service request push error:", err);
+    await logServiceRequest(lineUserId, pendingService, lineUser, "failed", targetId);
     await prisma.pendingServiceRequest.delete({ where: { lineUserId } }).catch(() => {});
     return "Error: failed to forward the request. Apologize to the user and tell them to contact the cooperative office directly instead — do not claim the request was forwarded.";
   }
 
+  await logServiceRequest(lineUserId, pendingService, lineUser, "forwarded", targetId);
   await prisma.pendingServiceRequest.delete({ where: { lineUserId } }).catch(() => {});
   return `Forwarded to the relevant department: "${pendingService.requestType}" for member ${lineUser.fullName} (${lineUser.memberNumber}). Confirm to the user, in Thai, that their request was sent and staff will contact them.`;
 }
@@ -1115,10 +1123,11 @@ export async function runFinanceAgent(
   slipImageUrlPromise: Promise<string | null> = Promise.resolve(null),
   slipImageHash: string | null = null
 ): Promise<FinanceAgentReply> {
-  const [lineUser, pending, pendingService] = await Promise.all([
+  const [lineUser, pending, pendingService, knowledgeText] = await Promise.all([
     loadLineUser(lineUserId),
     loadPending(lineUserId),
     loadPendingServiceRequest(lineUserId),
+    getKnowledgeText(),
   ]);
 
   // The caller kicks off the Blob upload before calling this function but
@@ -1133,13 +1142,20 @@ export async function runFinanceAgent(
     return resolvedSlipImageUrl;
   }
 
-  const { base, dynamic } = buildSystemPrompt(lineUser, pending, pendingService);
+  const { base, dynamic } = buildSystemPrompt(
+    lineUser,
+    pending,
+    pendingService,
+    knowledgeText
+  );
   // A cache breakpoint on the static base block caches everything before it
   // in the request (all tool definitions + this base system prompt), since
   // Anthropic's cacheable prefix runs tools → system → messages. The
   // dynamic block (date + flow note) sits after the breakpoint and is read
   // fresh each message. Cuts the per-message cost of the large, unchanging
-  // instructions to a fraction after the first call.
+  // instructions to a fraction after the first call. The knowledge block
+  // inside base is stable between dashboard edits (60s in-memory cache in
+  // lib/knowledge.ts), so an edit costs one fresh cache write — rare.
   const system: Anthropic.TextBlockParam[] = [
     { type: "text", text: base, cache_control: { type: "ephemeral" } },
     { type: "text", text: dynamic },
