@@ -161,6 +161,14 @@ model MemberRoster {
   memberNumber String   @unique
   memberName   String
   unitName     String?
+  // Short per-member "รหัสผู้รับผิดชอบ" code (e.g. a single digit),
+  // imported from column H of the "สมาชิก_LINE_OA" sheet — looked up in
+  // ResponsibleContact to find the loan officer for this member directly.
+  // Primary loan-routing mechanism (see resolveForwardTarget in
+  // lib/financeAgent.ts): a short code is far less prone to spreadsheet
+  // typos than the free-text unitName match against LoanDistrictContact,
+  // which remains as a secondary fallback for members without a code.
+  responsibleCode String?
   lineUserId   String?
   nickname     String?
   createdAt    DateTime @default(now())
@@ -226,6 +234,25 @@ model ServiceRequestLog {
 model LoanDistrictContact {
   id         String   @id @default(cuid())
   unitName   String   @unique
+  lineUserId String
+  note       String?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+}
+
+// Primary loan-routing mapping: a short "รหัสผู้รับผิดชอบ" code (e.g. a
+// single digit) assigned per-member in the cooperative's "ผู้รับผิดชอบ"
+// sheet, imported via scripts/import-responsible-contacts.ts. Each member's
+// MemberRoster.responsibleCode is looked up here first in
+// resolveForwardTarget — a code is far less prone to spreadsheet-typo
+// mismatches than free-text unit-name matching, and this table typically
+// has only a handful of rows (one per loan officer) versus one row per
+// organizational unit for LoanDistrictContact. Falls through to
+// LoanDistrictContact / unitName matching, then LINE_FORWARD_LOAN_ID, for
+// members with no responsibleCode or an unmatched one.
+model ResponsibleContact {
+  id         String   @id @default(cuid())
+  code       String   @unique
   lineUserId String
   note       String?
   createdAt  DateTime @default(now())

@@ -4,9 +4,10 @@ import { anthropic } from "./anthropicClient";
 import { lineClient } from "./lineClient";
 import { prisma } from "./prisma";
 import { getKnowledgeText } from "./knowledge";
-// Link stripping lives in lib/links.ts so it's unit-testable without this
-// module's Anthropic/Prisma dependencies.
+// Link stripping and loan-routing precedence live in their own modules so
+// they're unit-testable without this module's Anthropic/Prisma dependencies.
 import { stripDisallowedLinks } from "./links";
+import { pickLoanForwardTarget } from "./loanRouting";
 import { CATEGORIES } from "./categories";
 import { LOAN_TYPES } from "./loanTypes";
 import { DOCUMENT_TYPES } from "./documentTypes";
@@ -459,26 +460,40 @@ async function loadPendingServiceRequest(
   return pending;
 }
 
-// Picks where to forward: loan requests try the member's organizational
-// unit's confirmed contact first (exact match against MemberRoster.unitName,
-// imported from the cooperative's existing spreadsheet), falling back to
-// LINE_FORWARD_LOAN_ID if the member's unit isn't known or has no confirmed
-// contact yet. Everything else goes to LINE_FORWARD_GENERAL_ID.
+// Picks where to forward: loan requests try the member's per-member
+// "รหัสผู้รับผิดชอบ" code first (exact match against ResponsibleContact,
+// imported from the cooperative's "ผู้รับผิดชอบ" sheet — more reliable
+// than free text since it's a short code, not a typed unit name), then
+// their organizational unit's confirmed contact (exact match against
+// MemberRoster.unitName), falling back to LINE_FORWARD_LOAN_ID if neither
+// matches. Everything else goes to LINE_FORWARD_GENERAL_ID. Precedence
+// itself lives in lib/loanRouting.ts so it's unit-testable without Prisma.
 async function resolveForwardTarget(
   lineUserId: string,
   department: string | null
 ): Promise<string | null> {
-  if (department === "สินเชื่อ") {
-    const roster = await prisma.memberRoster.findFirst({ where: { lineUserId } });
-    if (roster?.unitName) {
-      const contact = await prisma.loanDistrictContact.findUnique({
-        where: { unitName: roster.unitName },
-      });
-      if (contact) return contact.lineUserId;
-    }
-    return process.env.LINE_FORWARD_LOAN_ID ?? null;
+  if (department !== "สินเชื่อ") {
+    return process.env.LINE_FORWARD_GENERAL_ID ?? null;
   }
-  return process.env.LINE_FORWARD_GENERAL_ID ?? null;
+
+  const roster = await prisma.memberRoster.findFirst({ where: { lineUserId } });
+
+  const responsibleContact = roster?.responsibleCode
+    ? await prisma.responsibleContact.findUnique({
+        where: { code: roster.responsibleCode },
+      })
+    : null;
+  const unitContact = roster?.unitName
+    ? await prisma.loanDistrictContact.findUnique({
+        where: { unitName: roster.unitName },
+      })
+    : null;
+
+  return pickLoanForwardTarget({
+    responsibleContactLineUserId: responsibleContact?.lineUserId ?? null,
+    unitContactLineUserId: unitContact?.lineUserId ?? null,
+    envFallback: process.env.LINE_FORWARD_LOAN_ID ?? null,
+  });
 }
 
 // Writes one ServiceRequestLog row per forward attempt so staff have an
