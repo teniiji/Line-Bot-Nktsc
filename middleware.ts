@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { checkBasicAuth } from "@/lib/basicAuth";
 
 // Basic Auth in front of the staff dashboard and its APIs. The LINE
 // webhook is excluded — LINE's servers can't send credentials, and that
@@ -22,8 +23,7 @@ export function middleware(request: NextRequest) {
   }
 
   const header = request.headers.get("authorization") ?? "";
-  const expected = "Basic " + btoa(`${user}:${password}`);
-  if (header === expected) {
+  if (checkBasicAuth(header, user, password)) {
     return NextResponse.next();
   }
 
