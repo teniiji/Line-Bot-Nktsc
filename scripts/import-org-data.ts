@@ -8,18 +8,12 @@
 
 import ExcelJS from "exceljs";
 import { PrismaClient } from "@prisma/client";
+import { cellText as cell } from "./excelUtils";
 
 const prisma = new PrismaClient();
 
 const ORG_SHEET_NAME = "หน่วยงาน";
 const MEMBER_SHEET_NAME = "สมาชิก_LINE_OA";
-
-function cell(row: ExcelJS.Row, index: number): string | null {
-  const value = row.getCell(index).value;
-  if (value === undefined || value === null) return null;
-  const str = String(value).trim();
-  return str && str !== "-" ? str : null;
-}
 
 async function importOrganizationUnits(workbook: ExcelJS.Workbook) {
   const sheet = workbook.getWorksheet(ORG_SHEET_NAME);
@@ -71,11 +65,12 @@ async function importMemberRoster(workbook: ExcelJS.Workbook) {
   const sheet = workbook.getWorksheet(MEMBER_SHEET_NAME);
   if (!sheet) {
     console.warn(`Sheet "${MEMBER_SHEET_NAME}" not found, skipping.`);
-    return { imported: 0, skipped: 0 };
+    return { imported: 0, skipped: 0, missingUnit: 0 };
   }
 
   let imported = 0;
   let skipped = 0;
+  let missingUnit = 0;
 
   // Columns (1-indexed): 1 เลขสมาชิก, 2 ชื่อสมาชิก, 3 หน่วยงาน,
   // 4 LINE_UserID, 5 Nickname (LINE OA)
@@ -87,18 +82,20 @@ async function importMemberRoster(workbook: ExcelJS.Workbook) {
       skipped++;
       continue;
     }
+    const unitName = cell(row, 3);
+    if (!unitName) missingUnit++;
     await prisma.memberRoster.upsert({
       where: { memberNumber },
       create: {
         memberNumber,
         memberName,
-        unitName: cell(row, 3),
+        unitName,
         lineUserId: cell(row, 4),
         nickname: cell(row, 5),
       },
       update: {
         memberName,
-        unitName: cell(row, 3),
+        unitName,
         lineUserId: cell(row, 4),
         nickname: cell(row, 5),
       },
@@ -106,7 +103,7 @@ async function importMemberRoster(workbook: ExcelJS.Workbook) {
     imported++;
   }
 
-  return { imported, skipped };
+  return { imported, skipped, missingUnit };
 }
 
 async function main() {
@@ -128,6 +125,11 @@ async function main() {
   console.log(
     `MemberRoster: ${memberResult.imported} imported, ${memberResult.skipped} skipped`
   );
+  if (memberResult.missingUnit > 0) {
+    console.log(
+      `\n⚠️  ${memberResult.missingUnit} of ${memberResult.imported} imported member(s) have no หน่วยงาน (blank, "-", or a pandas-style "nan" cell) — these members can't be routed by LoanDistrictContact and will fall back to LINE_FORWARD_LOAN_ID for loan requests until their source data is fixed.`
+    );
+  }
 }
 
 main()
