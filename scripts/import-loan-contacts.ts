@@ -17,16 +17,10 @@
 
 import ExcelJS from "exceljs";
 import { PrismaClient } from "@prisma/client";
+import { cellText as cell } from "./excelUtils";
 
 const prisma = new PrismaClient();
 const SHEET_NAME = "รับผิดชอบ";
-
-function cell(row: ExcelJS.Row, index: number): string | null {
-  const value = row.getCell(index).value;
-  if (value === undefined || value === null) return null;
-  const str = String(value).trim();
-  return str && str !== "-" ? str : null;
-}
 
 async function main() {
   const filePath = process.argv[2];
