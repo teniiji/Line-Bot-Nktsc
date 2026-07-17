@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { ServiceRequestLogEntry } from "@/lib/types";
+import ConfirmDialog from "@/components/ConfirmDialog";
 
 const PAGE_SIZE = 20;
 
@@ -32,6 +33,8 @@ export default function ServiceRequestsPanel() {
   const [page, setPage] = useState(1);
   const [status, setStatus] = useState("");
   const [loading, setLoading] = useState(true);
+  const [pendingAdd, setPendingAdd] = useState<ServiceRequestLogEntry | null>(null);
+  const [adding, setAdding] = useState(false);
 
   const fetchEntries = useCallback(async () => {
     setLoading(true);
@@ -57,6 +60,22 @@ export default function ServiceRequestsPanel() {
 
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
+  const handleConfirmAdd = async () => {
+    if (!pendingAdd) return;
+    setAdding(true);
+    try {
+      const res = await fetch(`/api/service-requests/${pendingAdd.id}/add-to-roster`, {
+        method: "POST",
+      });
+      if (res.ok) {
+        setPendingAdd(null);
+        await fetchEntries();
+      }
+    } finally {
+      setAdding(false);
+    }
+  };
+
   return (
     <div className="bg-white rounded-lg shadow">
       <div className="flex items-center justify-between gap-3 px-4 py-3 border-b border-slate-100">
@@ -81,7 +100,7 @@ export default function ServiceRequestsPanel() {
         </p>
       ) : (
         <div className="overflow-x-auto">
-          <table className="w-full text-sm min-w-[820px]">
+          <table className="w-full text-sm min-w-[920px]">
             <thead className="bg-slate-100 text-slate-600 text-left">
               <tr>
                 <th className="px-4 py-2">วันที่-เวลา</th>
@@ -91,6 +110,7 @@ export default function ServiceRequestsPanel() {
                 <th className="px-4 py-2">แผนก</th>
                 <th className="px-4 py-2">เบอร์ติดต่อ</th>
                 <th className="px-4 py-2">สถานะ</th>
+                <th className="px-4 py-2"></th>
               </tr>
             </thead>
             <tbody>
@@ -138,6 +158,16 @@ export default function ServiceRequestsPanel() {
                       {STATUS_LABELS[entry.status]}
                     </span>
                   </td>
+                  <td className="px-4 py-2 whitespace-nowrap text-right">
+                    {!entry.memberVerified && entry.memberNumber && entry.memberFullName && (
+                      <button
+                        onClick={() => setPendingAdd(entry)}
+                        className="text-green-700 hover:underline py-1"
+                      >
+                        เพิ่มเข้าทะเบียน
+                      </button>
+                    )}
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -168,6 +198,19 @@ export default function ServiceRequestsPanel() {
           </button>
         </div>
       )}
+
+      <ConfirmDialog
+        open={pendingAdd !== null}
+        title="เพิ่มสมาชิกเข้าทะเบียน?"
+        description={
+          pendingAdd
+            ? `เพิ่ม ${pendingAdd.memberFullName} (เลขสมาชิก ${pendingAdd.memberNumber}) เข้า MemberRoster โดยใช้ข้อมูลที่สมาชิกแจ้งผ่านแชท — แนะนำให้ยืนยันตัวตนทางโทรศัพท์ก่อน (เบอร์ ${pendingAdd.phone ?? "-"}) คำขอ/ธุรกรรมอื่นของเลขสมาชิกนี้จะถูกยืนยันให้ด้วย`
+            : undefined
+        }
+        confirmLabel={adding ? "กำลังเพิ่ม…" : "เพิ่มเข้าทะเบียน"}
+        onConfirm={handleConfirmAdd}
+        onCancel={() => setPendingAdd(null)}
+      />
     </div>
   );
 }
