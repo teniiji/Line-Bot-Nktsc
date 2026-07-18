@@ -258,3 +258,22 @@ model ResponsibleContact {
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
 }
+
+// Staff who receive service requests for a given non-loan department (e.g.
+// เงินฝาก, บัญชี, สวัสดิการ) — many-to-one: several officers can share a
+// department, and every request is broadcast to all of them (see
+// resolveForwardTargets in lib/financeAgent.ts) so nobody is missed
+// regardless of who's on duty. Managed directly from the dashboard, not an
+// import script, since these assignments change more often than loan
+// routing. A department with no rows here falls back to
+// LINE_FORWARD_GENERAL_ID.
+model DepartmentContact {
+  id         String   @id @default(cuid())
+  department String
+  lineUserId String
+  name       String?
+  createdAt  DateTime @default(now())
+
+  @@unique([department, lineUserId])
+  @@index([department])
+}
