@@ -8,6 +8,8 @@ import { getKnowledgeText } from "./knowledge";
 // they're unit-testable without this module's Anthropic/Prisma dependencies.
 import { stripDisallowedLinks } from "./links";
 import { pickLoanForwardTarget } from "./loanRouting";
+import { pickDepartmentForwardTargets } from "./departmentRouting";
+import { DEPARTMENTS } from "./departments";
 import { CATEGORIES } from "./categories";
 import { LOAN_TYPES } from "./loanTypes";
 import { DOCUMENT_TYPES } from "./documentTypes";
@@ -161,9 +163,9 @@ const tools: Anthropic.Tool[] = [
         },
         department: {
           type: "string",
-          enum: ["สินเชื่อ", "อื่นๆ"],
+          enum: [...DEPARTMENTS],
           description:
-            "Which team should handle this: 'สินเชื่อ' for anything loan-related (กู้เงิน, สินเชื่อ, any loan type), 'อื่นๆ' for everything else (membership, general inquiries, etc.).",
+            "Which team should handle this: 'สินเชื่อ' for anything loan-related (กู้เงิน, สินเชื่อ, any loan type); 'เงินฝาก' for savings/deposit accounts; 'สารสนเทศ' for IT/app/system issues; 'สวัสดิการ' for welfare benefits (ทุนการศึกษา, ส.ส.ค., เงินปันผล); 'นิติการ' for legal matters; 'บัญชี' for accounting; 'ฌาปนกิจ' for the funeral fund (ฌกส/ฌาปนกิจสงเคราะห์); 'บริการสำนักงาน' for general office/administrative service; 'อื่นๆ' only when none of the above fit.",
         },
       },
       required: ["purpose", "department"],
@@ -460,39 +462,50 @@ async function loadPendingServiceRequest(
   return pending;
 }
 
-// Picks where to forward: loan requests try the member's per-member
-// "รหัสผู้รับผิดชอบ" code first (exact match against ResponsibleContact,
-// imported from the cooperative's "ผู้รับผิดชอบ" sheet — more reliable
-// than free text since it's a short code, not a typed unit name), then
-// their organizational unit's confirmed contact (exact match against
-// MemberRoster.unitName), falling back to LINE_FORWARD_LOAN_ID if neither
-// matches. Everything else goes to LINE_FORWARD_GENERAL_ID. Precedence
-// itself lives in lib/loanRouting.ts so it's unit-testable without Prisma.
-async function resolveForwardTarget(
+// Picks where to forward, as one or more LINE user IDs (every non-loan
+// department broadcasts to all of its assigned officers so a request isn't
+// missed depending on who's on duty — see pickDepartmentForwardTargets).
+// Loan requests keep the single-recipient precedence: the member's
+// per-member "รหัสผู้รับผิดชอบ" code first (exact match against
+// ResponsibleContact, imported from the cooperative's "ผู้รับผิดชอบ" sheet
+// — more reliable than free text since it's a short code, not a typed unit
+// name), then their organizational unit's confirmed contact (exact match
+// against MemberRoster.unitName), falling back to LINE_FORWARD_LOAN_ID if
+// neither matches. Precedence itself lives in lib/loanRouting.ts and
+// lib/departmentRouting.ts so it's unit-testable without Prisma.
+async function resolveForwardTargets(
   lineUserId: string,
   department: string | null
-): Promise<string | null> {
-  if (department !== "สินเชื่อ") {
-    return process.env.LINE_FORWARD_GENERAL_ID ?? null;
+): Promise<string[]> {
+  if (department === "สินเชื่อ") {
+    const roster = await prisma.memberRoster.findFirst({ where: { lineUserId } });
+
+    const responsibleContact = roster?.responsibleCode
+      ? await prisma.responsibleContact.findUnique({
+          where: { code: roster.responsibleCode },
+        })
+      : null;
+    const unitContact = roster?.unitName
+      ? await prisma.loanDistrictContact.findUnique({
+          where: { unitName: roster.unitName },
+        })
+      : null;
+
+    const target = pickLoanForwardTarget({
+      responsibleContactLineUserId: responsibleContact?.lineUserId ?? null,
+      unitContactLineUserId: unitContact?.lineUserId ?? null,
+      envFallback: process.env.LINE_FORWARD_LOAN_ID ?? null,
+    });
+    return target ? [target] : [];
   }
 
-  const roster = await prisma.memberRoster.findFirst({ where: { lineUserId } });
+  const contacts = department
+    ? await prisma.departmentContact.findMany({ where: { department } })
+    : [];
 
-  const responsibleContact = roster?.responsibleCode
-    ? await prisma.responsibleContact.findUnique({
-        where: { code: roster.responsibleCode },
-      })
-    : null;
-  const unitContact = roster?.unitName
-    ? await prisma.loanDistrictContact.findUnique({
-        where: { unitName: roster.unitName },
-      })
-    : null;
-
-  return pickLoanForwardTarget({
-    responsibleContactLineUserId: responsibleContact?.lineUserId ?? null,
-    unitContactLineUserId: unitContact?.lineUserId ?? null,
-    envFallback: process.env.LINE_FORWARD_LOAN_ID ?? null,
+  return pickDepartmentForwardTargets({
+    contactLineUserIds: contacts.map((c) => c.lineUserId),
+    envFallback: process.env.LINE_FORWARD_GENERAL_ID ?? null,
   });
 }
 
@@ -537,8 +550,8 @@ async function forwardServiceRequest(
   pendingService: PendingServiceInfo,
   lineUser: LineUserInfo
 ): Promise<string> {
-  const targetId = await resolveForwardTarget(lineUserId, pendingService.department);
-  if (!targetId) {
+  const targetIds = await resolveForwardTargets(lineUserId, pendingService.department);
+  if (targetIds.length === 0) {
     await logServiceRequest(lineUserId, pendingService, lineUser, "unconfigured", null);
     await prisma.pendingServiceRequest.delete({ where: { lineUserId } }).catch(() => {});
     console.warn(
@@ -569,16 +582,37 @@ async function forwardServiceRequest(
         ]
       : [{ type: "text", text }];
 
-  try {
-    await lineClient.pushMessage({ to: targetId, messages });
-  } catch (err) {
-    console.error("[financeAgent] forward service request push error:", err);
-    await logServiceRequest(lineUserId, pendingService, lineUser, "failed", targetId);
+  // Broadcast independently to every resolved recipient — one officer's
+  // push failing (blocked bot, stale ID) must not stop the others from
+  // receiving it. The member is only told forwarding failed if every
+  // recipient failed; a partial failure is still logged so staff can spot
+  // and fix the stale contact from the dashboard.
+  const pushResults = await Promise.allSettled(
+    targetIds.map((to) => lineClient.pushMessage({ to, messages }))
+  );
+  const succeededIds = targetIds.filter((_, i) => pushResults[i].status === "fulfilled");
+  const failedIds = targetIds.filter((_, i) => pushResults[i].status === "rejected");
+
+  pushResults.forEach((result, i) => {
+    if (result.status === "rejected") {
+      console.error(
+        `[financeAgent] forward service request push error (to ${targetIds[i]}):`,
+        result.reason
+      );
+    }
+  });
+
+  if (succeededIds.length === 0) {
+    await logServiceRequest(lineUserId, pendingService, lineUser, "failed", targetIds.join(", "));
     await prisma.pendingServiceRequest.delete({ where: { lineUserId } }).catch(() => {});
     return "Error: failed to forward the request. Apologize to the user and tell them to contact the cooperative office directly instead — do not claim the request was forwarded.";
   }
 
-  await logServiceRequest(lineUserId, pendingService, lineUser, "forwarded", targetId);
+  const forwardedTo =
+    failedIds.length > 0
+      ? `${succeededIds.join(", ")} (failed: ${failedIds.join(", ")})`
+      : succeededIds.join(", ");
+  await logServiceRequest(lineUserId, pendingService, lineUser, "forwarded", forwardedTo);
   await prisma.pendingServiceRequest.delete({ where: { lineUserId } }).catch(() => {});
   return `Forwarded to the relevant department: "${pendingService.requestType}" for member ${lineUser.fullName} (${lineUser.memberNumber}). Confirm to the user, in Thai, that their request was sent and staff will contact them.`;
 }
@@ -1001,9 +1035,12 @@ async function submitServicePurpose(
     return "Error: purpose must be a non-empty string.";
   }
   const department =
-    input.department === "สินเชื่อ" || input.department === "อื่นๆ" ? input.department : null;
+    typeof input.department === "string" &&
+    (DEPARTMENTS as readonly string[]).includes(input.department)
+      ? input.department
+      : null;
   if (!department) {
-    return `Error: department must be one of สินเชื่อ, อื่นๆ.`;
+    return `Error: department must be one of ${DEPARTMENTS.join(", ")}.`;
   }
 
   const pendingService = await loadPendingServiceRequest(ctx.lineUserId);
