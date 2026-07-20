@@ -11,6 +11,7 @@ export function downloadExpensesCsv(expenses: Expense[]) {
     "เลขสมาชิก",
     "ยืนยันตัวตน",
     "ประเภทเงินกู้",
+    "เลขที่บัญชีที่ฝาก",
     "รายละเอียด",
     "จำนวนเงิน",
   ];
@@ -21,6 +22,7 @@ export function downloadExpensesCsv(expenses: Expense[]) {
     e.memberNumber ?? "",
     e.memberVerified ? "ยืนยันแล้ว" : "รอยืนยัน",
     e.loanType ?? "",
+    e.depositAccountNumber ?? "",
     e.description ?? "",
     e.amount.toFixed(2),
   ]);
