@@ -4,8 +4,13 @@ import { checkBasicAuth } from "@/lib/basicAuth";
 // Basic Auth in front of the staff dashboard and its APIs. The LINE
 // webhook is excluded — LINE's servers can't send credentials, and that
 // route already authenticates every request via signature validation.
+// api/blob is excluded too — it's how LINE fetches forwarded slip/document
+// images (see app/api/blob/[...path]/route.ts); LINE can't send Basic Auth
+// credentials there either, and the path itself is the only access control
+// (unguessable, not indexed anywhere) — same posture the old public Vercel
+// Blob URLs had.
 export const config = {
-  matcher: ["/((?!api/line/webhook|_next/|favicon.ico).*)"],
+  matcher: ["/((?!api/line/webhook|api/blob/|_next/|favicon.ico).*)"],
 };
 
 export function middleware(request: NextRequest) {
