@@ -101,7 +101,7 @@ export default function ExpenseList({
                 <td className="px-4 py-2 text-slate-600">
                   {memberLabel(expense)}
                 </td>
-                <td className="px-4 py-2 whitespace-nowrap">
+                <td className="px-4 py-2 whitespace-nowrap space-x-1">
                   {expense.memberVerified ? (
                     <span className="inline-block text-xs px-2 py-0.5 rounded-full bg-green-50 text-green-700 border border-green-200">
                       ยืนยันแล้ว
@@ -109,6 +109,14 @@ export default function ExpenseList({
                   ) : (
                     <span className="inline-block text-xs px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 border border-amber-200">
                       รอยืนยัน
+                    </span>
+                  )}
+                  {expense.senderNameMismatch && (
+                    <span
+                      className="inline-block text-xs px-2 py-0.5 rounded-full bg-red-50 text-red-700 border border-red-200"
+                      title={`ชื่อในสลิป: ${expense.slipSenderName ?? "-"} (สมาชิกยืนยันแล้วว่าเป็นธุรกรรมของตัวเอง)`}
+                    >
+                      ⚠️ ชื่อในสลิปไม่ตรง
                     </span>
                   )}
                 </td>

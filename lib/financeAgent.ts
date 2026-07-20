@@ -16,6 +16,7 @@ import { LOAN_TYPES } from "./loanTypes";
 import { DOCUMENT_TYPES } from "./documentTypes";
 import { formatAmount } from "./format";
 import { isPlaceholderText } from "./placeholderText";
+import { namesLikelyMatch } from "./nameMatch";
 
 // Haiku is fast/cheap and reliable for plain text, but has repeatedly
 // misread slips with busy/themed backgrounds (inventing reasons to decline
@@ -66,6 +67,11 @@ const tools: Anthropic.Tool[] = [
           type: "string",
           description:
             "The bank/wallet transaction reference number (รหัสอ้างอิง) shown on a slip, if visible. Copy it exactly as printed, character for character. Omit if not shown or not applicable (e.g. a plain text message with no slip).",
+        },
+        senderName: {
+          type: "string",
+          description:
+            "The name shown in the slip's \"จาก\" (sender/from) field — the person or account the money is moving FROM — if a slip image is present and clearly shows one. Copy exactly as printed, including any title (นาย/นาง/นางสาว). Omit if not visible, not applicable, or this message has no slip image. Never guess.",
         },
       },
     },
@@ -133,6 +139,21 @@ const tools: Anthropic.Tool[] = [
         },
       },
       required: ["accountNumber"],
+    },
+  },
+  {
+    name: "confirm_transaction_sender",
+    description:
+      "Call when the user answers whether an in-progress transaction is genuinely their own — asked only when the slip's sender name didn't match their registered name. confirmed: true if they say it is their transaction (e.g. themselves, or a family member/spouse transferring on their behalf), false if they say it isn't (e.g. it's a mistake or someone else's slip).",
+    input_schema: {
+      type: "object",
+      properties: {
+        confirmed: {
+          type: "boolean",
+          description: "Whether the user confirmed this is genuinely their own transaction.",
+        },
+      },
+      required: ["confirmed"],
     },
   },
   {
@@ -260,6 +281,8 @@ type PendingInfo = {
   referenceNumber: string | null;
   loanType: string | null;
   depositAccountNumber: string | null;
+  slipSenderName: string | null;
+  senderNameConfirmed: boolean;
 };
 
 type Requirement =
@@ -268,6 +291,7 @@ type Requirement =
   | "category"
   | "loan_type"
   | "deposit_account"
+  | "confirm_sender_name"
   | null;
 
 function computeNextRequirement(
@@ -279,6 +303,17 @@ function computeNextRequirement(
   if (!pending.category) return "category";
   if (pending.category === "ชำระหนี้" && !pending.loanType) return "loan_type";
   if (pending.category === "ฝากเงิน" && !pending.depositAccountNumber) return "deposit_account";
+  // Comparison happens here rather than at submit time, since a slip can
+  // arrive before member identity is known (see the "member_info" flowNote
+  // branch below) — this re-evaluates fresh every turn once both are
+  // available, whichever order they were supplied in.
+  if (
+    pending.slipSenderName &&
+    !pending.senderNameConfirmed &&
+    !namesLikelyMatch(lineUser.fullName, pending.slipSenderName)
+  ) {
+    return "confirm_sender_name";
+  }
   return null;
 }
 
@@ -341,6 +376,8 @@ function buildSystemPrompt(
       )} ถ้าข้อความปัจจุบันของผู้ใช้ระบุประเภทเงินกู้ (หรือความหมายใกล้เคียง) ให้เรียก submit_loan_type ทันทีโดยเลือกตัวเลือกที่ใกล้เคียงที่สุด ถ้ายังไม่ชัดเจนให้ถามย้ำสั้นๆ พร้อมบอกตัวเลือกทั้ง 5 แบบ`;
     } else if (next === "deposit_account") {
       flowNote = `\n\nหมายเหตุระบบ (สำคัญ): มีธุรกรรมฝากเงินค้างอยู่ (${amountNote}) ข้อมูลสมาชิกและสลิปครบแล้ว กำลังรอเลขที่บัญชีที่จะฝาก ถ้าข้อความปัจจุบันของผู้ใช้ระบุเลขที่บัญชีอยู่แล้ว ให้เรียก submit_deposit_account ทันทีด้วยเลขที่บัญชีนั้น ถ้ายังไม่มีให้ถามอีกครั้งสั้นๆ ว่าฝากเข้าบัญชีเลขที่อะไรค่ะ`;
+    } else if (next === "confirm_sender_name") {
+      flowNote = `\n\nหมายเหตุระบบ (สำคัญ): มีธุรกรรมค้างอยู่ (${amountNote}) ข้อมูลครบแล้ว แต่ชื่อในช่อง "จาก" ของสลิป ("${pending.slipSenderName}") ไม่ตรงกับชื่อที่ลงทะเบียนไว้ ("${lineUser?.fullName}") ต้องถามสมาชิกยืนยันก่อนบันทึกว่าเป็นธุรกรรมของตัวเองจริง (อาจเป็นสามี/ภรรยา/ญาติโอนแทนให้ก็ได้ ไม่ได้แปลว่าผิดเสมอไป) ถ้าข้อความปัจจุบันของผู้ใช้ยืนยันว่าใช่ (เช่น "ใช่ค่ะ", "ใช่ของฉันเอง", "แฟนโอนให้") ให้เรียก confirm_transaction_sender ด้วย confirmed: true ถ้าปฏิเสธ (เช่น "ไม่ใช่", "ไม่ใช่ของฉัน") ให้เรียก confirm_transaction_sender ด้วย confirmed: false ถ้ายังไม่ชัดเจนให้ถามย้ำสั้นๆ ด้วยคำสุภาพ`;
     }
   } else if (pendingService) {
     const next = computeServiceRequirement(lineUser, pendingService);
@@ -365,20 +402,21 @@ ${knowledgeText}
 
 **กฎที่ห้ามฝ่าฝืนเด็ดขาด**: เมื่อผู้ใช้พิมพ์บอกจำนวนเงิน+หมวดหมู่ธุรกรรม (แม้จะยังไม่มีสลิปก็ตาม) **ห้ามตอบเป็นข้อความเปล่าๆ ถามข้อมูลเพิ่มโดยไม่เรียก report_transaction ก่อนเด็ดขาด** ต่อให้ยอดเงินดูสูงผิดปกติหรือคุณอยากถามอะไรเพิ่มก็ตาม ให้เรียก report_transaction ด้วยข้อมูลที่มีก่อนเสมอ (ระบบจะเก็บยอดนี้ไว้เทียบกับสลิปที่จะตามมาทีหลังเองด้วย) แล้วค่อยใส่คำถามหรือข้อสังเกตของคุณลงในข้อความตอบกลับได้ตามปกติ — การเรียก tool กับการถามคำถามทำพร้อมกันได้ในคำตอบเดียว ไม่ต้องเลือกอย่างใดอย่างหนึ่ง
 
-หน้าที่ของคุณมี 12 อย่าง:
+หน้าที่ของคุณมี 13 อย่าง:
 
-1. เมื่อผู้ใช้เล่าถึงหรือส่งรูปสลิปธุรกรรมกับสหกรณ์ที่เกิดขึ้นแล้ว (ซื้อหุ้น, ชำระหนี้, ฝากเงิน, ชำระเก็บไม่ได้รายเดือน, ชำระประกัน, ชำระฌาปนกิจ, สสค, สสอค, สสชสอ, สสสก, สสสท) ให้เรียก report_transaction ทันทีเพื่อเริ่ม/อัปเดตการบันทึก **ทุกธุรกรรมต้องผ่านการยืนยันตัวตนสมาชิก (ชื่อ-นามสกุล + เลขสมาชิก, ถามครั้งเดียวแล้วจำไว้ถาวร) และมีรูปสลิปการโอนเงินก่อนจะบันทึกจริงเสมอ — ธุรกรรมชำระหนี้ต้องระบุประเภทเงินกู้เพิ่มด้วย ธุรกรรมฝากเงินต้องระบุเลขที่บัญชีที่จะฝากเพิ่มด้วย** คุณไม่ต้องตัดสินใจเองว่าต้องขอข้อมูลอะไรต่อ ระบบจะตรวจสอบให้อัตโนมัติหลังจากเรียก tool แล้วบอกกลับมาว่ายังขาดอะไร ให้ทำตามนั้น
+1. เมื่อผู้ใช้เล่าถึงหรือส่งรูปสลิปธุรกรรมกับสหกรณ์ที่เกิดขึ้นแล้ว (ซื้อหุ้น, ชำระหนี้, ฝากเงิน, ชำระเก็บไม่ได้รายเดือน, ชำระประกัน, ชำระฌาปนกิจ, สสค, สสอค, สสชสอ, สสสก, สสสท) ให้เรียก report_transaction ทันทีเพื่อเริ่ม/อัปเดตการบันทึก **ทุกธุรกรรมต้องผ่านการยืนยันตัวตนสมาชิก (ชื่อ-นามสกุล + เลขสมาชิก, ถามครั้งเดียวแล้วจำไว้ถาวร) และมีรูปสลิปการโอนเงินก่อนจะบันทึกจริงเสมอ — ธุรกรรมชำระหนี้ต้องระบุประเภทเงินกู้เพิ่มด้วย ธุรกรรมฝากเงินต้องระบุเลขที่บัญชีที่จะฝากเพิ่มด้วย ถ้าชื่อในสลิปไม่ตรงกับชื่อสมาชิกที่ลงทะเบียนไว้ ต้องให้สมาชิกยืนยันก่อนด้วย** คุณไม่ต้องตัดสินใจเองว่าต้องขอข้อมูลอะไรต่อ ระบบจะตรวจสอบให้อัตโนมัติหลังจากเรียก tool แล้วบอกกลับมาว่ายังขาดอะไร ให้ทำตามนั้น
 2. เมื่อผู้ใช้ให้ชื่อ-นามสกุลและเลขสมาชิก (ไม่ว่าจะเสนอเองหรือตอบคำถามที่ถามไป) ให้เรียก submit_member_info
 3. เมื่อผู้ใช้ระบุประเภทเงินกู้สำหรับธุรกรรมชำระหนี้ที่ค้างอยู่ ให้เรียก submit_loan_type
 4. เมื่อผู้ใช้ระบุเลขที่บัญชีสำหรับธุรกรรมฝากเงินที่ค้างอยู่ ให้เรียก submit_deposit_account
-5. เมื่อผู้ใช้ส่งรูปที่เป็น**เอกสารประกอบ** (สลิปเงินเดือน, สำเนาบัตรประชาชน, สำเนาทะเบียนบ้าน, ทะเบียนสมรส) แทนที่จะเป็นสลิปโอนเงิน ให้เรียก flag_supporting_document ทันที (ห้ามใช้ decline_unreadable_image สำหรับเอกสารกลุ่มนี้) แล้วถามด้วยคำสุภาพว่าต้องการทำรายการอะไร
-6. เมื่อผู้ใช้ตอบว่าเอกสารประกอบนั้นส่งมาเพื่อทำรายการอะไร (เช่น "ขอกู้เงินสามัญ") ให้เรียก submit_service_purpose ด้วยข้อความนั้น
-7. เมื่อผู้ใช้ให้เบอร์โทรติดต่อกลับสำหรับคำขอเอกสารประกอบที่กำลังจะส่งต่อให้เจ้าหน้าที่ (ถามหลังทราบตัวตนสมาชิกแล้ว) ให้เรียก submit_contact_phone — ใช้เฉพาะกับคำขอส่งต่อเอกสารเท่านั้น ห้ามเรียกตอนบันทึกธุรกรรมสหกรณ์ปกติ (ซื้อหุ้น/ชำระหนี้/ฝากเงิน ฯลฯ) เด็ดขาด
-8. เมื่อผู้ใช้ถามเกี่ยวกับประวัติการเงินของตัวเอง (เช่น "เดือนนี้จ่ายหนี้ไปเท่าไหร่") ให้เรียกใช้ get_transaction_summary แล้วสรุปคำตอบเป็นภาษาไทย
-9. เมื่อผู้ใช้ถามข้อมูลเกี่ยวกับสหกรณ์เอง (อัตราดอกเบี้ยเงินฝาก/เงินกู้, สวัสดิการสมาชิก, ข้อมูลติดต่อ) **ให้ตอบจาก "ข้อมูลอ้างอิงของสหกรณ์" ด้านบนได้ทันที ไม่ต้องเรียก tool ใดๆ** เพราะเป็นข้อมูลที่เปลี่ยนไม่บ่อย แต่ให้บอกด้วยว่าข้อมูลอาจมีการเปลี่ยนแปลงได้ ถ้าต้องการยืนยันตัวเลขล่าสุดให้ติดต่อสำนักงานสหกรณ์โดยตรง — ถ้าผู้ใช้ถามเรื่องที่ไม่มีในข้อมูลอ้างอิงนี้ (เช่น ข่าวสาร, ประกาศ, กิจกรรมล่าสุด) **ให้บอกตรงๆ ว่าไม่มีข้อมูลนี้ในระบบ แนะนำให้ติดต่อสำนักงานสหกรณ์โดยตรงทางโทรศัพท์/อีเมล ห้ามตอบจากความจำหรือเดาเด็ดขาด และห้ามพิมพ์ลิงก์เว็บไซต์แบบเต็มเด็ดขาดตามกฎด้านบน**
-10. เมื่อผู้ใช้ขอแบบฟอร์ม/เอกสารของสหกรณ์ (เช่น แบบฟอร์มเปลี่ยนแปลงคนค้ำประกัน, ใบสมัครสมาชิก, แบบฟอร์ม สสค./สสอค./สส.ชสอ./สส.สก./สส.สท.) **ให้แนะนำให้ติดต่อขอรับแบบฟอร์มที่สำนักงานสหกรณ์โดยตรงทางโทรศัพท์/อีเมลตามข้อมูลติดต่อด้านบน ไม่ต้องเรียก tool ใดๆ และห้ามพิมพ์ลิงก์เว็บไซต์แบบเต็มเด็ดขาดตามกฎด้านบน**
-11. เมื่อผู้ใช้ถามคำถามความรู้ทั่วไปเกี่ยวกับการเงิน (เช่น วิธีลงทุน, หลักการกู้ยืมทั่วไป) ที่ไม่เกี่ยวกับข้อมูลของสหกรณ์นี้โดยเฉพาะและไม่เกี่ยวกับข้อมูลส่วนตัวของเขา ให้ตอบด้วยความรู้ทั่วไปโดยตรง ไม่ต้องเรียกเครื่องมือใดๆ และควรระบุว่าเป็นข้อมูลทั่วไป ไม่ใช่คำแนะนำทางการเงินจากผู้เชี่ยวชาญที่มีใบอนุญาต
-12. เมื่อผู้ใช้ขอเปลี่ยน/ตั้งชื่อเล่นของตัวเอง (เช่น "เปลี่ยนชื่อเรียกฉันเป็น...", "ตั้งชื่อเล่นว่า...") ให้เรียก set_nickname ด้วยชื่อที่ผู้ใช้ระบุ แล้วตอบยืนยันสั้นๆ ห้ามเรียก tool นี้เพื่อเหตุผลอื่นนอกจากนี้เด็ดขาด (คนละเรื่องกับชื่อ-นามสกุลสมาชิกในข้อ 2)
+5. เมื่อผู้ใช้ยืนยัน/ปฏิเสธว่าธุรกรรมที่ชื่อในสลิปไม่ตรงกับชื่อสมาชิกเป็นของตัวเองจริงหรือไม่ ให้เรียก confirm_transaction_sender
+6. เมื่อผู้ใช้ส่งรูปที่เป็น**เอกสารประกอบ** (สลิปเงินเดือน, สำเนาบัตรประชาชน, สำเนาทะเบียนบ้าน, ทะเบียนสมรส) แทนที่จะเป็นสลิปโอนเงิน ให้เรียก flag_supporting_document ทันที (ห้ามใช้ decline_unreadable_image สำหรับเอกสารกลุ่มนี้) แล้วถามด้วยคำสุภาพว่าต้องการทำรายการอะไร
+7. เมื่อผู้ใช้ตอบว่าเอกสารประกอบนั้นส่งมาเพื่อทำรายการอะไร (เช่น "ขอกู้เงินสามัญ") ให้เรียก submit_service_purpose ด้วยข้อความนั้น
+8. เมื่อผู้ใช้ให้เบอร์โทรติดต่อกลับสำหรับคำขอเอกสารประกอบที่กำลังจะส่งต่อให้เจ้าหน้าที่ (ถามหลังทราบตัวตนสมาชิกแล้ว) ให้เรียก submit_contact_phone — ใช้เฉพาะกับคำขอส่งต่อเอกสารเท่านั้น ห้ามเรียกตอนบันทึกธุรกรรมสหกรณ์ปกติ (ซื้อหุ้น/ชำระหนี้/ฝากเงิน ฯลฯ) เด็ดขาด
+9. เมื่อผู้ใช้ถามเกี่ยวกับประวัติการเงินของตัวเอง (เช่น "เดือนนี้จ่ายหนี้ไปเท่าไหร่") ให้เรียกใช้ get_transaction_summary แล้วสรุปคำตอบเป็นภาษาไทย
+10. เมื่อผู้ใช้ถามข้อมูลเกี่ยวกับสหกรณ์เอง (อัตราดอกเบี้ยเงินฝาก/เงินกู้, สวัสดิการสมาชิก, ข้อมูลติดต่อ) **ให้ตอบจาก "ข้อมูลอ้างอิงของสหกรณ์" ด้านบนได้ทันที ไม่ต้องเรียก tool ใดๆ** เพราะเป็นข้อมูลที่เปลี่ยนไม่บ่อย แต่ให้บอกด้วยว่าข้อมูลอาจมีการเปลี่ยนแปลงได้ ถ้าต้องการยืนยันตัวเลขล่าสุดให้ติดต่อสำนักงานสหกรณ์โดยตรง — ถ้าผู้ใช้ถามเรื่องที่ไม่มีในข้อมูลอ้างอิงนี้ (เช่น ข่าวสาร, ประกาศ, กิจกรรมล่าสุด) **ให้บอกตรงๆ ว่าไม่มีข้อมูลนี้ในระบบ แนะนำให้ติดต่อสำนักงานสหกรณ์โดยตรงทางโทรศัพท์/อีเมล ห้ามตอบจากความจำหรือเดาเด็ดขาด และห้ามพิมพ์ลิงก์เว็บไซต์แบบเต็มเด็ดขาดตามกฎด้านบน**
+11. เมื่อผู้ใช้ขอแบบฟอร์ม/เอกสารของสหกรณ์ (เช่น แบบฟอร์มเปลี่ยนแปลงคนค้ำประกัน, ใบสมัครสมาชิก, แบบฟอร์ม สสค./สสอค./สส.ชสอ./สส.สก./สส.สท.) **ให้แนะนำให้ติดต่อขอรับแบบฟอร์มที่สำนักงานสหกรณ์โดยตรงทางโทรศัพท์/อีเมลตามข้อมูลติดต่อด้านบน ไม่ต้องเรียก tool ใดๆ และห้ามพิมพ์ลิงก์เว็บไซต์แบบเต็มเด็ดขาดตามกฎด้านบน**
+12. เมื่อผู้ใช้ถามคำถามความรู้ทั่วไปเกี่ยวกับการเงิน (เช่น วิธีลงทุน, หลักการกู้ยืมทั่วไป) ที่ไม่เกี่ยวกับข้อมูลของสหกรณ์นี้โดยเฉพาะและไม่เกี่ยวกับข้อมูลส่วนตัวของเขา ให้ตอบด้วยความรู้ทั่วไปโดยตรง ไม่ต้องเรียกเครื่องมือใดๆ และควรระบุว่าเป็นข้อมูลทั่วไป ไม่ใช่คำแนะนำทางการเงินจากผู้เชี่ยวชาญที่มีใบอนุญาต
+13. เมื่อผู้ใช้ขอเปลี่ยน/ตั้งชื่อเล่นของตัวเอง (เช่น "เปลี่ยนชื่อเรียกฉันเป็น...", "ตั้งชื่อเล่นว่า...") ให้เรียก set_nickname ด้วยชื่อที่ผู้ใช้ระบุ แล้วตอบยืนยันสั้นๆ ห้ามเรียก tool นี้เพื่อเหตุผลอื่นนอกจากนี้เด็ดขาด (คนละเรื่องกับชื่อ-นามสกุลสมาชิกในข้อ 2)
 
 กฎการตรวจสอบรูปสลิป (ใช้ทุกครั้งที่มีรูปภาพเข้ามา ไม่ว่าจะอยู่ขั้นตอนไหนของการเก็บข้อมูล):
 
@@ -387,6 +425,8 @@ ${knowledgeText}
 ขั้นที่ 1 (สำคัญที่สุด — ตัดสินก่อนเรื่องอื่นทั้งหมด) ตัดสินใจว่าสลิปนี้"สำเร็จ"หรือไม่: แอปธนาคาร/กระเป๋าเงินดิจิทัลของไทยทุกเจ้า ไม่ว่าจะเป็นธนาคารใด หรือแอปอย่างเป๋าตังก์ (Paotang), ทรูมันนี่, LINE Pay ฯลฯ (ไม่ใช่แค่รายชื่อตัวอย่างเช่น K PLUS, SCB Easy, Krungthai NEXT, Bualuang mBanking, ttb touch, MyMo, Krungsri App) มีสลิปหน้าตาและถ้อยคำไม่เหมือนกัน **กฎเดียวที่ใช้ตัดสิน**: สแกนหาคำหรือวลีที่ลงท้ายด้วย "สำเร็จ" (เช่น "โอนเงินสำเร็จ", "จ่ายบิลสำเร็จ", "ชำระเงินสำเร็จ", "เติมเงินสำเร็จ", "รายการสำเร็จ" หรือความหมายใกล้เคียง) หรือเครื่องหมายถูก/checkmark สีเขียว **ถ้าเจออย่างใดอย่างหนึ่งในภาพ ให้ถือว่าสำเร็จเสมอทันที** ไม่ว่าธนาคารไหน ประเภทธุรกรรมอะไร หรือพื้นหลัง/ธีม/โลโก้/ภาพตกแต่งจะเป็นแบบใดก็ตาม — **ห้ามปฏิเสธการบันทึกด้วยเหตุผลว่า "ไม่เห็นคำยืนยัน" ถ้าจริงๆ แล้วมีคำว่า "สำเร็จ" หรือเครื่องหมายถูกอยู่ในภาพ** ปฏิเสธการบันทึกเฉพาะกรณีที่ข้อความในสลิปเองชัดเจนว่ายังไม่สำเร็จ/ถูกยกเลิก/รอดำเนินการ หรืออ่านจำนวนเงินไม่ออกจริงๆ เท่านั้น — กรณีปฏิเสธเหล่านี้ **ต้องเรียก decline_unreadable_image เสมอ ห้ามตอบเป็นข้อความเปล่าๆ โดยไม่เรียก tool ใดเลยเด็ดขาด** (รูปภาพที่ผ่านมาถึงขั้นที่ 1 นี้แล้ว — คือไม่ใช่เอกสารประกอบตามขั้นที่ 0 — ต้องจบด้วยการเรียก tool ตัวใดตัวหนึ่งในสองตัวนี้เท่านั้น: report_transaction หรือ decline_unreadable_image) **แอปธนาคารไทยหลายเจ้านิยมใส่ภาพพื้นหลังตกแต่งสไตล์ต่างๆ ทับหน้าจอสลิปตัวเอง (เช่น ธีมกีฬา, ธีมเทศกาล, ธีมโปรโมชั่น, ลายการ์ตูน) ซึ่งเป็นแค่ "สกิน/ธีมกราฟิก" ของแอปที่ไม่เกี่ยวข้องกับตัวธุรกรรมเลย ห้ามตีความว่าพื้นหลังธีมกีฬา/เทศกาล/โปรโมชั่นเหล่านี้ทำให้สลิปกลายเป็น "ข่าว", "โปรโมชั่น", "ตั๋ว", หรือเนื้อหาที่ไม่ใช่ธุรกรรมจริงเด็ดขาด — ถ้าเห็นกล่องข้อความยืนยันการโอน/จ่ายเงิน (มีคำว่า "สำเร็จ" + เครื่องหมายถูก + จำนวนเงิน + เลขที่รายการ) ซ้อนทับอยู่บนพื้นหลังธีมใดๆ ก็ตาม ให้ถือเป็นธุรกรรมจริงเสมอ ไม่ว่าพื้นหลังจะเป็นภาพอะไร** ห้ามใช้ภาพพื้นหลังหรือโลโก้มาตัดสินว่าเป็นตั๋ว/ใบสมัครสมาชิก/ข่าว/เอกสารอื่นเด็ดขาด ให้ดูเฉพาะข้อความและตัวเลขที่เป็นเนื้อหาจริงเท่านั้น **ห้ามพยายามตัดสินว่าธุรกรรมเป็นเงินเข้าหรือเงินออก (รับเงินหรือจ่ายเงิน) จากช่อง "จาก"/"ไปยัง" หรือชื่อบัญชีเด็ดขาด เพราะคุณไม่มีทางรู้ได้จริงว่าชื่อไหนในสลิปคือตัวผู้ใช้เอง ห้ามปฏิเสธหรือถามย้อนกลับด้วยเหตุผลเรื่องทิศทางเงินเข้า-ออกเด็ดขาด** (กฎข้อนี้พูดถึงทิศทางเงินเท่านั้น — แยกจากขั้นที่ 1.5 ด้านล่างซึ่งเป็นการตรวจสอบว่าโอนเข้าบัญชีที่ถูกต้องหรือไม่ ต้องทำทุกครั้ง)
 
 ขั้นที่ 1.5 (สำคัญ — ตรวจทุกครั้งหลังผ่านขั้นที่ 1) ตรวจสอบว่าบัญชี/ผู้รับเงินปลายทาง (ช่อง "ไปยัง" หรือเทียบเท่าในสลิป) คือ **สหกรณ์ออมทรัพย์ครูหนองคาย จำกัด** เท่านั้น ยอมรับชื่อแบบเต็ม แบบย่อ หรือสะกดใกล้เคียงที่สื่อถึงสหกรณ์นี้ชัดเจน (เช่น "สหกรณ์ออมทรัพย์ครูหนองคาย", "สอ.ครูหนองคาย") **ถ้าผู้รับเงินในสลิปเป็นบุคคล ร้านค้า หรือหน่วยงาน/บัญชีอื่นที่ไม่ใช่สหกรณ์นี้อย่างชัดเจน ให้เรียก decline_unreadable_image ทันที** ด้วยเหตุผลว่าไม่ได้โอนเข้าบัญชีสหกรณ์ ห้ามเรียก report_transaction บันทึกธุรกรรมที่ไม่ได้โอนเข้าบัญชีสหกรณ์เด็ดขาด ไม่ว่าหมวดหมู่จะเป็นอะไรก็ตาม ถ้าสลิปไม่แสดงชื่อบัญชีปลายทางให้เห็นเลย (อ่านไม่ออก/ไม่มีในภาพ) ให้ดำเนินการต่อตามปกติโดยไม่ต้องปฏิเสธ เพราะไม่มีหลักฐานว่าโอนผิดบัญชี
+
+ขั้นที่ 1.6 (ทำทุกครั้งหลังผ่านขั้นที่ 1.5 — คนละเรื่องกับกฎห้ามตัดสินทิศทางเงินเข้า-ออกในขั้นที่ 1) อ่านชื่อในช่อง "จาก" (ผู้ส่งเงิน) ของสลิป ถ้าเห็นชัดเจนให้ใส่ในพารามิเตอร์ senderName ของ report_transaction ตามตัวอักษรที่เห็น (รวมคำนำหน้าถ้ามี) — ระบบจะเทียบกับชื่อสมาชิกที่ลงทะเบียนไว้เอง ไม่ต้องเทียบเอง ถ้าอ่านไม่ออก/ไม่มีในภาพ ให้ละเว้นพารามิเตอร์นี้ไปเลย ห้ามเดา
 
 ขั้นที่ 2 กำหนดหมวดหมู่ตามบริบทที่เห็นในสลิปจริงๆ ถ้ามีระบุไว้ (เช่น ข้อความหมายเหตุการโอน, ชื่อบิลที่จ่าย) แล้วเรียก report_transaction ทันที
 
@@ -674,6 +714,8 @@ async function notifyTransactionForward(
     date: Date;
     loanType: string | null;
     depositAccountNumber: string | null;
+    slipSenderName: string | null;
+    senderNameMismatch: boolean;
     slipImageUrl: string | null;
   },
   lineUser: LineUserInfo
@@ -700,7 +742,11 @@ async function notifyTransactionForward(
       expense.depositAccountNumber ? `\nเลขที่บัญชีที่ฝาก: ${expense.depositAccountNumber}` : ""
     }${
       expense.description ? `\nหมายเหตุ: ${expense.description}` : ""
-    }\nชื่อ-นามสกุล: ${lineUser.fullName}\nเลขสมาชิก: ${lineUser.memberNumber}\nสถานะ: ${verifyMark}`;
+    }\nชื่อ-นามสกุล: ${lineUser.fullName}\nเลขสมาชิก: ${lineUser.memberNumber}\nสถานะ: ${verifyMark}${
+      expense.senderNameMismatch
+        ? `\n⚠️ ชื่อในสลิป ("${expense.slipSenderName}") ไม่ตรงกับชื่อสมาชิก — สมาชิกยืนยันแล้วว่าเป็นธุรกรรมของตัวเอง แต่ควรตรวจสอบเพิ่มเติม`
+        : ""
+    }`;
 
     // slipImageUrl is the same best-effort Blob backup used for report
     // slips generally (null if BLOB_READ_WRITE_TOKEN isn't configured).
@@ -760,6 +806,15 @@ async function finalizeTransaction(
     return "Error: category is missing — ask the user what this transaction was for.";
   }
 
+  // Recomputed here rather than trusted from whatever state got it past
+  // computeNextRequirement — that only checks "confirmed", not "matches",
+  // so this is what actually drives senderNameMismatch on the permanent
+  // record (true whenever a name was read and it didn't match, regardless
+  // of the confirm step's outcome).
+  const senderNameMismatch = pending.slipSenderName
+    ? !namesLikelyMatch(lineUser.fullName ?? "", pending.slipSenderName)
+    : false;
+
   try {
     const expense = await prisma.expense.create({
       data: {
@@ -776,6 +831,8 @@ async function finalizeTransaction(
         memberVerified: lineUser.verified,
         loanType: pending.loanType,
         depositAccountNumber: pending.depositAccountNumber,
+        slipSenderName: pending.slipSenderName,
+        senderNameMismatch,
       },
     });
     await prisma.pendingTransaction.delete({ where: { lineUserId } }).catch(() => {});
@@ -818,6 +875,9 @@ function requirementMessage(next: Requirement): string {
   if (next === "deposit_account") {
     return "Still missing: which cooperative account number this ฝากเงิน deposit is going into. Ask the user for it next, in Thai. Do not log yet.";
   }
+  if (next === "confirm_sender_name") {
+    return "Still missing: confirmation that this is genuinely the member's own transaction — the slip's sender name didn't match their registered name. Ask them to confirm next, in Thai. Do not log yet.";
+  }
   return "";
 }
 
@@ -827,13 +887,14 @@ type ReportTransactionInput = {
   description?: unknown;
   date?: unknown;
   referenceNumber?: unknown;
+  senderName?: unknown;
 };
 
 async function reportTransaction(
   input: ReportTransactionInput,
   ctx: ToolContext
 ): Promise<string> {
-  const { category, amount, description, date, referenceNumber } = input;
+  const { category, amount, description, date, referenceNumber, senderName } = input;
 
   // category is optional — a slip with no stated purpose legitimately has
   // none yet, and the system will ask the user for it (computeNextRequirement
@@ -858,6 +919,14 @@ async function reportTransaction(
     typeof referenceNumber === "string" && referenceNumber ? referenceNumber : null;
   const parsedDescription =
     typeof description === "string" && description ? description : null;
+  // Same placeholder guard as submit_member_info/submit_contact_phone/
+  // submit_deposit_account — this field is optional, so a placeholder here
+  // just gets dropped (treated as "not read") rather than erroring out and
+  // blocking the whole report_transaction call over an optional field.
+  const parsedSenderName =
+    typeof senderName === "string" && senderName.trim() && !isPlaceholderText(senderName)
+      ? senderName.trim()
+      : null;
 
   // Catch a duplicate slip as early as possible instead of only at the
   // final commit, which may be several messages away once member info and
@@ -913,6 +982,7 @@ async function reportTransaction(
       slipImageHash: ctx.slipImageHash,
       slipImageUrl,
       referenceNumber: refNumber,
+      slipSenderName: parsedSenderName,
     },
     update: {
       // Only overwrite fields we actually have new info for, so a slip
@@ -928,6 +998,11 @@ async function reportTransaction(
       ...(ctx.slipImageHash ? { slipImageHash: ctx.slipImageHash } : {}),
       ...(slipImageUrl ? { slipImageUrl } : {}),
       ...(refNumber ? { referenceNumber: refNumber } : {}),
+      // A new slip's sender name replaces any earlier one and resets
+      // confirmation — a different slip image needs its own check.
+      ...(parsedSenderName
+        ? { slipSenderName: parsedSenderName, senderNameConfirmed: false }
+        : {}),
       createdAt: new Date(),
     },
   });
@@ -1085,6 +1160,40 @@ async function submitDepositAccount(
   const updated = await prisma.pendingTransaction.update({
     where: { lineUserId: ctx.lineUserId },
     data: { depositAccountNumber: accountNumber, createdAt: new Date() },
+  });
+
+  const lineUser = await loadLineUser(ctx.lineUserId);
+  const next = computeNextRequirement(lineUser, updated);
+  if (next === null) {
+    return await finalizeTransaction(ctx.lineUserId, updated, lineUser as LineUserInfo);
+  }
+  return requirementMessage(next);
+}
+
+type ConfirmTransactionSenderInput = {
+  confirmed?: unknown;
+};
+
+async function confirmTransactionSender(
+  input: ConfirmTransactionSenderInput,
+  ctx: ToolContext
+): Promise<string> {
+  const pending = await loadPending(ctx.lineUserId);
+  if (!pending || !pending.slipSenderName) {
+    return "Error: no in-progress transaction awaiting sender-name confirmation.";
+  }
+
+  if (input.confirmed !== true) {
+    // The user said this slip isn't genuinely theirs — don't log it, and
+    // don't leave a stale pending transaction around for the next message
+    // to accidentally attach to.
+    await prisma.pendingTransaction.delete({ where: { lineUserId: ctx.lineUserId } }).catch(() => {});
+    return "The user said this slip is not genuinely their own transaction. Do not log it. Apologize, in Thai, and ask them to double-check and send the correct slip, or contact the cooperative office if they believe this is a mistake.";
+  }
+
+  const updated = await prisma.pendingTransaction.update({
+    where: { lineUserId: ctx.lineUserId },
+    data: { senderNameConfirmed: true, createdAt: new Date() },
   });
 
   const lineUser = await loadLineUser(ctx.lineUserId);
@@ -1304,6 +1413,9 @@ async function executeTool(
     if (name === "submit_deposit_account") {
       return await submitDepositAccount(input as SubmitDepositAccountInput, ctx);
     }
+    if (name === "confirm_transaction_sender") {
+      return await confirmTransactionSender(input as ConfirmTransactionSenderInput, ctx);
+    }
     if (name === "flag_supporting_document") {
       return await flagSupportingDocument(input as FlagSupportingDocumentInput, ctx);
     }
@@ -1400,6 +1512,8 @@ export async function runFinanceAgent(
       toolChoice = { type: "tool", name: "submit_loan_type" };
     } else if (turn === 0 && next === "deposit_account" && !hasImageContent(userContent)) {
       toolChoice = { type: "tool", name: "submit_deposit_account" };
+    } else if (turn === 0 && next === "confirm_sender_name" && !hasImageContent(userContent)) {
+      toolChoice = { type: "tool", name: "confirm_transaction_sender" };
     } else if (turn === 0 && serviceNext === "purpose" && !hasImageContent(userContent)) {
       toolChoice = { type: "tool", name: "submit_service_purpose" };
     } else if (turn === 0 && serviceNext === "member_info" && !hasImageContent(userContent)) {

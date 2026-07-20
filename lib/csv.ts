@@ -12,6 +12,8 @@ export function downloadExpensesCsv(expenses: Expense[]) {
     "ยืนยันตัวตน",
     "ประเภทเงินกู้",
     "เลขที่บัญชีที่ฝาก",
+    "ชื่อในสลิป",
+    "ชื่อในสลิปไม่ตรงกับสมาชิก",
     "รายละเอียด",
     "จำนวนเงิน",
   ];
@@ -23,6 +25,8 @@ export function downloadExpensesCsv(expenses: Expense[]) {
     e.memberVerified ? "ยืนยันแล้ว" : "รอยืนยัน",
     e.loanType ?? "",
     e.depositAccountNumber ?? "",
+    e.slipSenderName ?? "",
+    e.senderNameMismatch ? "ไม่ตรง (สมาชิกยืนยันแล้ว)" : "",
     e.description ?? "",
     e.amount.toFixed(2),
   ]);

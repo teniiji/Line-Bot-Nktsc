@@ -52,6 +52,15 @@ model Expense {
   // attempted (e.g. an older row from before this feature existed).
   forwardedTo     String?
   forwardStatus   String?
+  // The name shown in the slip's "จาก" (sender) field, if the model could
+  // read one — and whether it looked like it belonged to someone other
+  // than the member who claimed this transaction (lib/nameMatch.ts,
+  // deliberately lenient — only a clear mismatch, not every OCR/nickname
+  // difference). true means the member was asked to confirm before this
+  // got logged (see PendingTransaction.senderNameConfirmed) — staff should
+  // still spot-check these.
+  slipSenderName     String?
+  senderNameMismatch Boolean @default(false)
 
   @@index([date])
   @@index([category])
@@ -96,6 +105,16 @@ model PendingTransaction {
   referenceNumber String?
   loanType        String?
   depositAccountNumber String?
+  // The name read off the slip's "จาก" (sender) field, and whether the
+  // member has confirmed (once asked) that a slip whose name didn't match
+  // their registered name is genuinely their own — see
+  // computeNextRequirement / confirm_transaction_sender in
+  // lib/financeAgent.ts. Stored unconditionally whenever the model reads
+  // one, regardless of whether member identity is known yet: the mismatch
+  // comparison itself only runs once both are available, so this can't be
+  // done at submit time.
+  slipSenderName      String?
+  senderNameConfirmed Boolean @default(false)
   createdAt       DateTime  @default(now())
 }
 
