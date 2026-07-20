@@ -11,6 +11,7 @@ import { pickLoanForwardTarget } from "./loanRouting";
 import { pickDepartmentForwardTargets } from "./departmentRouting";
 import { DEPARTMENTS } from "./departments";
 import { CATEGORIES } from "./categories";
+import { getCategoryDepartment } from "./categoryDepartments";
 import { LOAN_TYPES } from "./loanTypes";
 import { DOCUMENT_TYPES } from "./documentTypes";
 import { formatAmount } from "./format";
@@ -509,6 +510,29 @@ async function resolveForwardTargets(
   });
 }
 
+// Pushes the same messages to every target independently — one recipient's
+// push failing (blocked bot, stale ID) never stops the others from
+// receiving it. Shared by forwardServiceRequest and notifyTransactionForward.
+async function pushToTargets(
+  targetIds: string[],
+  messages: Parameters<typeof lineClient.pushMessage>[0]["messages"],
+  logLabel: string
+): Promise<{ succeededIds: string[]; failedIds: string[] }> {
+  const pushResults = await Promise.allSettled(
+    targetIds.map((to) => lineClient.pushMessage({ to, messages }))
+  );
+  const succeededIds = targetIds.filter((_, i) => pushResults[i].status === "fulfilled");
+  const failedIds = targetIds.filter((_, i) => pushResults[i].status === "rejected");
+
+  pushResults.forEach((result, i) => {
+    if (result.status === "rejected") {
+      console.error(`[financeAgent] ${logLabel} push error (to ${targetIds[i]}):`, result.reason);
+    }
+  });
+
+  return { succeededIds, failedIds };
+}
+
 // Writes one ServiceRequestLog row per forward attempt so staff have an
 // audit trail after PendingServiceRequest is cleared. Best-effort: a
 // logging failure must never change what the member is told, so errors
@@ -582,25 +606,14 @@ async function forwardServiceRequest(
         ]
       : [{ type: "text", text }];
 
-  // Broadcast independently to every resolved recipient — one officer's
-  // push failing (blocked bot, stale ID) must not stop the others from
-  // receiving it. The member is only told forwarding failed if every
-  // recipient failed; a partial failure is still logged so staff can spot
-  // and fix the stale contact from the dashboard.
-  const pushResults = await Promise.allSettled(
-    targetIds.map((to) => lineClient.pushMessage({ to, messages }))
+  // The member is only told forwarding failed if every recipient failed; a
+  // partial failure is still logged so staff can spot and fix the stale
+  // contact from the dashboard.
+  const { succeededIds, failedIds } = await pushToTargets(
+    targetIds,
+    messages,
+    "forward service request"
   );
-  const succeededIds = targetIds.filter((_, i) => pushResults[i].status === "fulfilled");
-  const failedIds = targetIds.filter((_, i) => pushResults[i].status === "rejected");
-
-  pushResults.forEach((result, i) => {
-    if (result.status === "rejected") {
-      console.error(
-        `[financeAgent] forward service request push error (to ${targetIds[i]}):`,
-        result.reason
-      );
-    }
-  });
 
   if (succeededIds.length === 0) {
     await logServiceRequest(lineUserId, pendingService, lineUser, "failed", targetIds.join(", "));
@@ -615,6 +628,87 @@ async function forwardServiceRequest(
   await logServiceRequest(lineUserId, pendingService, lineUser, "forwarded", forwardedTo);
   await prisma.pendingServiceRequest.delete({ where: { lineUserId } }).catch(() => {});
   return `Forwarded to the relevant department: "${pendingService.requestType}" for member ${lineUser.fullName} (${lineUser.memberNumber}). Confirm to the user, in Thai, that their request was sent and staff will contact them.`;
+}
+
+// Best-effort staff notification for a just-logged transaction — resolves
+// a department from the transaction's category (CATEGORY_DEPARTMENTS) and
+// broadcasts to it the same way forwardServiceRequest does (reusing
+// resolveForwardTargets, so "ชำระเก็บไม่ได้รายเดือน" routes through the
+// same per-member loan-officer precedence as สินเชื่อ service requests).
+// Never blocks or changes what the member is told — the outcome is only
+// recorded on the Expense row for staff to notice from the dashboard.
+async function notifyTransactionForward(
+  lineUserId: string,
+  expense: {
+    id: string;
+    category: string;
+    amount: number;
+    description: string | null;
+    date: Date;
+    loanType: string | null;
+    slipImageUrl: string | null;
+  },
+  lineUser: LineUserInfo
+): Promise<void> {
+  try {
+    const department = getCategoryDepartment(expense.category);
+    const targetIds = await resolveForwardTargets(lineUserId, department);
+    if (targetIds.length === 0) {
+      await prisma.expense.update({
+        where: { id: expense.id },
+        data: { forwardStatus: "unconfigured", forwardedTo: null },
+      });
+      return;
+    }
+
+    const verifyMark = lineUser.verified
+      ? "✅ ยืนยันตัวตนจากทะเบียน"
+      : "⚠️ ยังไม่ยืนยัน (เลขสมาชิกไม่พบในทะเบียน — กรุณาตรวจสอบ)";
+    const text = `💰 มีรายการธุรกรรมใหม่ (ผ่าน LINE Bot)\nประเภท: ${expense.category}${
+      expense.loanType ? ` (${expense.loanType})` : ""
+    }\nจำนวนเงิน: ${formatAmount(expense.amount)}\nวันที่: ${expense.date
+      .toISOString()
+      .slice(0, 10)}${
+      expense.description ? `\nหมายเหตุ: ${expense.description}` : ""
+    }\nชื่อ-นามสกุล: ${lineUser.fullName}\nเลขสมาชิก: ${lineUser.memberNumber}\nสถานะ: ${verifyMark}`;
+
+    // slipImageUrl is the same best-effort Blob backup used for report
+    // slips generally (null if BLOB_READ_WRITE_TOKEN isn't configured).
+    const messages: Parameters<typeof lineClient.pushMessage>[0]["messages"] =
+      expense.slipImageUrl
+        ? [
+            { type: "text", text },
+            {
+              type: "image",
+              originalContentUrl: expense.slipImageUrl,
+              previewImageUrl: expense.slipImageUrl,
+            },
+          ]
+        : [{ type: "text", text }];
+
+    const { succeededIds, failedIds } = await pushToTargets(
+      targetIds,
+      messages,
+      "notify transaction forward"
+    );
+
+    const forwardedTo =
+      succeededIds.length === 0
+        ? targetIds.join(", ")
+        : failedIds.length > 0
+          ? `${succeededIds.join(", ")} (failed: ${failedIds.join(", ")})`
+          : succeededIds.join(", ");
+
+    await prisma.expense.update({
+      where: { id: expense.id },
+      data: {
+        forwardStatus: succeededIds.length > 0 ? "forwarded" : "failed",
+        forwardedTo,
+      },
+    });
+  } catch (err) {
+    console.error("[financeAgent] notifyTransactionForward error:", err);
+  }
 }
 
 // Creates the Expense row from a now-complete pending transaction plus the
@@ -654,6 +748,7 @@ async function finalizeTransaction(
       },
     });
     await prisma.pendingTransaction.delete({ where: { lineUserId } }).catch(() => {});
+    await notifyTransactionForward(lineUserId, expense, lineUser);
 
     return `Logged: ${formatAmount(expense.amount)} (${expense.category}) on ${expense.date
       .toISOString()
