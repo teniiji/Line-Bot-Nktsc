@@ -39,6 +39,14 @@ model Expense {
   // false means it was self-asserted and unverified, so staff should check.
   memberVerified  Boolean  @default(false)
   loanType        String?
+  // Best-effort staff notification, mirroring ServiceRequestLog's
+  // forwardedTo/status: which department's officer(s) (resolved from the
+  // transaction's category via CATEGORY_DEPARTMENTS) got pushed a message
+  // about this transaction, and whether it succeeded. Never blocks logging
+  // the transaction itself — null forwardStatus means the push was never
+  // attempted (e.g. an older row from before this feature existed).
+  forwardedTo     String?
+  forwardStatus   String?
 
   @@index([date])
   @@index([category])
