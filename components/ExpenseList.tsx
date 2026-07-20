@@ -94,6 +94,9 @@ export default function ExpenseList({
                   {expense.loanType ? (
                     <span className="text-slate-400"> · {expense.loanType}</span>
                   ) : null}
+                  {expense.depositAccountNumber ? (
+                    <span className="text-slate-400"> · บช. {expense.depositAccountNumber}</span>
+                  ) : null}
                 </td>
                 <td className="px-4 py-2 text-slate-600">
                   {memberLabel(expense)}

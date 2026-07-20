@@ -9,6 +9,7 @@ export interface Expense {
   memberNumber: string | null;
   memberVerified: boolean;
   loanType: string | null;
+  depositAccountNumber: string | null;
   user: { displayName: string | null; nickname: string | null } | null;
 }
 

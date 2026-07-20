@@ -120,6 +120,21 @@ const tools: Anthropic.Tool[] = [
     },
   },
   {
+    name: "submit_deposit_account",
+    description:
+      "Call when the user specifies which cooperative savings account number (เลขที่บัญชี) an in-progress ฝากเงิน (deposit) transaction should go into — either proactively, or in answer to being asked for it.",
+    input_schema: {
+      type: "object",
+      properties: {
+        accountNumber: {
+          type: "string",
+          description: "The account number, copied exactly as stated.",
+        },
+      },
+      required: ["accountNumber"],
+    },
+  },
+  {
     name: "decline_unreadable_image",
     description:
       "Use only for an image that genuinely isn't a bank/wallet transaction slip and isn't one of the known supporting-document types either (a random unrelated photo, or a slip whose own text explicitly says the transaction failed/is pending/was cancelled). For a payslip, ID card copy, house registration copy, or marriage certificate, use flag_supporting_document instead — those aren't declined, they're routed to ask what the user needs. Call this instead of replying with plain text — your reply text afterward explains why to the user.",
@@ -243,9 +258,16 @@ type PendingInfo = {
   slipImageUrl: string | null;
   referenceNumber: string | null;
   loanType: string | null;
+  depositAccountNumber: string | null;
 };
 
-type Requirement = "member_info" | "slip" | "category" | "loan_type" | null;
+type Requirement =
+  | "member_info"
+  | "slip"
+  | "category"
+  | "loan_type"
+  | "deposit_account"
+  | null;
 
 function computeNextRequirement(
   lineUser: LineUserInfo | null,
@@ -255,6 +277,7 @@ function computeNextRequirement(
   if (!pending.hasSlip) return "slip";
   if (!pending.category) return "category";
   if (pending.category === "ชำระหนี้" && !pending.loanType) return "loan_type";
+  if (pending.category === "ฝากเงิน" && !pending.depositAccountNumber) return "deposit_account";
   return null;
 }
 
@@ -315,6 +338,8 @@ function buildSystemPrompt(
       flowNote = `\n\nหมายเหตุระบบ (สำคัญ): มีธุรกรรมชำระหนี้ค้างอยู่ (${amountNote}) ข้อมูลสมาชิกและสลิปครบแล้ว กำลังรอประเภทเงินกู้ ตัวเลือกคือ: ${LOAN_TYPES.join(
         ", "
       )} ถ้าข้อความปัจจุบันของผู้ใช้ระบุประเภทเงินกู้ (หรือความหมายใกล้เคียง) ให้เรียก submit_loan_type ทันทีโดยเลือกตัวเลือกที่ใกล้เคียงที่สุด ถ้ายังไม่ชัดเจนให้ถามย้ำสั้นๆ พร้อมบอกตัวเลือกทั้ง 5 แบบ`;
+    } else if (next === "deposit_account") {
+      flowNote = `\n\nหมายเหตุระบบ (สำคัญ): มีธุรกรรมฝากเงินค้างอยู่ (${amountNote}) ข้อมูลสมาชิกและสลิปครบแล้ว กำลังรอเลขที่บัญชีที่จะฝาก ถ้าข้อความปัจจุบันของผู้ใช้ระบุเลขที่บัญชีอยู่แล้ว ให้เรียก submit_deposit_account ทันทีด้วยเลขที่บัญชีนั้น ถ้ายังไม่มีให้ถามอีกครั้งสั้นๆ ว่าฝากเข้าบัญชีเลขที่อะไรค่ะ`;
     }
   } else if (pendingService) {
     const next = computeServiceRequirement(lineUser, pendingService);
@@ -339,19 +364,20 @@ ${knowledgeText}
 
 **กฎที่ห้ามฝ่าฝืนเด็ดขาด**: เมื่อผู้ใช้พิมพ์บอกจำนวนเงิน+หมวดหมู่ธุรกรรม (แม้จะยังไม่มีสลิปก็ตาม) **ห้ามตอบเป็นข้อความเปล่าๆ ถามข้อมูลเพิ่มโดยไม่เรียก report_transaction ก่อนเด็ดขาด** ต่อให้ยอดเงินดูสูงผิดปกติหรือคุณอยากถามอะไรเพิ่มก็ตาม ให้เรียก report_transaction ด้วยข้อมูลที่มีก่อนเสมอ (ระบบจะเก็บยอดนี้ไว้เทียบกับสลิปที่จะตามมาทีหลังเองด้วย) แล้วค่อยใส่คำถามหรือข้อสังเกตของคุณลงในข้อความตอบกลับได้ตามปกติ — การเรียก tool กับการถามคำถามทำพร้อมกันได้ในคำตอบเดียว ไม่ต้องเลือกอย่างใดอย่างหนึ่ง
 
-หน้าที่ของคุณมี 11 อย่าง:
+หน้าที่ของคุณมี 12 อย่าง:
 
-1. เมื่อผู้ใช้เล่าถึงหรือส่งรูปสลิปธุรกรรมกับสหกรณ์ที่เกิดขึ้นแล้ว (ซื้อหุ้น, ชำระหนี้, ฝากเงิน, ชำระเก็บไม่ได้รายเดือน, ชำระประกัน, ชำระฌาปนกิจ, สสค, สสอค, สสชสอ, สสสก, สสสท) ให้เรียก report_transaction ทันทีเพื่อเริ่ม/อัปเดตการบันทึก **ทุกธุรกรรมต้องผ่านการยืนยันตัวตนสมาชิก (ชื่อ-นามสกุล + เลขสมาชิก, ถามครั้งเดียวแล้วจำไว้ถาวร) และมีรูปสลิปการโอนเงินก่อนจะบันทึกจริงเสมอ — ธุรกรรมชำระหนี้ต้องระบุประเภทเงินกู้เพิ่มด้วย** คุณไม่ต้องตัดสินใจเองว่าต้องขอข้อมูลอะไรต่อ ระบบจะตรวจสอบให้อัตโนมัติหลังจากเรียก tool แล้วบอกกลับมาว่ายังขาดอะไร ให้ทำตามนั้น
+1. เมื่อผู้ใช้เล่าถึงหรือส่งรูปสลิปธุรกรรมกับสหกรณ์ที่เกิดขึ้นแล้ว (ซื้อหุ้น, ชำระหนี้, ฝากเงิน, ชำระเก็บไม่ได้รายเดือน, ชำระประกัน, ชำระฌาปนกิจ, สสค, สสอค, สสชสอ, สสสก, สสสท) ให้เรียก report_transaction ทันทีเพื่อเริ่ม/อัปเดตการบันทึก **ทุกธุรกรรมต้องผ่านการยืนยันตัวตนสมาชิก (ชื่อ-นามสกุล + เลขสมาชิก, ถามครั้งเดียวแล้วจำไว้ถาวร) และมีรูปสลิปการโอนเงินก่อนจะบันทึกจริงเสมอ — ธุรกรรมชำระหนี้ต้องระบุประเภทเงินกู้เพิ่มด้วย ธุรกรรมฝากเงินต้องระบุเลขที่บัญชีที่จะฝากเพิ่มด้วย** คุณไม่ต้องตัดสินใจเองว่าต้องขอข้อมูลอะไรต่อ ระบบจะตรวจสอบให้อัตโนมัติหลังจากเรียก tool แล้วบอกกลับมาว่ายังขาดอะไร ให้ทำตามนั้น
 2. เมื่อผู้ใช้ให้ชื่อ-นามสกุลและเลขสมาชิก (ไม่ว่าจะเสนอเองหรือตอบคำถามที่ถามไป) ให้เรียก submit_member_info
 3. เมื่อผู้ใช้ระบุประเภทเงินกู้สำหรับธุรกรรมชำระหนี้ที่ค้างอยู่ ให้เรียก submit_loan_type
-4. เมื่อผู้ใช้ส่งรูปที่เป็น**เอกสารประกอบ** (สลิปเงินเดือน, สำเนาบัตรประชาชน, สำเนาทะเบียนบ้าน, ทะเบียนสมรส) แทนที่จะเป็นสลิปโอนเงิน ให้เรียก flag_supporting_document ทันที (ห้ามใช้ decline_unreadable_image สำหรับเอกสารกลุ่มนี้) แล้วถามด้วยคำสุภาพว่าต้องการทำรายการอะไร
-5. เมื่อผู้ใช้ตอบว่าเอกสารประกอบนั้นส่งมาเพื่อทำรายการอะไร (เช่น "ขอกู้เงินสามัญ") ให้เรียก submit_service_purpose ด้วยข้อความนั้น
-6. เมื่อผู้ใช้ให้เบอร์โทรติดต่อกลับสำหรับคำขอเอกสารประกอบที่กำลังจะส่งต่อให้เจ้าหน้าที่ (ถามหลังทราบตัวตนสมาชิกแล้ว) ให้เรียก submit_contact_phone — ใช้เฉพาะกับคำขอส่งต่อเอกสารเท่านั้น ห้ามเรียกตอนบันทึกธุรกรรมสหกรณ์ปกติ (ซื้อหุ้น/ชำระหนี้/ฝากเงิน ฯลฯ) เด็ดขาด
-7. เมื่อผู้ใช้ถามเกี่ยวกับประวัติการเงินของตัวเอง (เช่น "เดือนนี้จ่ายหนี้ไปเท่าไหร่") ให้เรียกใช้ get_transaction_summary แล้วสรุปคำตอบเป็นภาษาไทย
-8. เมื่อผู้ใช้ถามข้อมูลเกี่ยวกับสหกรณ์เอง (อัตราดอกเบี้ยเงินฝาก/เงินกู้, สวัสดิการสมาชิก, ข้อมูลติดต่อ) **ให้ตอบจาก "ข้อมูลอ้างอิงของสหกรณ์" ด้านบนได้ทันที ไม่ต้องเรียก tool ใดๆ** เพราะเป็นข้อมูลที่เปลี่ยนไม่บ่อย แต่ให้บอกด้วยว่าข้อมูลอาจมีการเปลี่ยนแปลงได้ ถ้าต้องการยืนยันตัวเลขล่าสุดให้ติดต่อสำนักงานสหกรณ์โดยตรง — ถ้าผู้ใช้ถามเรื่องที่ไม่มีในข้อมูลอ้างอิงนี้ (เช่น ข่าวสาร, ประกาศ, กิจกรรมล่าสุด) **ให้บอกตรงๆ ว่าไม่มีข้อมูลนี้ในระบบ แนะนำให้ติดต่อสำนักงานสหกรณ์โดยตรงทางโทรศัพท์/อีเมล ห้ามตอบจากความจำหรือเดาเด็ดขาด และห้ามพิมพ์ลิงก์เว็บไซต์แบบเต็มเด็ดขาดตามกฎด้านบน**
-9. เมื่อผู้ใช้ขอแบบฟอร์ม/เอกสารของสหกรณ์ (เช่น แบบฟอร์มเปลี่ยนแปลงคนค้ำประกัน, ใบสมัครสมาชิก, แบบฟอร์ม สสค./สสอค./สส.ชสอ./สส.สก./สส.สท.) **ให้แนะนำให้ติดต่อขอรับแบบฟอร์มที่สำนักงานสหกรณ์โดยตรงทางโทรศัพท์/อีเมลตามข้อมูลติดต่อด้านบน ไม่ต้องเรียก tool ใดๆ และห้ามพิมพ์ลิงก์เว็บไซต์แบบเต็มเด็ดขาดตามกฎด้านบน**
-10. เมื่อผู้ใช้ถามคำถามความรู้ทั่วไปเกี่ยวกับการเงิน (เช่น วิธีลงทุน, หลักการกู้ยืมทั่วไป) ที่ไม่เกี่ยวกับข้อมูลของสหกรณ์นี้โดยเฉพาะและไม่เกี่ยวกับข้อมูลส่วนตัวของเขา ให้ตอบด้วยความรู้ทั่วไปโดยตรง ไม่ต้องเรียกเครื่องมือใดๆ และควรระบุว่าเป็นข้อมูลทั่วไป ไม่ใช่คำแนะนำทางการเงินจากผู้เชี่ยวชาญที่มีใบอนุญาต
-11. เมื่อผู้ใช้ขอเปลี่ยน/ตั้งชื่อเล่นของตัวเอง (เช่น "เปลี่ยนชื่อเรียกฉันเป็น...", "ตั้งชื่อเล่นว่า...") ให้เรียก set_nickname ด้วยชื่อที่ผู้ใช้ระบุ แล้วตอบยืนยันสั้นๆ ห้ามเรียก tool นี้เพื่อเหตุผลอื่นนอกจากนี้เด็ดขาด (คนละเรื่องกับชื่อ-นามสกุลสมาชิกในข้อ 2)
+4. เมื่อผู้ใช้ระบุเลขที่บัญชีสำหรับธุรกรรมฝากเงินที่ค้างอยู่ ให้เรียก submit_deposit_account
+5. เมื่อผู้ใช้ส่งรูปที่เป็น**เอกสารประกอบ** (สลิปเงินเดือน, สำเนาบัตรประชาชน, สำเนาทะเบียนบ้าน, ทะเบียนสมรส) แทนที่จะเป็นสลิปโอนเงิน ให้เรียก flag_supporting_document ทันที (ห้ามใช้ decline_unreadable_image สำหรับเอกสารกลุ่มนี้) แล้วถามด้วยคำสุภาพว่าต้องการทำรายการอะไร
+6. เมื่อผู้ใช้ตอบว่าเอกสารประกอบนั้นส่งมาเพื่อทำรายการอะไร (เช่น "ขอกู้เงินสามัญ") ให้เรียก submit_service_purpose ด้วยข้อความนั้น
+7. เมื่อผู้ใช้ให้เบอร์โทรติดต่อกลับสำหรับคำขอเอกสารประกอบที่กำลังจะส่งต่อให้เจ้าหน้าที่ (ถามหลังทราบตัวตนสมาชิกแล้ว) ให้เรียก submit_contact_phone — ใช้เฉพาะกับคำขอส่งต่อเอกสารเท่านั้น ห้ามเรียกตอนบันทึกธุรกรรมสหกรณ์ปกติ (ซื้อหุ้น/ชำระหนี้/ฝากเงิน ฯลฯ) เด็ดขาด
+8. เมื่อผู้ใช้ถามเกี่ยวกับประวัติการเงินของตัวเอง (เช่น "เดือนนี้จ่ายหนี้ไปเท่าไหร่") ให้เรียกใช้ get_transaction_summary แล้วสรุปคำตอบเป็นภาษาไทย
+9. เมื่อผู้ใช้ถามข้อมูลเกี่ยวกับสหกรณ์เอง (อัตราดอกเบี้ยเงินฝาก/เงินกู้, สวัสดิการสมาชิก, ข้อมูลติดต่อ) **ให้ตอบจาก "ข้อมูลอ้างอิงของสหกรณ์" ด้านบนได้ทันที ไม่ต้องเรียก tool ใดๆ** เพราะเป็นข้อมูลที่เปลี่ยนไม่บ่อย แต่ให้บอกด้วยว่าข้อมูลอาจมีการเปลี่ยนแปลงได้ ถ้าต้องการยืนยันตัวเลขล่าสุดให้ติดต่อสำนักงานสหกรณ์โดยตรง — ถ้าผู้ใช้ถามเรื่องที่ไม่มีในข้อมูลอ้างอิงนี้ (เช่น ข่าวสาร, ประกาศ, กิจกรรมล่าสุด) **ให้บอกตรงๆ ว่าไม่มีข้อมูลนี้ในระบบ แนะนำให้ติดต่อสำนักงานสหกรณ์โดยตรงทางโทรศัพท์/อีเมล ห้ามตอบจากความจำหรือเดาเด็ดขาด และห้ามพิมพ์ลิงก์เว็บไซต์แบบเต็มเด็ดขาดตามกฎด้านบน**
+10. เมื่อผู้ใช้ขอแบบฟอร์ม/เอกสารของสหกรณ์ (เช่น แบบฟอร์มเปลี่ยนแปลงคนค้ำประกัน, ใบสมัครสมาชิก, แบบฟอร์ม สสค./สสอค./สส.ชสอ./สส.สก./สส.สท.) **ให้แนะนำให้ติดต่อขอรับแบบฟอร์มที่สำนักงานสหกรณ์โดยตรงทางโทรศัพท์/อีเมลตามข้อมูลติดต่อด้านบน ไม่ต้องเรียก tool ใดๆ และห้ามพิมพ์ลิงก์เว็บไซต์แบบเต็มเด็ดขาดตามกฎด้านบน**
+11. เมื่อผู้ใช้ถามคำถามความรู้ทั่วไปเกี่ยวกับการเงิน (เช่น วิธีลงทุน, หลักการกู้ยืมทั่วไป) ที่ไม่เกี่ยวกับข้อมูลของสหกรณ์นี้โดยเฉพาะและไม่เกี่ยวกับข้อมูลส่วนตัวของเขา ให้ตอบด้วยความรู้ทั่วไปโดยตรง ไม่ต้องเรียกเครื่องมือใดๆ และควรระบุว่าเป็นข้อมูลทั่วไป ไม่ใช่คำแนะนำทางการเงินจากผู้เชี่ยวชาญที่มีใบอนุญาต
+12. เมื่อผู้ใช้ขอเปลี่ยน/ตั้งชื่อเล่นของตัวเอง (เช่น "เปลี่ยนชื่อเรียกฉันเป็น...", "ตั้งชื่อเล่นว่า...") ให้เรียก set_nickname ด้วยชื่อที่ผู้ใช้ระบุ แล้วตอบยืนยันสั้นๆ ห้ามเรียก tool นี้เพื่อเหตุผลอื่นนอกจากนี้เด็ดขาด (คนละเรื่องกับชื่อ-นามสกุลสมาชิกในข้อ 2)
 
 กฎการตรวจสอบรูปสลิป (ใช้ทุกครั้งที่มีรูปภาพเข้ามา ไม่ว่าจะอยู่ขั้นตอนไหนของการเก็บข้อมูล):
 
@@ -646,6 +672,7 @@ async function notifyTransactionForward(
     description: string | null;
     date: Date;
     loanType: string | null;
+    depositAccountNumber: string | null;
     slipImageUrl: string | null;
   },
   lineUser: LineUserInfo
@@ -669,6 +696,8 @@ async function notifyTransactionForward(
     }\nจำนวนเงิน: ${formatAmount(expense.amount)}\nวันที่: ${expense.date
       .toISOString()
       .slice(0, 10)}${
+      expense.depositAccountNumber ? `\nเลขที่บัญชีที่ฝาก: ${expense.depositAccountNumber}` : ""
+    }${
       expense.description ? `\nหมายเหตุ: ${expense.description}` : ""
     }\nชื่อ-นามสกุล: ${lineUser.fullName}\nเลขสมาชิก: ${lineUser.memberNumber}\nสถานะ: ${verifyMark}`;
 
@@ -745,6 +774,7 @@ async function finalizeTransaction(
         memberNumber: lineUser.memberNumber,
         memberVerified: lineUser.verified,
         loanType: pending.loanType,
+        depositAccountNumber: pending.depositAccountNumber,
       },
     });
     await prisma.pendingTransaction.delete({ where: { lineUserId } }).catch(() => {});
@@ -783,6 +813,9 @@ function requirementMessage(next: Requirement): string {
     return `Still missing: loan type for this ชำระหนี้ repayment. Ask the user to specify one of: ${LOAN_TYPES.join(
       ", "
     )}. Do not log yet.`;
+  }
+  if (next === "deposit_account") {
+    return "Still missing: which cooperative account number this ฝากเงิน deposit is going into. Ask the user for it next, in Thai. Do not log yet.";
   }
   return "";
 }
@@ -1029,6 +1062,38 @@ async function submitLoanType(
   return requirementMessage(next);
 }
 
+type SubmitDepositAccountInput = {
+  accountNumber?: unknown;
+};
+
+async function submitDepositAccount(
+  input: SubmitDepositAccountInput,
+  ctx: ToolContext
+): Promise<string> {
+  const accountNumber =
+    typeof input.accountNumber === "string" ? input.accountNumber.trim() : "";
+  if (!accountNumber) {
+    return "Error: accountNumber must be a non-empty string.";
+  }
+
+  const pending = await loadPending(ctx.lineUserId);
+  if (!pending || pending.category !== "ฝากเงิน") {
+    return "Error: no in-progress ฝากเงิน transaction to attach an account number to.";
+  }
+
+  const updated = await prisma.pendingTransaction.update({
+    where: { lineUserId: ctx.lineUserId },
+    data: { depositAccountNumber: accountNumber, createdAt: new Date() },
+  });
+
+  const lineUser = await loadLineUser(ctx.lineUserId);
+  const next = computeNextRequirement(lineUser, updated);
+  if (next === null) {
+    return await finalizeTransaction(ctx.lineUserId, updated, lineUser as LineUserInfo);
+  }
+  return requirementMessage(next);
+}
+
 type SummaryInput = {
   from?: unknown;
   to?: unknown;
@@ -1235,6 +1300,9 @@ async function executeTool(
     if (name === "submit_loan_type") {
       return await submitLoanType(input as SubmitLoanTypeInput, ctx);
     }
+    if (name === "submit_deposit_account") {
+      return await submitDepositAccount(input as SubmitDepositAccountInput, ctx);
+    }
     if (name === "flag_supporting_document") {
       return await flagSupportingDocument(input as FlagSupportingDocumentInput, ctx);
     }
@@ -1329,6 +1397,8 @@ export async function runFinanceAgent(
       toolChoice = { type: "tool", name: "report_transaction" };
     } else if (turn === 0 && next === "loan_type" && !hasImageContent(userContent)) {
       toolChoice = { type: "tool", name: "submit_loan_type" };
+    } else if (turn === 0 && next === "deposit_account" && !hasImageContent(userContent)) {
+      toolChoice = { type: "tool", name: "submit_deposit_account" };
     } else if (turn === 0 && serviceNext === "purpose" && !hasImageContent(userContent)) {
       toolChoice = { type: "tool", name: "submit_service_purpose" };
     } else if (turn === 0 && serviceNext === "member_info" && !hasImageContent(userContent)) {

@@ -18,6 +18,7 @@ const EXPENSE_SELECT = {
   memberNumber: true,
   memberVerified: true,
   loanType: true,
+  depositAccountNumber: true,
 } as const;
 
 export async function GET(request: NextRequest) {

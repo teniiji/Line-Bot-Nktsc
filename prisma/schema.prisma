@@ -39,6 +39,11 @@ model Expense {
   // false means it was self-asserted and unverified, so staff should check.
   memberVerified  Boolean  @default(false)
   loanType        String?
+  // Which cooperative savings account (เลขที่บัญชี) a ฝากเงิน deposit is
+  // going into — asked directly the same way loanType is for ชำระหนี้,
+  // since it's the member's own account number and won't reliably appear
+  // on the transfer slip itself.
+  depositAccountNumber String?
   // Best-effort staff notification, mirroring ServiceRequestLog's
   // forwardedTo/status: which department's officer(s) (resolved from the
   // transaction's category via CATEGORY_DEPARTMENTS) got pushed a message
@@ -69,7 +74,8 @@ model ProcessedLineEvent {
 
 // An in-progress cooperative transaction the agent is still collecting
 // required info for (member identity, transfer slip, and — for ชำระหนี้ —
-// loan type) across multiple separate, stateless webhook calls. Holds
+// loan type, or — for ฝากเงิน — the deposit account number) across
+// multiple separate, stateless webhook calls. Holds
 // whatever has been supplied so far per LINE user until every requirement
 // is met (at which point it's converted into an Expense and deleted), or it
 // expires unanswered.
@@ -89,6 +95,7 @@ model PendingTransaction {
   slipImageUrl    String?
   referenceNumber String?
   loanType        String?
+  depositAccountNumber String?
   createdAt       DateTime  @default(now())
 }
 
