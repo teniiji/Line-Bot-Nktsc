@@ -166,7 +166,7 @@ const tools: Anthropic.Tool[] = [
           type: "string",
           enum: [...DEPARTMENTS],
           description:
-            "Which team should handle this: 'สินเชื่อ' for anything loan-related (กู้เงิน, สินเชื่อ, any loan type); 'เงินฝาก' for savings/deposit accounts; 'สารสนเทศ' for IT/app/system issues; 'สวัสดิการ' for welfare benefits (ทุนการศึกษา, ส.ส.ค., เงินปันผล); 'นิติการ' for legal matters; 'บัญชี' for accounting; 'ฌาปนกิจ' for the funeral fund (ฌกส/ฌาปนกิจสงเคราะห์); 'บริการสำนักงาน' for general office/administrative service; 'อื่นๆ' only when none of the above fit.",
+            "Which team should handle this: 'สินเชื่อ' for anything loan-related (กู้เงิน, สินเชื่อ, any loan type); 'เงินฝาก' for savings/deposit accounts; 'สารสนเทศ' for IT/app/system issues; 'สวัสดิการ' for welfare benefits (ทุนการศึกษา, ส.ส.ค., เงินปันผล); 'นิติการ' for legal matters; 'บัญชี' for accounting; 'ฌาปนกิจ' for the funeral fund (ฌกส/ฌาปนกิจสงเคราะห์); 'บริหารสำนักงาน/ธุรการ' for general office/administrative service; 'อื่นๆ' only when none of the above fit.",
         },
       },
       required: ["purpose", "department"],
