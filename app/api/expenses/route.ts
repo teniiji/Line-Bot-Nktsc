@@ -19,6 +19,8 @@ const EXPENSE_SELECT = {
   memberVerified: true,
   loanType: true,
   depositAccountNumber: true,
+  slipSenderName: true,
+  senderNameMismatch: true,
 } as const;
 
 export async function GET(request: NextRequest) {

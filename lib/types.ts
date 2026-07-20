@@ -10,6 +10,8 @@ export interface Expense {
   memberVerified: boolean;
   loanType: string | null;
   depositAccountNumber: string | null;
+  slipSenderName: string | null;
+  senderNameMismatch: boolean;
   user: { displayName: string | null; nickname: string | null } | null;
 }
 

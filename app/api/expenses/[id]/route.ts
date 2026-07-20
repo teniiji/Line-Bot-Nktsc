@@ -77,6 +77,8 @@ export async function PUT(
         memberVerified: true,
         loanType: true,
         depositAccountNumber: true,
+        slipSenderName: true,
+        senderNameMismatch: true,
       },
     });
     return NextResponse.json(expense);
