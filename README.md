@@ -57,7 +57,7 @@
 * `DATABASE_URL`: Connection string ของ PostgreSQL
 * `LINE_CHANNEL_SECRET` & `LINE_CHANNEL_ACCESS_TOKEN`: คีย์ของ LINE Messaging API
 * `ANTHROPIC_API_KEY`: API Key ของ Claude (Anthropic)
-* `BLOB_READ_WRITE_TOKEN`: (Optional) สำหรับ Vercel Blob สำรองรูปสลิป
+* `BLOB_READ_WRITE_TOKEN`: (Optional) token ของ Vercel Blob Store สำหรับสำรองรูปสลิป/เอกสาร — สร้างแบบ **Private** (Vercel ไม่มี Public store ให้เลือกแล้ว) เก็บ/อ่านรูปผ่าน `/api/blob/[...path]` (proxy ในโค้ด ยกเว้นจาก Basic Auth เพราะ LINE ต้องดึงรูปได้โดยไม่มี credential) — ถ้าไม่ตั้งค่า ระบบจะยังทำงานได้ปกติ แค่ไม่มีรูปแนบไปกับข้อความที่ส่งต่อให้เจ้าหน้าที่
 * `LINE_FORWARD_LOAN_ID` & `LINE_FORWARD_GENERAL_ID`: LINE ID เจ้าหน้าที่สำหรับส่งต่อคำขอ (ตั้ง `LOG_EVENT_SOURCES=1` ชั่วคราวเพื่อหา ID ใน Log ได้)
 
 ---

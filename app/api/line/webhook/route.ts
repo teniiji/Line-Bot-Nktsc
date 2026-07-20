@@ -28,7 +28,8 @@ type UserContentResult = {
 
 async function buildUserContent(
   message: webhook.MessageContent,
-  lineUserId: string
+  lineUserId: string,
+  origin: string
 ): Promise<UserContentResult> {
   if (message.type === "text") {
     return {
@@ -56,12 +57,18 @@ async function buildUserContent(
   // of the vision call waiting for the upload to finish first. Skipped
   // entirely (not attempted-and-caught) when the token isn't configured,
   // so we don't throw a full stack trace on every image in that setup.
+  // Vercel Blob dashboards no longer offer public-access stores, only
+  // "private" (auth-required-to-read) ones — upload with access: "private"
+  // and hand back our own proxy URL (app/api/blob/[...path]/route.ts,
+  // excluded from Basic Auth) instead of blob.url, since LINE can't send
+  // credentials to fetch a private blob directly.
+  const pathname = `slips/${lineUserId}/${Date.now()}-${image.id}.jpg`;
   const slipImageUrlPromise = process.env.BLOB_READ_WRITE_TOKEN
-    ? put(`slips/${lineUserId}/${Date.now()}-${image.id}.jpg`, buffer, {
-        access: "public",
+    ? put(pathname, buffer, {
+        access: "private",
         contentType: "image/jpeg",
       })
-        .then((blob) => blob.url)
+        .then(() => `${origin}/api/blob/${pathname}`)
         .catch((err) => {
           console.error("[line/webhook] blob upload error:", err);
           return null;
@@ -88,7 +95,7 @@ async function buildUserContent(
   };
 }
 
-async function handleEvent(event: webhook.Event): Promise<void> {
+async function handleEvent(event: webhook.Event, origin: string): Promise<void> {
   if (
     event.type !== "message" ||
     (event.message.type !== "text" && event.message.type !== "image") ||
@@ -138,7 +145,7 @@ async function handleEvent(event: webhook.Event): Promise<void> {
     // instead of adding its (usually skipped, but occasionally a real LINE
     // API call) latency in front of the agent call.
     const [{ content: userContent, slipImageUrlPromise, slipImageHash }] = await Promise.all([
-      buildUserContent(event.message, lineUserId),
+      buildUserContent(event.message, lineUserId, origin),
       ensureLineUser(lineUserId),
     ]);
     const result = await runFinanceAgent(
@@ -200,6 +207,7 @@ export async function POST(request: NextRequest) {
   }
 
   const events = body.events ?? [];
+  const origin = request.nextUrl.origin;
 
   // Opt-in helper for reading off a LINE user/group ID (e.g. when setting
   // up LINE_FORWARD_LOAN_ID / LINE_FORWARD_GENERAL_ID for a staff member):
@@ -215,7 +223,7 @@ export async function POST(request: NextRequest) {
   // re-trigger already-handled messages.
   await Promise.all(
     events.map((event) =>
-      handleEvent(event).catch((err) =>
+      handleEvent(event, origin).catch((err) =>
         console.error("[line/webhook] unhandled event error:", err)
       )
     )
