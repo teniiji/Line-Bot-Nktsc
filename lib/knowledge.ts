@@ -31,8 +31,18 @@ export const DEFAULT_KNOWLEDGE: { key: string; title: string; content: string; s
   {
     key: "contact",
     title: "ข้อมูลติดต่อ",
+    // The cooperative's real email genuinely has "nktsc.org" as its local
+    // part (nothing to do with the old nktsc.org website, which is now an
+    // expired domain squatted with unrelated/gambling content) — but LINE's
+    // client still recognized that substring as a link-preview target and
+    // rendered the squatter's content inline, even with no "http(s)://"
+    // scheme present (contradicts the "bare domains are left alone"
+    // assumption in lib/links.ts, confirmed by live testing). A U+2060 WORD
+    // JOINER between "nktsc" and ".org" breaks the pattern match while
+    // staying invisible and non-copy-breaking, so the address still reads
+    // and copy-pastes correctly.
     content:
-      "ที่อยู่ 143 ถนนประจักษ์ ตำบลในเมือง อำเภอเมือง จังหวัดหนองคาย 43000 | โทรศัพท์บริหารสำนักงาน 042-411334, 042-423355, 042420746 | หุ้น-หนี้ 042-420495 | สมาคมฌาปนกิจ (สสค.) 042-413276, 064-8766432 | อีเมล nktsc.org@gmail.com",
+      "ที่อยู่ 143 ถนนประจักษ์ ตำบลในเมือง อำเภอเมือง จังหวัดหนองคาย 43000 | โทรศัพท์บริหารสำนักงาน 042-411334, 042-423355, 042420746 | หุ้น-หนี้ 042-420495 | สมาคมฌาปนกิจ (สสค.) 042-413276, 064-8766432 | อีเมล nktsc⁠.org@gmail.com",
     sortOrder: 4,
   },
 ];
