@@ -15,6 +15,7 @@ import { getCategoryDepartment } from "./categoryDepartments";
 import { LOAN_TYPES } from "./loanTypes";
 import { DOCUMENT_TYPES } from "./documentTypes";
 import { formatAmount } from "./format";
+import { isPlaceholderText } from "./placeholderText";
 
 // Haiku is fast/cheap and reliable for plain text, but has repeatedly
 // misread slips with busy/themed backgrounds (inventing reasons to decline
@@ -952,8 +953,8 @@ async function submitMemberInfo(
   const fullName = typeof input.fullName === "string" ? input.fullName.trim() : "";
   const memberNumber =
     typeof input.memberNumber === "string" ? input.memberNumber.trim() : "";
-  if (!fullName || !memberNumber) {
-    return "Error: both fullName and memberNumber must be non-empty strings.";
+  if (isPlaceholderText(fullName) || isPlaceholderText(memberNumber)) {
+    return "Error: fullName and memberNumber must be the member's actual name and number — never a placeholder like 'unknown' or '-'. If the user hasn't actually stated their real name and member number yet, ask them again, in Thai, instead of calling this tool.";
   }
 
   // Verify the claimed member number against the imported roster.
@@ -1072,8 +1073,8 @@ async function submitDepositAccount(
 ): Promise<string> {
   const accountNumber =
     typeof input.accountNumber === "string" ? input.accountNumber.trim() : "";
-  if (!accountNumber) {
-    return "Error: accountNumber must be a non-empty string.";
+  if (isPlaceholderText(accountNumber)) {
+    return "Error: accountNumber must be the actual account number the user stated — never a placeholder like 'unknown' or '-'. If they haven't actually stated one yet, ask them again, in Thai, instead of calling this tool.";
   }
 
   const pending = await loadPending(ctx.lineUserId);
@@ -1233,8 +1234,8 @@ async function submitContactPhone(
   ctx: ToolContext
 ): Promise<string> {
   const phone = typeof input.phone === "string" ? input.phone.trim() : "";
-  if (!phone) {
-    return "Error: phone must be a non-empty string.";
+  if (isPlaceholderText(phone)) {
+    return "Error: phone must be the user's actual callback phone number — never a placeholder like 'unknown' or '-'. If they haven't actually stated one yet, ask them again, in Thai, instead of calling this tool.";
   }
 
   const pendingService = await loadPendingServiceRequest(ctx.lineUserId);
