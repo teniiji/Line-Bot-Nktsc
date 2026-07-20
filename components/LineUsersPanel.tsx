@@ -1,26 +1,53 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { LineUser } from "@/lib/types";
+
+const PAGE_SIZE = 20;
+const SEARCH_DEBOUNCE_MS = 300;
 
 export default function LineUsersPanel() {
   const [users, setUsers] = useState<LineUser[]>([]);
+  const [total, setTotal] = useState(0);
+  const [page, setPage] = useState(1);
+  const [searchInput, setSearchInput] = useState("");
+  const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(true);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editValue, setEditValue] = useState("");
   const [saving, setSaving] = useState(false);
 
-  const fetchUsers = async () => {
+  // Debounce the search box so every keystroke doesn't fire a request —
+  // commits to `search` (which actually triggers the fetch) 300ms after
+  // typing stops.
+  useEffect(() => {
+    const timer = setTimeout(() => setSearch(searchInput.trim()), SEARCH_DEBOUNCE_MS);
+    return () => clearTimeout(timer);
+  }, [searchInput]);
+
+  useEffect(() => {
+    setPage(1);
+  }, [search]);
+
+  const fetchUsers = useCallback(async () => {
     setLoading(true);
-    const res = await fetch("/api/line-users");
+    const params = new URLSearchParams({
+      page: String(page),
+      pageSize: String(PAGE_SIZE),
+    });
+    if (search) params.set("search", search);
+    const res = await fetch(`/api/line-users?${params.toString()}`);
     const data = await res.json();
-    setUsers(data);
+    setUsers(data.data);
+    setTotal(data.total);
     setLoading(false);
-  };
+  }, [page, search]);
 
   useEffect(() => {
     fetchUsers();
-  }, []);
+  }, [fetchUsers]);
+
+  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
   const startEdit = (user: LineUser) => {
     setEditingId(user.id);
@@ -53,15 +80,24 @@ export default function LineUsersPanel() {
 
   return (
     <div className="bg-white rounded-lg shadow">
-      <div className="px-4 py-3 border-b border-slate-100">
+      <div className="flex items-center justify-between gap-3 px-4 py-3 border-b border-slate-100">
         <h2 className="font-semibold">สมาชิกที่เคยทักบอท (LINE)</h2>
+        <input
+          type="text"
+          value={searchInput}
+          onChange={(e) => setSearchInput(e.target.value)}
+          placeholder="ค้นหาชื่อ, ชื่อเล่น, หรือ LINE UserId"
+          className="text-sm border border-slate-300 rounded px-3 py-1.5 w-64"
+        />
       </div>
 
       {loading ? (
         <p className="text-slate-500 text-sm py-8 text-center">กำลังโหลด…</p>
       ) : users.length === 0 ? (
         <p className="text-slate-500 text-sm py-8 text-center">
-          ยังไม่มีสมาชิกทักบอท — รายชื่อจะแสดงที่นี่หลังมีคนทักครั้งแรก
+          {search
+            ? "ไม่พบสมาชิกที่ตรงกับคำค้นหา"
+            : "ยังไม่มีสมาชิกทักบอท — รายชื่อจะแสดงที่นี่หลังมีคนทักครั้งแรก"}
         </p>
       ) : (
         <div className="overflow-x-auto">
@@ -128,6 +164,30 @@ export default function LineUsersPanel() {
               ))}
             </tbody>
           </table>
+        </div>
+      )}
+
+      {totalPages > 1 && (
+        <div className="flex items-center justify-between px-4 py-3 border-t border-slate-100">
+          <button
+            type="button"
+            disabled={page === 1}
+            onClick={() => setPage(page - 1)}
+            className="text-sm px-3 py-1.5 border border-slate-300 rounded disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            ก่อนหน้า
+          </button>
+          <p className="text-sm text-slate-500">
+            หน้า {page} / {totalPages} ({total} คน)
+          </p>
+          <button
+            type="button"
+            disabled={page === totalPages}
+            onClick={() => setPage(page + 1)}
+            className="text-sm px-3 py-1.5 border border-slate-300 rounded disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            ถัดไป
+          </button>
         </div>
       )}
     </div>
