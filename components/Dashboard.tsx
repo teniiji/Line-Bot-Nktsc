@@ -16,6 +16,7 @@ import SummaryCards from "@/components/SummaryCards";
 import CategoryChart from "@/components/CategoryChart";
 import TrendChart from "@/components/TrendChart";
 import ConfirmDialog from "@/components/ConfirmDialog";
+import Tabs from "@/components/Tabs";
 
 const PAGE_SIZE = 10;
 const EXPORT_PAGE_SIZE = 100;
@@ -167,46 +168,74 @@ export default function Dashboard() {
         </p>
       </header>
 
-      <SummaryCards summary={summary} />
+      <Tabs
+        defaultTab="transactions"
+        tabs={[
+          {
+            id: "transactions",
+            label: "ธุรกรรม",
+            content: (
+              <div className="space-y-6">
+                <SummaryCards summary={summary} />
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        <CategoryChart data={summary.byCategory} />
-        <TrendChart data={summary.monthlyTrend} />
-      </div>
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                  <CategoryChart data={summary.byCategory} />
+                  <TrendChart data={summary.monthlyTrend} />
+                </div>
 
-      <ExpenseFilters filters={filters} onChange={setFilters} />
+                <ExpenseFilters filters={filters} onChange={setFilters} />
 
-      {loading ? (
-        <p className="text-slate-500 text-center py-8">กำลังโหลด…</p>
-      ) : (
-        <ExpenseList
-          expenses={expenses}
-          total={total}
-          page={page}
-          pageSize={PAGE_SIZE}
-          onPageChange={setPage}
-          onEdit={setEditingExpense}
-          onDeleteRequest={setPendingDelete}
-          onVerifyRequest={setPendingVerify}
-          onExportCsv={handleExportCsv}
-        />
-      )}
+                {loading ? (
+                  <p className="text-slate-500 text-center py-8">กำลังโหลด…</p>
+                ) : (
+                  <ExpenseList
+                    expenses={expenses}
+                    total={total}
+                    page={page}
+                    pageSize={PAGE_SIZE}
+                    onPageChange={setPage}
+                    onEdit={setEditingExpense}
+                    onDeleteRequest={setPendingDelete}
+                    onVerifyRequest={setPendingVerify}
+                    onExportCsv={handleExportCsv}
+                  />
+                )}
 
-      <ExpenseForm
-        editingExpense={editingExpense}
-        onSave={handleSave}
-        onCancelEdit={() => setEditingExpense(null)}
+                <ExpenseForm
+                  editingExpense={editingExpense}
+                  onSave={handleSave}
+                  onCancelEdit={() => setEditingExpense(null)}
+                />
+              </div>
+            ),
+          },
+          {
+            id: "service-requests",
+            label: "คำขอบริการ",
+            content: <ServiceRequestsPanel />,
+          },
+          {
+            id: "contacts",
+            label: "ผู้รับผิดชอบ",
+            content: (
+              <div className="space-y-6">
+                <ResponsibleContactsPanel />
+                <DepartmentContactsPanel />
+              </div>
+            ),
+          },
+          {
+            id: "knowledge",
+            label: "ฐานความรู้",
+            content: <KnowledgePanel />,
+          },
+          {
+            id: "line-users",
+            label: "สมาชิก LINE",
+            content: <LineUsersPanel />,
+          },
+        ]}
       />
-
-      <ServiceRequestsPanel />
-
-      <ResponsibleContactsPanel />
-
-      <DepartmentContactsPanel />
-
-      <KnowledgePanel />
-
-      <LineUsersPanel />
 
       <ConfirmDialog
         open={pendingDelete !== null}
