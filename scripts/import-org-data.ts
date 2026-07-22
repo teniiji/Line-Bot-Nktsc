@@ -74,7 +74,8 @@ async function importMemberRoster(workbook: ExcelJS.Workbook) {
   let missingResponsibleCode = 0;
 
   // Columns (1-indexed): 1 เลขสมาชิก, 2 ชื่อสมาชิก, 3 หน่วยงาน,
-  // 4 LINE_UserID, 5 Nickname (LINE OA), ... 8 รหัสผู้รับผิดชอบ
+  // 4 LINE_UserID, 5 Nickname (LINE OA), 6 บัตรประชาชน, 7 เบอร์โทร,
+  // 8 รหัสผู้รับผิดชอบ
   for (let rowNumber = 2; rowNumber <= sheet.rowCount; rowNumber++) {
     const row = sheet.getRow(rowNumber);
     const memberNumber = cell(row, 1);
@@ -96,6 +97,8 @@ async function importMemberRoster(workbook: ExcelJS.Workbook) {
         responsibleCode,
         lineUserId: cell(row, 4),
         nickname: cell(row, 5),
+        nationalId: cell(row, 6),
+        phone: cell(row, 7),
       },
       update: {
         memberName,
@@ -103,6 +106,8 @@ async function importMemberRoster(workbook: ExcelJS.Workbook) {
         responsibleCode,
         lineUserId: cell(row, 4),
         nickname: cell(row, 5),
+        nationalId: cell(row, 6),
+        phone: cell(row, 7),
       },
     });
     imported++;
