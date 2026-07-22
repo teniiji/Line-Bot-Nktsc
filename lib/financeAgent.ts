@@ -17,6 +17,7 @@ import { DOCUMENT_TYPES } from "./documentTypes";
 import { formatAmount } from "./format";
 import { isPlaceholderText } from "./placeholderText";
 import { namesLikelyMatch } from "./nameMatch";
+import { detectNamedDepartment } from "./departmentMatch";
 
 // Haiku is fast/cheap and reliable for plain text, but has repeatedly
 // misread slips with busy/themed backgrounds (inventing reasons to decline
@@ -1332,14 +1333,19 @@ async function submitServicePurpose(
   if (!purpose) {
     return "Error: purpose must be a non-empty string.";
   }
-  const department =
+  const modelDepartment =
     typeof input.department === "string" &&
     (DEPARTMENTS as readonly string[]).includes(input.department)
       ? input.department
       : null;
-  if (!department) {
+  if (!modelDepartment) {
     return `Error: department must be one of ${DEPARTMENTS.join(", ")}.`;
   }
+  // A department the user names outright in their own words is a stronger
+  // signal than the model's topic-based guess — override rather than just
+  // instructing the model to prefer it, since that instruction alone isn't
+  // reliably followed in practice.
+  const department = detectNamedDepartment(purpose) ?? modelDepartment;
 
   const pendingService = await loadPendingServiceRequest(ctx.lineUserId);
   if (!pendingService) {
