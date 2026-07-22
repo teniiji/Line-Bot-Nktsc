@@ -29,6 +29,11 @@ model Expense {
   // one for cases where the same transaction is photographed twice.
   slipImageHash   String?  @unique
   slipImageUrl    String?
+  // True when slipImageUrl points at a PDF instead of a photo — members can
+  // send either. Staff forwarding (notifyTransactionForward) needs this to
+  // know whether it can push the slip as a LINE image message (photos only)
+  // or must fall back to a plain text link (LINE can't push file messages).
+  slipIsPdf       Boolean  @default(false)
   // Snapshot of the member's identity and (for ชำระหนี้) the loan type at
   // the moment this transaction was logged — copied from LineUser rather
   // than joined live, so the record stays accurate even if the member's
@@ -102,6 +107,7 @@ model PendingTransaction {
   hasSlip         Boolean   @default(false)
   slipImageHash   String?
   slipImageUrl    String?
+  slipIsPdf       Boolean   @default(false)
   referenceNumber String?
   loanType        String?
   depositAccountNumber String?
@@ -132,10 +138,12 @@ model PendingServiceRequest {
   // "สินเชื่อ" | "อื่นๆ" — which forwarding pool this request routes
   // through. Set together with requestType by submit_service_purpose.
   department   String?
-  // Best-effort Vercel Blob URL of the document image the member sent
+  // Best-effort Vercel Blob URL of the document image/PDF the member sent
   // (null if BLOB_READ_WRITE_TOKEN isn't set or the upload failed) —
-  // forwarded to staff as an image message alongside the text summary.
+  // forwarded to staff as an image message (or a text link for a PDF,
+  // since LINE can't push file messages) alongside the text summary.
   imageUrl     String?
+  imageIsPdf   Boolean  @default(false)
   createdAt    DateTime @default(now())
 }
 
@@ -246,6 +254,7 @@ model ServiceRequestLog {
   requestType    String?
   department     String?
   imageUrl       String?
+  imageIsPdf     Boolean  @default(false)
   // LINE user ID of the staff member the request was pushed to (null when
   // status is "unconfigured").
   forwardedTo    String?

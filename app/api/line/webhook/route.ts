@@ -24,7 +24,83 @@ type UserContentResult = {
   content: Anthropic.MessageParam["content"];
   slipImageUrlPromise: Promise<string | null>;
   slipImageHash: string | null;
+  slipIsPdf: boolean;
 };
+
+// Shared by both the image and PDF branches below — only the media type,
+// blob pathname extension, and Anthropic content-block shape differ.
+async function buildAttachmentContent(
+  fileId: string,
+  lineUserId: string,
+  origin: string,
+  isPdf: boolean
+): Promise<UserContentResult> {
+  const stream = await lineBlobClient.getMessageContent(fileId);
+  const buffer = await streamToBuffer(stream);
+  // Deterministic identity for the exact file bytes — resending the same
+  // photo/PDF (e.g. re-testing, or a member accidentally forwarding a slip
+  // twice) always hashes identically, unlike the reference number the
+  // vision model reads off it, which isn't guaranteed consistent between
+  // two separate OCR passes over two separate uploads of the same slip.
+  const slipImageHash = createHash("sha256").update(buffer).digest("hex");
+
+  // Back up every attachment to Blob storage regardless of what the agent
+  // decides to do with it — a failed upload shouldn't block logging.
+  // Deliberately not awaited here: the upload has no dependency on the
+  // Claude call below, so kicking it off and handing back the in-flight
+  // promise lets the two network calls run concurrently instead of the
+  // model call waiting for the upload to finish first. Skipped entirely
+  // (not attempted-and-caught) when the token isn't configured, so we
+  // don't throw a full stack trace on every message in that setup.
+  // Vercel Blob dashboards no longer offer public-access stores, only
+  // "private" (auth-required-to-read) ones — upload with access: "private"
+  // and hand back our own proxy URL (app/api/blob/[...path]/route.ts,
+  // excluded from Basic Auth) instead of blob.url, since LINE can't send
+  // credentials to fetch a private blob directly.
+  const extension = isPdf ? "pdf" : "jpg";
+  const mediaType = isPdf ? "application/pdf" : "image/jpeg";
+  const pathname = `slips/${lineUserId}/${Date.now()}-${fileId}.${extension}`;
+  const slipImageUrlPromise = process.env.BLOB_READ_WRITE_TOKEN
+    ? put(pathname, buffer, {
+        access: "private",
+        contentType: mediaType,
+      })
+        .then(() => `${origin}/api/blob/${pathname}`)
+        .catch((err) => {
+          console.error("[line/webhook] blob upload error:", err);
+          return null;
+        })
+    : Promise.resolve(null);
+
+  const promptText = isPdf
+    ? "นี่คือไฟล์ PDF ที่ผู้ใช้ส่งมา ถ้าเป็นสลิปการโอนเงินให้อ่านยอดเงินและบันทึกเป็นรายการ"
+    : "นี่คือรูปที่ผู้ใช้ส่งมา ถ้าเป็นสลิปการโอนเงินให้อ่านยอดเงินและบันทึกเป็นรายการ";
+  const content: Anthropic.MessageParam["content"] = isPdf
+    ? [
+        {
+          type: "document",
+          source: {
+            type: "base64",
+            media_type: "application/pdf",
+            data: buffer.toString("base64"),
+          },
+        },
+        { type: "text", text: promptText },
+      ]
+    : [
+        {
+          type: "image",
+          source: {
+            type: "base64",
+            media_type: "image/jpeg",
+            data: buffer.toString("base64"),
+          },
+        },
+        { type: "text", text: promptText },
+      ];
+
+  return { content, slipImageUrlPromise, slipImageHash, slipIsPdf: isPdf };
+}
 
 async function buildUserContent(
   message: webhook.MessageContent,
@@ -36,69 +112,25 @@ async function buildUserContent(
       content: (message as webhook.TextMessageContent).text,
       slipImageUrlPromise: Promise.resolve(null),
       slipImageHash: null,
+      slipIsPdf: false,
     };
   }
 
+  if (message.type === "file") {
+    const file = message as webhook.FileMessageContent;
+    return buildAttachmentContent(file.id, lineUserId, origin, true);
+  }
+
   const image = message as webhook.ImageMessageContent;
-  const stream = await lineBlobClient.getMessageContent(image.id);
-  const buffer = await streamToBuffer(stream);
-  // Deterministic identity for the exact image bytes — resending the same
-  // photo (e.g. re-testing, or a member accidentally forwarding a slip
-  // twice) always hashes identically, unlike the reference number the
-  // vision model reads off it, which isn't guaranteed consistent between
-  // two separate OCR passes over two separate uploads of the same slip.
-  const slipImageHash = createHash("sha256").update(buffer).digest("hex");
-
-  // Back up every image message to Blob storage regardless of what the
-  // agent decides to do with it — a failed upload shouldn't block logging.
-  // Deliberately not awaited here: the upload has no dependency on the
-  // Claude vision call below, so kicking it off and handing back the
-  // in-flight promise lets the two network calls run concurrently instead
-  // of the vision call waiting for the upload to finish first. Skipped
-  // entirely (not attempted-and-caught) when the token isn't configured,
-  // so we don't throw a full stack trace on every image in that setup.
-  // Vercel Blob dashboards no longer offer public-access stores, only
-  // "private" (auth-required-to-read) ones — upload with access: "private"
-  // and hand back our own proxy URL (app/api/blob/[...path]/route.ts,
-  // excluded from Basic Auth) instead of blob.url, since LINE can't send
-  // credentials to fetch a private blob directly.
-  const pathname = `slips/${lineUserId}/${Date.now()}-${image.id}.jpg`;
-  const slipImageUrlPromise = process.env.BLOB_READ_WRITE_TOKEN
-    ? put(pathname, buffer, {
-        access: "private",
-        contentType: "image/jpeg",
-      })
-        .then(() => `${origin}/api/blob/${pathname}`)
-        .catch((err) => {
-          console.error("[line/webhook] blob upload error:", err);
-          return null;
-        })
-    : Promise.resolve(null);
-
-  return {
-    content: [
-      {
-        type: "image",
-        source: {
-          type: "base64",
-          media_type: "image/jpeg",
-          data: buffer.toString("base64"),
-        },
-      },
-      {
-        type: "text",
-        text: "นี่คือรูปที่ผู้ใช้ส่งมา ถ้าเป็นสลิปการโอนเงินให้อ่านยอดเงินและบันทึกเป็นรายการ",
-      },
-    ],
-    slipImageUrlPromise,
-    slipImageHash,
-  };
+  return buildAttachmentContent(image.id, lineUserId, origin, false);
 }
 
 async function handleEvent(event: webhook.Event, origin: string): Promise<void> {
   if (
     event.type !== "message" ||
-    (event.message.type !== "text" && event.message.type !== "image") ||
+    (event.message.type !== "text" &&
+      event.message.type !== "image" &&
+      event.message.type !== "file") ||
     !event.replyToken ||
     event.source?.type !== "user" ||
     !event.source.userId
@@ -138,21 +170,47 @@ async function handleEvent(event: webhook.Event, origin: string): Promise<void> 
 
   const lineUserId = event.source.userId;
 
+  // LINE's "file" message type covers any generic file upload (PDF, Word,
+  // Excel, ...). Only PDFs are supported as slips/documents — anything else
+  // gets a direct, friendly reply instead of being silently dropped or
+  // burning a Claude call on a file type it can't read.
+  if (event.message.type === "file") {
+    const fileName = (event.message as webhook.FileMessageContent).fileName ?? "";
+    if (!fileName.toLowerCase().endsWith(".pdf")) {
+      try {
+        await lineClient.replyMessage({
+          replyToken: event.replyToken,
+          messages: [
+            {
+              type: "text",
+              text: "ขอโทษค่ะ ตอนนี้บอทรองรับเฉพาะไฟล์รูปภาพหรือ PDF เท่านั้นค่ะ ลองส่งเป็นรูปภาพหรือไฟล์ PDF แทนนะคะ",
+            },
+          ],
+        });
+      } catch (err) {
+        console.error("[line/webhook] LINE reply error:", err);
+      }
+      return;
+    }
+  }
+
   let replyText: string;
   let quickReplies: string[] = [];
   try {
     // Independent of building the message content — run concurrently
     // instead of adding its (usually skipped, but occasionally a real LINE
     // API call) latency in front of the agent call.
-    const [{ content: userContent, slipImageUrlPromise, slipImageHash }] = await Promise.all([
-      buildUserContent(event.message, lineUserId, origin),
-      ensureLineUser(lineUserId),
-    ]);
+    const [{ content: userContent, slipImageUrlPromise, slipImageHash, slipIsPdf }] =
+      await Promise.all([
+        buildUserContent(event.message, lineUserId, origin),
+        ensureLineUser(lineUserId),
+      ]);
     const result = await runFinanceAgent(
       userContent,
       lineUserId,
       slipImageUrlPromise,
-      slipImageHash
+      slipImageHash,
+      slipIsPdf
     );
     replyText = result.text;
     quickReplies = result.quickReplies;
