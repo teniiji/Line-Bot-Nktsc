@@ -17,6 +17,7 @@ import CategoryChart from "@/components/CategoryChart";
 import TrendChart from "@/components/TrendChart";
 import ConfirmDialog from "@/components/ConfirmDialog";
 import Tabs from "@/components/Tabs";
+import TestDataCleanupPanel from "@/components/TestDataCleanupPanel";
 
 const PAGE_SIZE = 10;
 const EXPORT_PAGE_SIZE = 100;
@@ -232,7 +233,12 @@ export default function Dashboard() {
           {
             id: "line-users",
             label: "สมาชิก LINE",
-            content: <LineUsersPanel />,
+            content: (
+              <div className="space-y-6">
+                <LineUsersPanel />
+                <TestDataCleanupPanel />
+              </div>
+            ),
           },
         ]}
       />
