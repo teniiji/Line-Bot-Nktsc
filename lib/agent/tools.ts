@@ -46,6 +46,11 @@ export const tools: Anthropic.Tool[] = [
           description:
             "The name shown in the slip's \"จาก\" (sender/from) field — the person or account the money is moving FROM — if a slip image or PDF is present and clearly shows one. Copy exactly as printed, including any title (นาย/นาง/นางสาว). Omit if not visible, not applicable, or this message has no slip attached. Never guess.",
         },
+        recipientName: {
+          type: "string",
+          description:
+            "The name shown in the slip's \"ไปยัง\" (recipient/to) field — the account the money is moving TO — if a slip image or PDF is present and clearly shows one. Copy exactly as printed, including any title. The system verifies it is the cooperative's account and rejects the transaction itself if not, so always report what you actually see. Omit if not visible, not applicable, or this message has no slip attached. Never guess.",
+        },
       },
     },
   },
