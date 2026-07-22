@@ -11,6 +11,7 @@ import { isPlaceholderText } from "../placeholderText";
 import { namesLikelyMatch } from "../nameMatch";
 import { detectNamedDepartment } from "../departmentMatch";
 import { matchesIdentity } from "../memberLookup";
+import { classifyRecipient } from "../recipientCheck";
 import {
   loadLineUser,
   loadPending,
@@ -126,6 +127,7 @@ export type ReportTransactionInput = {
   date?: unknown;
   referenceNumber?: unknown;
   senderName?: unknown;
+  recipientName?: unknown;
 };
 
 
@@ -133,7 +135,24 @@ export async function reportTransaction(
   input: ReportTransactionInput,
   ctx: ToolContext
 ): Promise<string> {
-  const { category, amount, description, date, referenceNumber, senderName } = input;
+  const { category, amount, description, date, referenceNumber, senderName, recipientName } =
+    input;
+
+  // Deterministic backstop for the prompt's "must be a transfer to the
+  // cooperative" rule (ขั้นที่ 1.5), which the model has ignored in
+  // production — it logged a slip paying a private individual and told the
+  // member the money went to the cooperative. Runs before anything is
+  // stored so a rejected slip leaves no pending state behind. Only a
+  // recipient that clearly carries a personal-name title is rejected here;
+  // shops/ambiguous names stay subject to the model's own judgment.
+  if (
+    typeof recipientName === "string" &&
+    recipientName.trim() &&
+    !isPlaceholderText(recipientName) &&
+    classifyRecipient(recipientName) === "person"
+  ) {
+    return `Error: the slip's recipient ("${recipientName.trim()}") is a private individual, not สหกรณ์ออมทรัพย์ครูหนองคาย จำกัด. This transaction must NOT be logged. Tell the user, in Thai, that this slip is not a transfer to the cooperative's account so it cannot be recorded, and to send the slip of their transfer to the cooperative instead.`;
+  }
 
   // category is optional — a slip with no stated purpose legitimately has
   // none yet, and the system will ask the user for it (computeNextRequirement
