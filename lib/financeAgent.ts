@@ -208,7 +208,7 @@ const tools: Anthropic.Tool[] = [
           type: "string",
           enum: [...DEPARTMENTS],
           description:
-            "Which team should handle this: 'สินเชื่อ' for anything loan-related (กู้เงิน, สินเชื่อ, any loan type); 'เงินฝาก' for savings/deposit accounts; 'สารสนเทศ' for IT/app/system issues; 'สวัสดิการ' for welfare benefits (ทุนการศึกษา, ส.ส.ค., เงินปันผล); 'นิติการ' for legal matters; 'บัญชี' for accounting; 'ฌาปนกิจ' for the funeral fund (ฌกส/ฌาปนกิจสงเคราะห์); 'บริหารสำนักงาน/ธุรการ' for general office/administrative service; 'อื่นๆ' only when none of the above fit.",
+            "Which team should handle this. IMPORTANT: if the user's own wording names one of the department options directly (e.g. they say 'ส่งสารสนเทศ', 'ติดต่อฝ่ายบัญชี', 'ฝ่ายสวัสดิการ'), always use that named department — never reinterpret it into a different one based on the topic guide below, and never default to 'บริหารสำนักงาน/ธุรการ' when a specific department was actually named. Only fall back to the topic-based guide when no department was named explicitly: 'สินเชื่อ' for anything loan-related (กู้เงิน, สินเชื่อ, any loan type); 'เงินฝาก' for savings/deposit accounts; 'สารสนเทศ' for IT/app/system issues; 'สวัสดิการ' for welfare benefits (ทุนการศึกษา, ส.ส.ค., เงินปันผล); 'นิติการ' for legal matters; 'บัญชี' for accounting; 'ฌาปนกิจ' for the funeral fund (ฌกส/ฌาปนกิจสงเคราะห์); 'บริหารสำนักงาน/ธุรการ' for general office/administrative service with no better fit; 'อื่นๆ' only when truly none of the above fit.",
         },
       },
       required: ["purpose", "department"],
@@ -391,7 +391,7 @@ function buildSystemPrompt(
   } else if (pendingService) {
     const next = computeServiceRequirement(lineUser, pendingService);
     if (next === "purpose") {
-      flowNote = `\n\nหมายเหตุระบบ (สำคัญ): ผู้ใช้เพิ่งส่งเอกสารประกอบ (${pendingService.documentType}) มา ยังไม่ทราบว่าต้องการทำรายการอะไร ถ้าข้อความปัจจุบันของผู้ใช้ระบุว่าต้องการทำอะไร (เช่น ขอกู้เงิน, สมัครสมาชิก) ให้เรียก submit_service_purpose ทันทีด้วยข้อความนั้น พร้อมระบุ department ด้วย: "สินเชื่อ" ถ้าเกี่ยวกับเงินกู้ไม่ว่าประเภทไหน หรือ "อื่นๆ" ถ้าไม่เกี่ยวกับเงินกู้ ถ้ายังไม่ชัดเจนให้ถามย้ำสั้นๆ ด้วยคำสุภาพว่าต้องการทำรายการอะไร`;
+      flowNote = `\n\nหมายเหตุระบบ (สำคัญ): ผู้ใช้เพิ่งส่งเอกสารประกอบ (${pendingService.documentType}) มา ยังไม่ทราบว่าต้องการทำรายการอะไร ถ้าข้อความปัจจุบันของผู้ใช้ระบุว่าต้องการทำอะไร (เช่น ขอกู้เงิน, สมัครสมาชิก) ให้เรียก submit_service_purpose ทันทีด้วยข้อความนั้น พร้อมระบุ department ตามคำอธิบายพารามิเตอร์ department ของ tool นี้ (มีแผนกให้เลือกมากกว่าแค่สินเชื่อ/อื่นๆ — ถ้าผู้ใช้เอ่ยชื่อแผนกมาตรงๆ ให้ใช้แผนกนั้นเลย) ถ้ายังไม่ชัดเจนให้ถามย้ำสั้นๆ ด้วยคำสุภาพว่าต้องการทำรายการอะไร`;
     } else if (next === "member_info") {
       flowNote = `\n\nหมายเหตุระบบ (สำคัญ): ผู้ใช้ต้องการทำรายการ "${pendingService.requestType}" (จากเอกสาร ${pendingService.documentType}) ทราบจุดประสงค์แล้ว แต่ยังต้องขอชื่อ-นามสกุลและเลขสมาชิกก่อนจะส่งต่อให้ฝ่ายที่เกี่ยวข้อง ถ้าข้อความปัจจุบันของผู้ใช้มีชื่อ-นามสกุลและเลขสมาชิกอยู่แล้ว ให้เรียก submit_member_info ทันที ถ้ายังไม่มีให้ถามอีกครั้งสั้นๆ`;
     } else if (next === "phone") {
