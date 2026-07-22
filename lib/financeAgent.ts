@@ -20,6 +20,7 @@ import {
   computeQuickReplies,
 } from "./agent/state";
 import { executeTool } from "./agent/handlers";
+import { buildInitialUserMessage } from "./agent/messages";
 import type { FinanceAgentReply, ToolContext } from "./agent/types";
 
 export type { FinanceAgentReply } from "./agent/types";
@@ -28,27 +29,23 @@ export type { FinanceAgentReply } from "./agent/types";
 // misread slips with busy/themed backgrounds (inventing reasons to decline
 // a perfectly legible transaction). Use a stronger model whenever the
 // message includes an image or PDF attachment.
-export const TEXT_MODEL = "claude-haiku-4-5";
+const TEXT_MODEL = "claude-haiku-4-5";
 
+const VISION_MODEL = "claude-sonnet-5";
 
-export const VISION_MODEL = "claude-sonnet-5";
-
-
-export const MAX_TOOL_TURNS = 3;
-
+const MAX_TOOL_TURNS = 3;
 
 // True for either an image (photo) or a document (PDF) attachment — the
 // two ways a member can send a slip or supporting document. Used to decide
 // which model to use, whether to force a specific tool, and whether an
 // attachment was present at all; callers that need to know the exact kind
 // (e.g. for the staff-forwarding message format) use ctx.slipIsPdf instead.
-export function hasAttachmentContent(content: Anthropic.MessageParam["content"]): boolean {
+function hasAttachmentContent(content: Anthropic.MessageParam["content"]): boolean {
   return (
     typeof content !== "string" &&
     content.some((block) => block.type === "image" || block.type === "document")
   );
 }
-
 
 export async function runFinanceAgent(
   userContent: Anthropic.MessageParam["content"],
@@ -97,9 +94,9 @@ export async function runFinanceAgent(
     { type: "text", text: dynamic },
   ];
   const model = hasAttachmentContent(userContent) ? VISION_MODEL : TEXT_MODEL;
-  const messages: Anthropic.MessageParam[] = [
-    { role: "user", content: userContent },
-  ];
+  // buildInitialUserMessage adds a second cache breakpoint on a slip
+  // attachment so the loop's later calls read the image from cache.
+  const messages: Anthropic.MessageParam[] = [buildInitialUserMessage(userContent)];
 
   for (let turn = 0; turn < MAX_TOOL_TURNS; turn++) {
     // The model tends to respond with plain text instead of calling a tool
