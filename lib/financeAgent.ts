@@ -21,15 +21,20 @@ import { namesLikelyMatch } from "./nameMatch";
 // Haiku is fast/cheap and reliable for plain text, but has repeatedly
 // misread slips with busy/themed backgrounds (inventing reasons to decline
 // a perfectly legible transaction). Use a stronger model whenever the
-// message includes an image.
+// message includes an image or PDF attachment.
 const TEXT_MODEL = "claude-haiku-4-5";
 const VISION_MODEL = "claude-sonnet-5";
 const MAX_TOOL_TURNS = 3;
 
-function hasImageContent(content: Anthropic.MessageParam["content"]): boolean {
+// True for either an image (photo) or a document (PDF) attachment — the
+// two ways a member can send a slip or supporting document. Used to decide
+// which model to use, whether to force a specific tool, and whether an
+// attachment was present at all; callers that need to know the exact kind
+// (e.g. for the staff-forwarding message format) use ctx.slipIsPdf instead.
+function hasAttachmentContent(content: Anthropic.MessageParam["content"]): boolean {
   return (
     typeof content !== "string" &&
-    content.some((block) => block.type === "image")
+    content.some((block) => block.type === "image" || block.type === "document")
   );
 }
 
@@ -38,7 +43,7 @@ const tools: Anthropic.Tool[] = [
   {
     name: "report_transaction",
     description:
-      "Call this whenever the user describes or shows (via a slip image) a completed cooperative transaction: a share purchase (ซื้อหุ้น), a loan repayment (ชำระหนี้), a savings deposit (ฝากเงิน), or one of the other cooperative payment categories. Call it every time, even if you don't yet have every detail — the system tracks what's still missing (member identity, transfer slip, category, loan type) and tells you exactly what to ask for next. Also call this (with just the category filled in) when the user answers a question about which category a pending transaction is for. Never log a transaction any other way.",
+      "Call this whenever the user describes or shows (via a slip image or PDF) a completed cooperative transaction: a share purchase (ซื้อหุ้น), a loan repayment (ชำระหนี้), a savings deposit (ฝากเงิน), or one of the other cooperative payment categories. Call it every time, even if you don't yet have every detail — the system tracks what's still missing (member identity, transfer slip, category, loan type) and tells you exactly what to ask for next. Also call this (with just the category filled in) when the user answers a question about which category a pending transaction is for. Never log a transaction any other way.",
     input_schema: {
       type: "object",
       properties: {
@@ -51,12 +56,12 @@ const tools: Anthropic.Tool[] = [
         amount: {
           type: "number",
           description:
-            "Transaction amount in Thai baht, if known from the text or a slip image. Always positive. Omit only if truly not yet stated anywhere.",
+            "Transaction amount in Thai baht, if known from the text or a slip image/PDF. Always positive. Omit only if truly not yet stated anywhere.",
         },
         description: {
           type: "string",
           description:
-            "Short free-text note, e.g. bill name or purpose. Only include what the user actually stated or what's explicitly written on a slip/receipt image — never invent one. Omit this field entirely if no purpose is stated.",
+            "Short free-text note, e.g. bill name or purpose. Only include what the user actually stated or what's explicitly written on a slip/receipt image or PDF — never invent one. Omit this field entirely if no purpose is stated.",
         },
         date: {
           type: "string",
@@ -71,7 +76,7 @@ const tools: Anthropic.Tool[] = [
         senderName: {
           type: "string",
           description:
-            "The name shown in the slip's \"จาก\" (sender/from) field — the person or account the money is moving FROM — if a slip image is present and clearly shows one. Copy exactly as printed, including any title (นาย/นาง/นางสาว). Omit if not visible, not applicable, or this message has no slip image. Never guess.",
+            "The name shown in the slip's \"จาก\" (sender/from) field — the person or account the money is moving FROM — if a slip image or PDF is present and clearly shows one. Copy exactly as printed, including any title (นาย/นาง/นางสาว). Omit if not visible, not applicable, or this message has no slip attached. Never guess.",
         },
       },
     },
@@ -159,7 +164,7 @@ const tools: Anthropic.Tool[] = [
   {
     name: "decline_unreadable_image",
     description:
-      "Use only for an image that genuinely isn't a bank/wallet transaction slip and isn't one of the known supporting-document types either (a random unrelated photo, or a slip whose own text explicitly says the transaction failed/is pending/was cancelled). For a payslip, ID card copy, house registration copy, or marriage certificate, use flag_supporting_document instead — those aren't declined, they're routed to ask what the user needs. Call this instead of replying with plain text — your reply text afterward explains why to the user.",
+      "Use only for an image or PDF that genuinely isn't a bank/wallet transaction slip and isn't one of the known supporting-document types either (a random unrelated photo, or a slip whose own text explicitly says the transaction failed/is pending/was cancelled). For a payslip, ID card copy, house registration copy, or marriage certificate, use flag_supporting_document instead — those aren't declined, they're routed to ask what the user needs. Call this instead of replying with plain text — your reply text afterward explains why to the user.",
     input_schema: {
       type: "object",
       properties: {
@@ -175,7 +180,7 @@ const tools: Anthropic.Tool[] = [
   {
     name: "flag_supporting_document",
     description:
-      "Call when the user sends an image that is a supporting document — a payslip (สลิปเงินเดือน, which includes full-page government payroll/deduction ledgers like \"บัญชีถือจ่ายเงินเดือนข้าราชการ\", not just small bank-style slips), ID card copy (สำเนาบัตรประชาชน), house registration copy (สำเนาทะเบียนบ้าน), marriage certificate (ทะเบียนสมรส), or any other official/formal document that clearly isn't a transfer slip (documentType: เอกสารประกอบอื่นๆ) — rather than a bank/wallet transfer slip. These are usually submitted for some other cooperative service (e.g. a loan application) that this bot doesn't process directly; it asks what the request is for and forwards it to the right department. Never decline a formal/official document just because it isn't a transfer slip — that's exactly when this tool applies. Only use decline_unreadable_image for images genuinely unrelated to the cooperative or incomplete transfer slips.",
+      "Call when the user sends an image or PDF that is a supporting document — a payslip (สลิปเงินเดือน, which includes full-page government payroll/deduction ledgers like \"บัญชีถือจ่ายเงินเดือนข้าราชการ\", not just small bank-style slips), ID card copy (สำเนาบัตรประชาชน), house registration copy (สำเนาทะเบียนบ้าน), marriage certificate (ทะเบียนสมรส), or any other official/formal document that clearly isn't a transfer slip (documentType: เอกสารประกอบอื่นๆ) — rather than a bank/wallet transfer slip. These are usually submitted for some other cooperative service (e.g. a loan application) that this bot doesn't process directly; it asks what the request is for and forwards it to the right department. Never decline a formal/official document just because it isn't a transfer slip — that's exactly when this tool applies. Only use decline_unreadable_image for images or PDFs genuinely unrelated to the cooperative or incomplete transfer slips.",
     input_schema: {
       type: "object",
       properties: {
@@ -278,6 +283,7 @@ type PendingInfo = {
   hasSlip: boolean;
   slipImageHash: string | null;
   slipImageUrl: string | null;
+  slipIsPdf: boolean;
   referenceNumber: string | null;
   loanType: string | null;
   depositAccountNumber: string | null;
@@ -342,6 +348,9 @@ type ToolContext = {
   slipImageUrl: string | null;
   slipImageHash: string | null;
   hasSlipImage: boolean;
+  // True when the current message's attachment (if any) is a PDF rather
+  // than a photo — meaningless when hasSlipImage is false.
+  slipIsPdf: boolean;
 };
 
 // Returns the system prompt in two parts: `base` is fully static
@@ -363,9 +372,9 @@ function buildSystemPrompt(
     const next = computeNextRequirement(lineUser, pending);
     const amountNote = pending.amount ? formatAmount(pending.amount) : "ยังไม่ทราบยอด";
     if (next === "member_info") {
-      flowNote = `\n\nหมายเหตุระบบ (สำคัญ): มีธุรกรรมค้างอยู่ (${pending.category ?? "ยังไม่ทราบหมวดหมู่"}, ${amountNote}) กำลังรอข้อมูลสมาชิก (ชื่อ-นามสกุล และเลขสมาชิก) — นี่คือครั้งแรกที่ผู้ใช้คนนี้ทำธุรกรรม ถ้าข้อความปัจจุบันของผู้ใช้เป็นข้อความธรรมดาที่มีชื่อ-นามสกุลและเลขสมาชิกอยู่แล้ว ให้เรียก submit_member_info ทันทีด้วยข้อมูลนั้น ถ้าเป็นข้อความธรรมดาที่ไม่มีชื่อ-นามสกุลและเลขสมาชิก ให้ถามชื่อ-นามสกุลและเลขสมาชิกอีกครั้งสั้นๆ โดยไม่ต้องเรียก tool ใดๆ **ถ้าข้อความนี้เป็นรูปภาพ (สลิปใหม่) ให้ตรวจสอบตามกฎขั้นที่ 1-1.5 ด้านล่างตามปกติแล้วเรียก report_transaction เพื่อบันทึกข้อมูลสลิปไว้ก่อน (หรือ decline_unreadable_image ถ้าสลิปไม่ถูกต้องจริงๆ) — ระบบจะเก็บสลิปนี้ไว้และถามชื่อ-นามสกุล/เลขสมาชิกในข้อความถัดไปเอง ห้ามปฏิเสธสลิปที่ถูกต้องเพียงเพราะยังไม่มีข้อมูลสมาชิก**`;
+      flowNote = `\n\nหมายเหตุระบบ (สำคัญ): มีธุรกรรมค้างอยู่ (${pending.category ?? "ยังไม่ทราบหมวดหมู่"}, ${amountNote}) กำลังรอข้อมูลสมาชิก (ชื่อ-นามสกุล และเลขสมาชิก) — นี่คือครั้งแรกที่ผู้ใช้คนนี้ทำธุรกรรม ถ้าข้อความปัจจุบันของผู้ใช้เป็นข้อความธรรมดาที่มีชื่อ-นามสกุลและเลขสมาชิกอยู่แล้ว ให้เรียก submit_member_info ทันทีด้วยข้อมูลนั้น ถ้าเป็นข้อความธรรมดาที่ไม่มีชื่อ-นามสกุลและเลขสมาชิก ให้ถามชื่อ-นามสกุลและเลขสมาชิกอีกครั้งสั้นๆ โดยไม่ต้องเรียก tool ใดๆ **ถ้าข้อความนี้เป็นรูปภาพหรือไฟล์ PDF (สลิปใหม่) ให้ตรวจสอบตามกฎขั้นที่ 1-1.5 ด้านล่างตามปกติแล้วเรียก report_transaction เพื่อบันทึกข้อมูลสลิปไว้ก่อน (หรือ decline_unreadable_image ถ้าสลิปไม่ถูกต้องจริงๆ) — ระบบจะเก็บสลิปนี้ไว้และถามชื่อ-นามสกุล/เลขสมาชิกในข้อความถัดไปเอง ห้ามปฏิเสธสลิปที่ถูกต้องเพียงเพราะยังไม่มีข้อมูลสมาชิก**`;
     } else if (next === "slip") {
-      flowNote = `\n\nหมายเหตุระบบ (สำคัญ): มีธุรกรรมค้างอยู่ (${pending.category ?? "ยังไม่ทราบหมวดหมู่"}, ${amountNote}) ข้อมูลสมาชิกครบแล้ว กำลังรอรูปสลิปการโอนเงิน ถ้าข้อความนี้เป็นรูปภาพ ให้ตรวจสอบตามกฎในขั้นที่ 1-4 ด้านล่างแล้วเรียก report_transaction (พร้อมส่ง category เดิมคือ "${pending.category}" ซ้ำไปด้วย) หรือ decline_unreadable_image ถ้าไม่ใช่สลิปที่ถูกต้อง ถ้าข้อความนี้ไม่ใช่รูปภาพ ให้ขอให้ผู้ใช้ส่งรูปสลิปการโอนเงินอีกครั้งสั้นๆ โดยไม่ต้องเรียก tool ใดๆ`;
+      flowNote = `\n\nหมายเหตุระบบ (สำคัญ): มีธุรกรรมค้างอยู่ (${pending.category ?? "ยังไม่ทราบหมวดหมู่"}, ${amountNote}) ข้อมูลสมาชิกครบแล้ว กำลังรอรูปสลิปการโอนเงิน ถ้าข้อความนี้เป็นรูปภาพหรือไฟล์ PDF ให้ตรวจสอบตามกฎในขั้นที่ 1-4 ด้านล่างแล้วเรียก report_transaction (พร้อมส่ง category เดิมคือ "${pending.category}" ซ้ำไปด้วย) หรือ decline_unreadable_image ถ้าไม่ใช่สลิปที่ถูกต้อง ถ้าข้อความนี้ไม่ใช่รูปภาพหรือไฟล์ PDF ให้ขอให้ผู้ใช้ส่งรูปหรือไฟล์ PDF ของสลิปการโอนเงินอีกครั้งสั้นๆ โดยไม่ต้องเรียก tool ใดๆ`;
     } else if (next === "category") {
       flowNote = `\n\nหมายเหตุระบบ (สำคัญ): มีธุรกรรมค้างอยู่ (${amountNote}) ได้รับสลิปแล้วแต่สลิปไม่ได้ระบุจุดประสงค์/หมายเหตุไว้เลย ทำให้ยังไม่ทราบว่าเป็นธุรกรรมหมวดไหน ถ้าข้อความปัจจุบันของผู้ใช้ระบุว่าเป็นธุรกรรมประเภทไหน (${CATEGORIES.join(
         ", "
@@ -404,7 +413,7 @@ ${knowledgeText}
 
 หน้าที่ของคุณมี 13 อย่าง:
 
-1. เมื่อผู้ใช้เล่าถึงหรือส่งรูปสลิปธุรกรรมกับสหกรณ์ที่เกิดขึ้นแล้ว (ซื้อหุ้น, ชำระหนี้, ฝากเงิน, ชำระเก็บไม่ได้รายเดือน, ชำระประกัน, ชำระฌาปนกิจ, สสค, สสอค, สสชสอ, สสสก, สสสท) ให้เรียก report_transaction ทันทีเพื่อเริ่ม/อัปเดตการบันทึก **ทุกธุรกรรมต้องผ่านการยืนยันตัวตนสมาชิก (ชื่อ-นามสกุล + เลขสมาชิก, ถามครั้งเดียวแล้วจำไว้ถาวร) และมีรูปสลิปการโอนเงินก่อนจะบันทึกจริงเสมอ — ธุรกรรมชำระหนี้ต้องระบุประเภทเงินกู้เพิ่มด้วย ธุรกรรมฝากเงินต้องระบุเลขที่บัญชีที่จะฝากเพิ่มด้วย ถ้าชื่อในสลิปไม่ตรงกับชื่อสมาชิกที่ลงทะเบียนไว้ ต้องให้สมาชิกยืนยันก่อนด้วย** คุณไม่ต้องตัดสินใจเองว่าต้องขอข้อมูลอะไรต่อ ระบบจะตรวจสอบให้อัตโนมัติหลังจากเรียก tool แล้วบอกกลับมาว่ายังขาดอะไร ให้ทำตามนั้น
+1. เมื่อผู้ใช้เล่าถึงหรือส่งรูปหรือไฟล์ PDF ของสลิปธุรกรรมกับสหกรณ์ที่เกิดขึ้นแล้ว (ซื้อหุ้น, ชำระหนี้, ฝากเงิน, ชำระเก็บไม่ได้รายเดือน, ชำระประกัน, ชำระฌาปนกิจ, สสค, สสอค, สสชสอ, สสสก, สสสท) ให้เรียก report_transaction ทันทีเพื่อเริ่ม/อัปเดตการบันทึก **ทุกธุรกรรมต้องผ่านการยืนยันตัวตนสมาชิก (ชื่อ-นามสกุล + เลขสมาชิก, ถามครั้งเดียวแล้วจำไว้ถาวร) และมีรูปหรือไฟล์ PDF ของสลิปการโอนเงินก่อนจะบันทึกจริงเสมอ — ธุรกรรมชำระหนี้ต้องระบุประเภทเงินกู้เพิ่มด้วย ธุรกรรมฝากเงินต้องระบุเลขที่บัญชีที่จะฝากเพิ่มด้วย ถ้าชื่อในสลิปไม่ตรงกับชื่อสมาชิกที่ลงทะเบียนไว้ ต้องให้สมาชิกยืนยันก่อนด้วย** คุณไม่ต้องตัดสินใจเองว่าต้องขอข้อมูลอะไรต่อ ระบบจะตรวจสอบให้อัตโนมัติหลังจากเรียก tool แล้วบอกกลับมาว่ายังขาดอะไร ให้ทำตามนั้น
 2. เมื่อผู้ใช้ให้ชื่อ-นามสกุลและเลขสมาชิก (ไม่ว่าจะเสนอเองหรือตอบคำถามที่ถามไป) ให้เรียก submit_member_info
 3. เมื่อผู้ใช้ระบุประเภทเงินกู้สำหรับธุรกรรมชำระหนี้ที่ค้างอยู่ ให้เรียก submit_loan_type
 4. เมื่อผู้ใช้ระบุเลขที่บัญชีสำหรับธุรกรรมฝากเงินที่ค้างอยู่ ให้เรียก submit_deposit_account
@@ -418,11 +427,11 @@ ${knowledgeText}
 12. เมื่อผู้ใช้ถามคำถามความรู้ทั่วไปเกี่ยวกับการเงิน (เช่น วิธีลงทุน, หลักการกู้ยืมทั่วไป) ที่ไม่เกี่ยวกับข้อมูลของสหกรณ์นี้โดยเฉพาะและไม่เกี่ยวกับข้อมูลส่วนตัวของเขา ให้ตอบด้วยความรู้ทั่วไปโดยตรง ไม่ต้องเรียกเครื่องมือใดๆ และควรระบุว่าเป็นข้อมูลทั่วไป ไม่ใช่คำแนะนำทางการเงินจากผู้เชี่ยวชาญที่มีใบอนุญาต
 13. เมื่อผู้ใช้ขอเปลี่ยน/ตั้งชื่อเล่นของตัวเอง (เช่น "เปลี่ยนชื่อเรียกฉันเป็น...", "ตั้งชื่อเล่นว่า...") ให้เรียก set_nickname ด้วยชื่อที่ผู้ใช้ระบุ แล้วตอบยืนยันสั้นๆ ห้ามเรียก tool นี้เพื่อเหตุผลอื่นนอกจากนี้เด็ดขาด (คนละเรื่องกับชื่อ-นามสกุลสมาชิกในข้อ 2)
 
-กฎการตรวจสอบรูปสลิป (ใช้ทุกครั้งที่มีรูปภาพเข้ามา ไม่ว่าจะอยู่ขั้นตอนไหนของการเก็บข้อมูล):
+กฎการตรวจสอบสลิป (ใช้ทุกครั้งที่มีไฟล์แนบเข้ามา ไม่ว่าจะเป็นรูปภาพหรือไฟล์ PDF และไม่ว่าจะอยู่ขั้นตอนไหนของการเก็บข้อมูล):
 
-ขั้นที่ 0 (เช็คก่อนอย่างอื่นทั้งหมด) ถ้าภาพที่ส่งมาเป็นเอกสารประกอบกลุ่มนี้: **สลิปเงินเดือน, สำเนาบัตรประชาชน, สำเนาทะเบียนบ้าน, ทะเบียนสมรส, หรือเอกสารประกอบอื่นๆ ที่ไม่ใช่สลิปโอนเงิน/ชำระเงินกับสหกรณ์** (สังเกตจากหัวเอกสาร/รูปแบบ ไม่ใช่สลิปโอนเงินจากธนาคาร/วอลเล็ตเลย) **ให้เรียก flag_supporting_document ทันที แล้วข้ามขั้นที่ 1-4 ด้านล่างไปเลย ห้ามเรียก decline_unreadable_image สำหรับเอกสารกลุ่มนี้เด็ดขาด** **"สลิปเงินเดือน" ในที่นี้นับรวมทุกรูปแบบเอกสารที่แสดงเงินเดือน/รายการหักเงินเดือนของข้าราชการ/พนักงาน ไม่ใช่แค่สลิปใบเล็กจากธนาคารหรือแอปเท่านั้น — รวมถึงตารางบัญชีถือจ่ายเงินเดือนข้าราชการแบบเต็มหน้า (หัวเอกสารทำนอง "บัญชีถือจ่ายเงินเดือนข้าราชการ" ที่ออกโดยหน่วยงานต้นสังกัด), ใบแจ้งเงินเดือน, สลิปเงินเดือนอิเล็กทรอนิกส์ ฯลฯ ก็ให้ถือเป็น "สลิปเงินเดือน" เช่นกัน แม้หน้าตาจะเป็นตารางบัญชีมากกว่าสลิปใบเล็กก็ตาม** ถ้าไม่แน่ใจว่าเข้าข่ายหมวดไหนใน 4 หมวดแรก แต่เห็นชัดว่าไม่ใช่สลิปโอนเงิน/ชำระเงินกับสหกรณ์และดูเป็นเอกสารราชการ/ทางการที่สมาชิกน่าจะส่งมาเพื่อขอใช้บริการอื่น ให้ใช้ documentType เป็น "เอกสารประกอบอื่นๆ" แล้วเรียก flag_supporting_document เช่นกัน **ห้ามปฏิเสธเอกสารทางการ/บัญชี/ตารางที่ไม่ใช่สลิปโอนเงินด้วยเหตุผลว่า "ไม่ใช่สลิปโอนเงิน" เด็ดขาด ไม่ว่าจะจัดหมวดได้ตรงหรือไม่ก็ตาม — ให้เรียก flag_supporting_document เสมอในกรณีนี้** — decline_unreadable_image ใช้เฉพาะรูปที่ไม่เกี่ยวกับสหกรณ์เลย (เช่น รูปสัตว์, รูปอาหาร, ภาพหน้าจอที่ไม่มีเนื้อหาเกี่ยวกับการเงิน/เอกสารราชการใดๆ) หรือสลิปโอนเงินที่ไม่สมบูรณ์เท่านั้น **กับดักที่พลาดบ่อย: ห้ามใช้เหตุผล "ไม่ใช่สลิปโอนเงิน" หรือ "ไม่มีข้อมูลการโอนเงินที่บันทึกเป็นธุรกรรมได้" มาเรียก decline_unreadable_image กับเอกสารกลุ่มนี้เด็ดขาด — การที่มันไม่ใช่สลิปโอนเงินคือเหตุผลที่ถูกต้องแล้วว่าทำไมต้องเรียก flag_supporting_document ไม่ใช่เหตุผลให้ปฏิเสธ** ถ้าภาพไม่ใช่เอกสารกลุ่มนี้ ให้ไปประเมินต่อที่ขั้นที่ 1
+ขั้นที่ 0 (เช็คก่อนอย่างอื่นทั้งหมด) ถ้าไฟล์ที่ส่งมา (รูปภาพหรือ PDF) เป็นเอกสารประกอบกลุ่มนี้: **สลิปเงินเดือน, สำเนาบัตรประชาชน, สำเนาทะเบียนบ้าน, ทะเบียนสมรส, หรือเอกสารประกอบอื่นๆ ที่ไม่ใช่สลิปโอนเงิน/ชำระเงินกับสหกรณ์** (สังเกตจากหัวเอกสาร/รูปแบบ ไม่ใช่สลิปโอนเงินจากธนาคาร/วอลเล็ตเลย) **ให้เรียก flag_supporting_document ทันที แล้วข้ามขั้นที่ 1-4 ด้านล่างไปเลย ห้ามเรียก decline_unreadable_image สำหรับเอกสารกลุ่มนี้เด็ดขาด** **"สลิปเงินเดือน" ในที่นี้นับรวมทุกรูปแบบเอกสารที่แสดงเงินเดือน/รายการหักเงินเดือนของข้าราชการ/พนักงาน ไม่ใช่แค่สลิปใบเล็กจากธนาคารหรือแอปเท่านั้น — รวมถึงตารางบัญชีถือจ่ายเงินเดือนข้าราชการแบบเต็มหน้า (หัวเอกสารทำนอง "บัญชีถือจ่ายเงินเดือนข้าราชการ" ที่ออกโดยหน่วยงานต้นสังกัด), ใบแจ้งเงินเดือน, สลิปเงินเดือนอิเล็กทรอนิกส์ ฯลฯ ก็ให้ถือเป็น "สลิปเงินเดือน" เช่นกัน แม้หน้าตาจะเป็นตารางบัญชีมากกว่าสลิปใบเล็กก็ตาม** ถ้าไม่แน่ใจว่าเข้าข่ายหมวดไหนใน 4 หมวดแรก แต่เห็นชัดว่าไม่ใช่สลิปโอนเงิน/ชำระเงินกับสหกรณ์และดูเป็นเอกสารราชการ/ทางการที่สมาชิกน่าจะส่งมาเพื่อขอใช้บริการอื่น ให้ใช้ documentType เป็น "เอกสารประกอบอื่นๆ" แล้วเรียก flag_supporting_document เช่นกัน **ห้ามปฏิเสธเอกสารทางการ/บัญชี/ตารางที่ไม่ใช่สลิปโอนเงินด้วยเหตุผลว่า "ไม่ใช่สลิปโอนเงิน" เด็ดขาด ไม่ว่าจะจัดหมวดได้ตรงหรือไม่ก็ตาม — ให้เรียก flag_supporting_document เสมอในกรณีนี้** — decline_unreadable_image ใช้เฉพาะรูปที่ไม่เกี่ยวกับสหกรณ์เลย (เช่น รูปสัตว์, รูปอาหาร, ภาพหน้าจอที่ไม่มีเนื้อหาเกี่ยวกับการเงิน/เอกสารราชการใดๆ) หรือสลิปโอนเงินที่ไม่สมบูรณ์เท่านั้น **กับดักที่พลาดบ่อย: ห้ามใช้เหตุผล "ไม่ใช่สลิปโอนเงิน" หรือ "ไม่มีข้อมูลการโอนเงินที่บันทึกเป็นธุรกรรมได้" มาเรียก decline_unreadable_image กับเอกสารกลุ่มนี้เด็ดขาด — การที่มันไม่ใช่สลิปโอนเงินคือเหตุผลที่ถูกต้องแล้วว่าทำไมต้องเรียก flag_supporting_document ไม่ใช่เหตุผลให้ปฏิเสธ** ถ้าไฟล์ไม่ใช่เอกสารกลุ่มนี้ ให้ไปประเมินต่อที่ขั้นที่ 1
 
-ขั้นที่ 1 (สำคัญที่สุด — ตัดสินก่อนเรื่องอื่นทั้งหมด) ตัดสินใจว่าสลิปนี้"สำเร็จ"หรือไม่: แอปธนาคาร/กระเป๋าเงินดิจิทัลของไทยทุกเจ้า ไม่ว่าจะเป็นธนาคารใด หรือแอปอย่างเป๋าตังก์ (Paotang), ทรูมันนี่, LINE Pay ฯลฯ (ไม่ใช่แค่รายชื่อตัวอย่างเช่น K PLUS, SCB Easy, Krungthai NEXT, Bualuang mBanking, ttb touch, MyMo, Krungsri App) มีสลิปหน้าตาและถ้อยคำไม่เหมือนกัน **กฎเดียวที่ใช้ตัดสิน**: สแกนหาคำหรือวลีที่ลงท้ายด้วย "สำเร็จ" (เช่น "โอนเงินสำเร็จ", "จ่ายบิลสำเร็จ", "ชำระเงินสำเร็จ", "เติมเงินสำเร็จ", "รายการสำเร็จ" หรือความหมายใกล้เคียง) หรือเครื่องหมายถูก/checkmark สีเขียว **ถ้าเจออย่างใดอย่างหนึ่งในภาพ ให้ถือว่าสำเร็จเสมอทันที** ไม่ว่าธนาคารไหน ประเภทธุรกรรมอะไร หรือพื้นหลัง/ธีม/โลโก้/ภาพตกแต่งจะเป็นแบบใดก็ตาม — **ห้ามปฏิเสธการบันทึกด้วยเหตุผลว่า "ไม่เห็นคำยืนยัน" ถ้าจริงๆ แล้วมีคำว่า "สำเร็จ" หรือเครื่องหมายถูกอยู่ในภาพ** ปฏิเสธการบันทึกเฉพาะกรณีที่ข้อความในสลิปเองชัดเจนว่ายังไม่สำเร็จ/ถูกยกเลิก/รอดำเนินการ หรืออ่านจำนวนเงินไม่ออกจริงๆ เท่านั้น — กรณีปฏิเสธเหล่านี้ **ต้องเรียก decline_unreadable_image เสมอ ห้ามตอบเป็นข้อความเปล่าๆ โดยไม่เรียก tool ใดเลยเด็ดขาด** (รูปภาพที่ผ่านมาถึงขั้นที่ 1 นี้แล้ว — คือไม่ใช่เอกสารประกอบตามขั้นที่ 0 — ต้องจบด้วยการเรียก tool ตัวใดตัวหนึ่งในสองตัวนี้เท่านั้น: report_transaction หรือ decline_unreadable_image) **แอปธนาคารไทยหลายเจ้านิยมใส่ภาพพื้นหลังตกแต่งสไตล์ต่างๆ ทับหน้าจอสลิปตัวเอง (เช่น ธีมกีฬา, ธีมเทศกาล, ธีมโปรโมชั่น, ลายการ์ตูน) ซึ่งเป็นแค่ "สกิน/ธีมกราฟิก" ของแอปที่ไม่เกี่ยวข้องกับตัวธุรกรรมเลย ห้ามตีความว่าพื้นหลังธีมกีฬา/เทศกาล/โปรโมชั่นเหล่านี้ทำให้สลิปกลายเป็น "ข่าว", "โปรโมชั่น", "ตั๋ว", หรือเนื้อหาที่ไม่ใช่ธุรกรรมจริงเด็ดขาด — ถ้าเห็นกล่องข้อความยืนยันการโอน/จ่ายเงิน (มีคำว่า "สำเร็จ" + เครื่องหมายถูก + จำนวนเงิน + เลขที่รายการ) ซ้อนทับอยู่บนพื้นหลังธีมใดๆ ก็ตาม ให้ถือเป็นธุรกรรมจริงเสมอ ไม่ว่าพื้นหลังจะเป็นภาพอะไร** ห้ามใช้ภาพพื้นหลังหรือโลโก้มาตัดสินว่าเป็นตั๋ว/ใบสมัครสมาชิก/ข่าว/เอกสารอื่นเด็ดขาด ให้ดูเฉพาะข้อความและตัวเลขที่เป็นเนื้อหาจริงเท่านั้น **ห้ามพยายามตัดสินว่าธุรกรรมเป็นเงินเข้าหรือเงินออก (รับเงินหรือจ่ายเงิน) จากช่อง "จาก"/"ไปยัง" หรือชื่อบัญชีเด็ดขาด เพราะคุณไม่มีทางรู้ได้จริงว่าชื่อไหนในสลิปคือตัวผู้ใช้เอง ห้ามปฏิเสธหรือถามย้อนกลับด้วยเหตุผลเรื่องทิศทางเงินเข้า-ออกเด็ดขาด** (กฎข้อนี้พูดถึงทิศทางเงินเท่านั้น — แยกจากขั้นที่ 1.5 ด้านล่างซึ่งเป็นการตรวจสอบว่าโอนเข้าบัญชีที่ถูกต้องหรือไม่ ต้องทำทุกครั้ง)
+ขั้นที่ 1 (สำคัญที่สุด — ตัดสินก่อนเรื่องอื่นทั้งหมด) ตัดสินใจว่าสลิปนี้"สำเร็จ"หรือไม่: แอปธนาคาร/กระเป๋าเงินดิจิทัลของไทยทุกเจ้า ไม่ว่าจะเป็นธนาคารใด หรือแอปอย่างเป๋าตังก์ (Paotang), ทรูมันนี่, LINE Pay ฯลฯ (ไม่ใช่แค่รายชื่อตัวอย่างเช่น K PLUS, SCB Easy, Krungthai NEXT, Bualuang mBanking, ttb touch, MyMo, Krungsri App) มีสลิปหน้าตาและถ้อยคำไม่เหมือนกัน **กฎเดียวที่ใช้ตัดสิน**: สแกนหาคำหรือวลีที่ลงท้ายด้วย "สำเร็จ" (เช่น "โอนเงินสำเร็จ", "จ่ายบิลสำเร็จ", "ชำระเงินสำเร็จ", "เติมเงินสำเร็จ", "รายการสำเร็จ" หรือความหมายใกล้เคียง) หรือเครื่องหมายถูก/checkmark สีเขียว **ถ้าเจออย่างใดอย่างหนึ่งในภาพ ให้ถือว่าสำเร็จเสมอทันที** ไม่ว่าธนาคารไหน ประเภทธุรกรรมอะไร หรือพื้นหลัง/ธีม/โลโก้/ภาพตกแต่งจะเป็นแบบใดก็ตาม — **ห้ามปฏิเสธการบันทึกด้วยเหตุผลว่า "ไม่เห็นคำยืนยัน" ถ้าจริงๆ แล้วมีคำว่า "สำเร็จ" หรือเครื่องหมายถูกอยู่ในภาพ** ปฏิเสธการบันทึกเฉพาะกรณีที่ข้อความในสลิปเองชัดเจนว่ายังไม่สำเร็จ/ถูกยกเลิก/รอดำเนินการ หรืออ่านจำนวนเงินไม่ออกจริงๆ เท่านั้น — กรณีปฏิเสธเหล่านี้ **ต้องเรียก decline_unreadable_image เสมอ ห้ามตอบเป็นข้อความเปล่าๆ โดยไม่เรียก tool ใดเลยเด็ดขาด** (ไฟล์ที่ผ่านมาถึงขั้นที่ 1 นี้แล้ว — คือไม่ใช่เอกสารประกอบตามขั้นที่ 0 — ต้องจบด้วยการเรียก tool ตัวใดตัวหนึ่งในสองตัวนี้เท่านั้น: report_transaction หรือ decline_unreadable_image) **แอปธนาคารไทยหลายเจ้านิยมใส่ภาพพื้นหลังตกแต่งสไตล์ต่างๆ ทับหน้าจอสลิปตัวเอง (เช่น ธีมกีฬา, ธีมเทศกาล, ธีมโปรโมชั่น, ลายการ์ตูน) ซึ่งเป็นแค่ "สกิน/ธีมกราฟิก" ของแอปที่ไม่เกี่ยวข้องกับตัวธุรกรรมเลย ห้ามตีความว่าพื้นหลังธีมกีฬา/เทศกาล/โปรโมชั่นเหล่านี้ทำให้สลิปกลายเป็น "ข่าว", "โปรโมชั่น", "ตั๋ว", หรือเนื้อหาที่ไม่ใช่ธุรกรรมจริงเด็ดขาด — ถ้าเห็นกล่องข้อความยืนยันการโอน/จ่ายเงิน (มีคำว่า "สำเร็จ" + เครื่องหมายถูก + จำนวนเงิน + เลขที่รายการ) ซ้อนทับอยู่บนพื้นหลังธีมใดๆ ก็ตาม ให้ถือเป็นธุรกรรมจริงเสมอ ไม่ว่าพื้นหลังจะเป็นภาพอะไร** ห้ามใช้ภาพพื้นหลังหรือโลโก้มาตัดสินว่าเป็นตั๋ว/ใบสมัครสมาชิก/ข่าว/เอกสารอื่นเด็ดขาด ให้ดูเฉพาะข้อความและตัวเลขที่เป็นเนื้อหาจริงเท่านั้น **ห้ามพยายามตัดสินว่าธุรกรรมเป็นเงินเข้าหรือเงินออก (รับเงินหรือจ่ายเงิน) จากช่อง "จาก"/"ไปยัง" หรือชื่อบัญชีเด็ดขาด เพราะคุณไม่มีทางรู้ได้จริงว่าชื่อไหนในสลิปคือตัวผู้ใช้เอง ห้ามปฏิเสธหรือถามย้อนกลับด้วยเหตุผลเรื่องทิศทางเงินเข้า-ออกเด็ดขาด** (กฎข้อนี้พูดถึงทิศทางเงินเท่านั้น — แยกจากขั้นที่ 1.5 ด้านล่างซึ่งเป็นการตรวจสอบว่าโอนเข้าบัญชีที่ถูกต้องหรือไม่ ต้องทำทุกครั้ง)
 
 ขั้นที่ 1.5 (สำคัญ — ตรวจทุกครั้งหลังผ่านขั้นที่ 1) ตรวจสอบว่าบัญชี/ผู้รับเงินปลายทาง (ช่อง "ไปยัง" หรือเทียบเท่าในสลิป) คือ **สหกรณ์ออมทรัพย์ครูหนองคาย จำกัด** เท่านั้น ยอมรับชื่อแบบเต็ม แบบย่อ หรือสะกดใกล้เคียงที่สื่อถึงสหกรณ์นี้ชัดเจน (เช่น "สหกรณ์ออมทรัพย์ครูหนองคาย", "สอ.ครูหนองคาย") **ถ้าผู้รับเงินในสลิปเป็นบุคคล ร้านค้า หรือหน่วยงาน/บัญชีอื่นที่ไม่ใช่สหกรณ์นี้อย่างชัดเจน ให้เรียก decline_unreadable_image ทันที** ด้วยเหตุผลว่าไม่ได้โอนเข้าบัญชีสหกรณ์ ห้ามเรียก report_transaction บันทึกธุรกรรมที่ไม่ได้โอนเข้าบัญชีสหกรณ์เด็ดขาด ไม่ว่าหมวดหมู่จะเป็นอะไรก็ตาม ถ้าสลิปไม่แสดงชื่อบัญชีปลายทางให้เห็นเลย (อ่านไม่ออก/ไม่มีในภาพ) ให้ดำเนินการต่อตามปกติโดยไม่ต้องปฏิเสธ เพราะไม่มีหลักฐานว่าโอนผิดบัญชี
 
@@ -434,7 +443,7 @@ ${knowledgeText}
 
 ขั้นที่ 4 กันรายการซ้ำ: ถ้าสลิปมีเลขที่รายการ/รหัสอ้างอิง (เช่น "รหัสอ้างอิง", "เลขที่รายการ") ให้คัดลอกใส่ referenceNumber ตามตัวอักษรเป๊ะๆ ระบบจะเช็คให้อัตโนมัติว่าเคยบันทึกสลิปนี้ไปแล้วหรือยัง ถ้า report_transaction แจ้งกลับมาว่าเป็นรายการซ้ำ ให้บอกผู้ใช้ตรงๆ ว่าเคยบันทึกรายการนี้ไปแล้ว ไม่ต้องบันทึกซ้ำอีก
 
-ขั้นที่ 5 ยอดเงินต้องตรงกัน: ให้ใส่ amount เป็นยอดที่อ่านได้จากสลิปจริงเสมอเมื่อมีรูปภาพ (ไม่ใช่ยอดที่ผู้ใช้เคยพิมพ์บอกไว้ก่อนหน้า) ถ้ายอดในสลิปไม่ตรงกับยอดที่ผู้ใช้เคยแจ้งไว้ทางข้อความ ระบบจะตรวจพบเองและแจ้งกลับมาให้คุณถามผู้ใช้ยืนยันยอดที่ถูกต้องก่อนบันทึก ไม่ต้องพยายามตัดสินใจเองว่ายอดไหนถูก
+ขั้นที่ 5 ยอดเงินต้องตรงกัน: ให้ใส่ amount เป็นยอดที่อ่านได้จากสลิปจริงเสมอเมื่อมีไฟล์สลิปแนบมา (รูปภาพหรือ PDF, ไม่ใช่ยอดที่ผู้ใช้เคยพิมพ์บอกไว้ก่อนหน้า) ถ้ายอดในสลิปไม่ตรงกับยอดที่ผู้ใช้เคยแจ้งไว้ทางข้อความ ระบบจะตรวจพบเองและแจ้งกลับมาให้คุณถามผู้ใช้ยืนยันยอดที่ถูกต้องก่อนบันทึก ไม่ต้องพยายามตัดสินใจเองว่ายอดไหนถูก
 
 ตอบสั้น กระชับ เป็นกันเอง และเป็นภาษาไทยเสมอ เว้นแต่ผู้ใช้พิมพ์มาเป็นภาษาอื่น ใช้บุคลิกผู้หญิงสม่ำเสมอทุกคำตอบ (สรรพนามแทนตัวเอง "ดิฉัน" ถ้าต้องใช้ และคำลงท้าย "ค่ะ"/"คะ" เท่านั้น) **ห้ามใช้ "ผม"/"ครับ" เด็ดขาดไม่ว่ากรณีใด** เมื่อเรียกผู้ใช้หรือพูดถึงผู้ใช้ ให้เรียกว่า **"สมาชิก"** เท่านั้น **ห้ามใช้คำว่า "ลูกค้า" เด็ดขาด** เพราะที่นี่คือสหกรณ์ ผู้ใช้ทุกคนคือสมาชิกสหกรณ์ ไม่ใช่ลูกค้า`;
 
@@ -496,6 +505,7 @@ type PendingServiceInfo = {
   requestType: string | null;
   department: string | null;
   imageUrl: string | null;
+  imageIsPdf: boolean;
 };
 
 type ServiceRequirement = "purpose" | "member_info" | "phone" | null;
@@ -623,6 +633,7 @@ async function logServiceRequest(
         requestType: pendingService.requestType,
         department: pendingService.department,
         imageUrl: pendingService.imageUrl,
+        imageIsPdf: pendingService.imageIsPdf,
         forwardedTo,
         status,
       },
@@ -658,19 +669,22 @@ async function forwardServiceRequest(
   const text = `📋 คำขอจากสมาชิก (ผ่าน LINE Bot)\nเอกสารที่ส่งมา: ${pendingService.documentType}\nแผนก: ${pendingService.department}\nคำขอ: ${pendingService.requestType}\nชื่อ-นามสกุล: ${lineUser.fullName}\nเลขสมาชิก: ${lineUser.memberNumber}\nเบอร์โทรติดต่อกลับ: ${lineUser.phone ?? "-"}\nสถานะ: ${verifyMark}`;
 
   // imageUrl is the best-effort Blob backup of the document the member
-  // sent (null if BLOB_READ_WRITE_TOKEN isn't configured) — always
-  // uploaded as image/jpeg by the webhook, so it's safe to reuse as both
-  // the full image and the preview LINE requires for an image message.
+  // sent (null if BLOB_READ_WRITE_TOKEN isn't configured). LINE's
+  // Messaging API can only push a real photo as an "image" message (it
+  // fetches and thumbnails the URL) — a PDF isn't a valid image message,
+  // so it's sent as a plain text link instead.
   const messages: Parameters<typeof lineClient.pushMessage>[0]["messages"] =
     pendingService.imageUrl
-      ? [
-          { type: "text", text },
-          {
-            type: "image",
-            originalContentUrl: pendingService.imageUrl,
-            previewImageUrl: pendingService.imageUrl,
-          },
-        ]
+      ? pendingService.imageIsPdf
+        ? [{ type: "text", text: `${text}\n📎 ไฟล์เอกสาร (PDF): ${pendingService.imageUrl}` }]
+        : [
+            { type: "text", text },
+            {
+              type: "image",
+              originalContentUrl: pendingService.imageUrl,
+              previewImageUrl: pendingService.imageUrl,
+            },
+          ]
       : [{ type: "text", text }];
 
   // The member is only told forwarding failed if every recipient failed; a
@@ -717,6 +731,7 @@ async function notifyTransactionForward(
     slipSenderName: string | null;
     senderNameMismatch: boolean;
     slipImageUrl: string | null;
+    slipIsPdf: boolean;
   },
   lineUser: LineUserInfo
 ): Promise<void> {
@@ -750,16 +765,21 @@ async function notifyTransactionForward(
 
     // slipImageUrl is the same best-effort Blob backup used for report
     // slips generally (null if BLOB_READ_WRITE_TOKEN isn't configured).
+    // LINE's Messaging API can only push a real photo as an "image"
+    // message (it fetches and thumbnails the URL) — a PDF isn't a valid
+    // image message, so it's sent as a plain text link instead.
     const messages: Parameters<typeof lineClient.pushMessage>[0]["messages"] =
       expense.slipImageUrl
-        ? [
-            { type: "text", text },
-            {
-              type: "image",
-              originalContentUrl: expense.slipImageUrl,
-              previewImageUrl: expense.slipImageUrl,
-            },
-          ]
+        ? expense.slipIsPdf
+          ? [{ type: "text", text: `${text}\n📎 ไฟล์สลิป (PDF): ${expense.slipImageUrl}` }]
+          : [
+              { type: "text", text },
+              {
+                type: "image",
+                originalContentUrl: expense.slipImageUrl,
+                previewImageUrl: expense.slipImageUrl,
+              },
+            ]
         : [{ type: "text", text }];
 
     const { succeededIds, failedIds } = await pushToTargets(
@@ -826,6 +846,7 @@ async function finalizeTransaction(
         referenceNumber: pending.referenceNumber,
         slipImageHash: pending.slipImageHash,
         slipImageUrl: pending.slipImageUrl,
+        slipIsPdf: pending.slipIsPdf,
         memberFullName: lineUser.fullName,
         memberNumber: lineUser.memberNumber,
         memberVerified: lineUser.verified,
@@ -981,6 +1002,7 @@ async function reportTransaction(
       hasSlip: ctx.hasSlipImage,
       slipImageHash: ctx.slipImageHash,
       slipImageUrl,
+      slipIsPdf: ctx.slipIsPdf,
       referenceNumber: refNumber,
       slipSenderName: parsedSenderName,
     },
@@ -994,7 +1016,7 @@ async function reportTransaction(
       date: parsedDate,
       // Only ever set to true, never back to false, once a slip has been
       // seen for this pending transaction.
-      ...(ctx.hasSlipImage ? { hasSlip: true } : {}),
+      ...(ctx.hasSlipImage ? { hasSlip: true, slipIsPdf: ctx.slipIsPdf } : {}),
       ...(ctx.slipImageHash ? { slipImageHash: ctx.slipImageHash } : {}),
       ...(slipImageUrl ? { slipImageUrl } : {}),
       ...(refNumber ? { referenceNumber: refNumber } : {}),
@@ -1278,12 +1300,18 @@ async function flagSupportingDocument(
 
   await prisma.pendingServiceRequest.upsert({
     where: { lineUserId: ctx.lineUserId },
-    create: { lineUserId: ctx.lineUserId, documentType, imageUrl: ctx.slipImageUrl },
+    create: {
+      lineUserId: ctx.lineUserId,
+      documentType,
+      imageUrl: ctx.slipImageUrl,
+      imageIsPdf: ctx.slipIsPdf,
+    },
     update: {
       documentType,
       requestType: null,
       department: null,
       imageUrl: ctx.slipImageUrl,
+      imageIsPdf: ctx.slipIsPdf,
       createdAt: new Date(),
     },
   });
@@ -1449,7 +1477,8 @@ export async function runFinanceAgent(
   userContent: Anthropic.MessageParam["content"],
   lineUserId: string,
   slipImageUrlPromise: Promise<string | null> = Promise.resolve(null),
-  slipImageHash: string | null = null
+  slipImageHash: string | null = null,
+  slipIsPdf: boolean = false
 ): Promise<FinanceAgentReply> {
   const [lineUser, pending, pendingService, knowledgeText] = await Promise.all([
     loadLineUser(lineUserId),
@@ -1488,7 +1517,7 @@ export async function runFinanceAgent(
     { type: "text", text: base, cache_control: { type: "ephemeral" } },
     { type: "text", text: dynamic },
   ];
-  const model = hasImageContent(userContent) ? VISION_MODEL : TEXT_MODEL;
+  const model = hasAttachmentContent(userContent) ? VISION_MODEL : TEXT_MODEL;
   const messages: Anthropic.MessageParam[] = [
     { role: "user", content: userContent },
   ];
@@ -1504,23 +1533,23 @@ export async function runFinanceAgent(
     const next = pending ? computeNextRequirement(lineUser, pending) : null;
     const serviceNext =
       !pending && pendingService ? computeServiceRequirement(lineUser, pendingService) : null;
-    if (turn === 0 && next === "member_info" && !hasImageContent(userContent)) {
+    if (turn === 0 && next === "member_info" && !hasAttachmentContent(userContent)) {
       toolChoice = { type: "tool", name: "submit_member_info" };
-    } else if (turn === 0 && next === "category" && !hasImageContent(userContent)) {
+    } else if (turn === 0 && next === "category" && !hasAttachmentContent(userContent)) {
       toolChoice = { type: "tool", name: "report_transaction" };
-    } else if (turn === 0 && next === "loan_type" && !hasImageContent(userContent)) {
+    } else if (turn === 0 && next === "loan_type" && !hasAttachmentContent(userContent)) {
       toolChoice = { type: "tool", name: "submit_loan_type" };
-    } else if (turn === 0 && next === "deposit_account" && !hasImageContent(userContent)) {
+    } else if (turn === 0 && next === "deposit_account" && !hasAttachmentContent(userContent)) {
       toolChoice = { type: "tool", name: "submit_deposit_account" };
-    } else if (turn === 0 && next === "confirm_sender_name" && !hasImageContent(userContent)) {
+    } else if (turn === 0 && next === "confirm_sender_name" && !hasAttachmentContent(userContent)) {
       toolChoice = { type: "tool", name: "confirm_transaction_sender" };
-    } else if (turn === 0 && serviceNext === "purpose" && !hasImageContent(userContent)) {
+    } else if (turn === 0 && serviceNext === "purpose" && !hasAttachmentContent(userContent)) {
       toolChoice = { type: "tool", name: "submit_service_purpose" };
-    } else if (turn === 0 && serviceNext === "member_info" && !hasImageContent(userContent)) {
+    } else if (turn === 0 && serviceNext === "member_info" && !hasAttachmentContent(userContent)) {
       toolChoice = { type: "tool", name: "submit_member_info" };
-    } else if (turn === 0 && serviceNext === "phone" && !hasImageContent(userContent)) {
+    } else if (turn === 0 && serviceNext === "phone" && !hasAttachmentContent(userContent)) {
       toolChoice = { type: "tool", name: "submit_contact_phone" };
-    } else if (turn === 0 && hasImageContent(userContent)) {
+    } else if (turn === 0 && hasAttachmentContent(userContent)) {
       toolChoice = { type: "any" };
     }
     const response = await anthropic.messages.create({
@@ -1586,7 +1615,8 @@ export async function runFinanceAgent(
       lineUserId,
       slipImageUrl: await resolveSlipImageUrl(),
       slipImageHash,
-      hasSlipImage: hasImageContent(userContent),
+      hasSlipImage: hasAttachmentContent(userContent),
+      slipIsPdf,
     };
     const toolResults: Anthropic.ToolResultBlockParam[] = [];
     for (const block of toolUseBlocks) {
