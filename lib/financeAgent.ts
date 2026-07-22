@@ -18,6 +18,7 @@ import { formatAmount } from "./format";
 import { isPlaceholderText } from "./placeholderText";
 import { namesLikelyMatch } from "./nameMatch";
 import { detectNamedDepartment } from "./departmentMatch";
+import { matchesIdentity } from "./memberLookup";
 
 // Haiku is fast/cheap and reliable for plain text, but has repeatedly
 // misread slips with busy/themed backgrounds (inventing reasons to decline
@@ -252,6 +253,29 @@ const tools: Anthropic.Tool[] = [
       required: ["nickname"],
     },
   },
+  {
+    name: "submit_lookup_info",
+    description:
+      "Call when the member asks to find out their own เลขสมาชิก (member number) — e.g. they forgot it, or ask 'เลขสมาชิกของฉันคืออะไร'/'ลืมเลขสมาชิก'. This requires verifying their identity first: full name, 13-digit เลขประจำตัวประชาชน (national ID number), and registered phone number. Call this every time with whatever piece(s) of that the member has just given, even if you don't have all three yet — the system tracks what's still missing and, once all three are present, checks them against the member roster itself and tells you the result. NEVER state a member number to the user without this verification completing successfully first, no matter how confident the member sounds about their own identity, and never guess or invent any of the three fields.",
+    input_schema: {
+      type: "object",
+      properties: {
+        fullName: {
+          type: "string",
+          description: "The member's full name (ชื่อ-นามสกุล), copied as stated.",
+        },
+        nationalId: {
+          type: "string",
+          description:
+            "The member's 13-digit เลขประจำตัวประชาชน (national ID number), copied as stated — dashes/spaces are fine, no need to reformat.",
+        },
+        phone: {
+          type: "string",
+          description: "The member's registered phone number, copied as stated.",
+        },
+      },
+    },
+  },
   // web_search + web_fetch (restricted to the cooperative's own domain via
   // allowed_domains) were removed after a live test surfaced a gambling-spam
   // link preview in a bot reply — the cooperative's WordPress site appears
@@ -364,6 +388,7 @@ function buildSystemPrompt(
   lineUser: LineUserInfo | null,
   pending: PendingInfo | null,
   pendingService: PendingServiceInfo | null,
+  pendingLookup: PendingLookupInfo | null,
   knowledgeText: string
 ): { base: string; dynamic: string } {
   const today = new Date().toISOString().slice(0, 10);
@@ -398,6 +423,15 @@ function buildSystemPrompt(
     } else if (next === "phone") {
       flowNote = `\n\nหมายเหตุระบบ (สำคัญ): ผู้ใช้ต้องการทำรายการ "${pendingService.requestType}" ทราบตัวตนสมาชิกแล้ว แต่ยังต้องขอเบอร์โทรติดต่อกลับก่อนจะส่งต่อให้ฝ่ายที่เกี่ยวข้อง (เจ้าหน้าที่จะใช้โทรกลับเรื่องคำขอนี้) ถ้าข้อความปัจจุบันของผู้ใช้มีเบอร์โทรอยู่แล้ว ให้เรียก submit_contact_phone ทันที ถ้ายังไม่มีให้ถามอีกครั้งสั้นๆ ว่าขอเบอร์โทรติดต่อกลับด้วยค่ะ`;
     }
+  } else if (pendingLookup) {
+    const next = computeLookupRequirement(pendingLookup);
+    if (next === "full_name") {
+      flowNote = `\n\nหมายเหตุระบบ (สำคัญ): ผู้ใช้ถามหาเลขสมาชิกของตัวเอง กำลังรอชื่อ-นามสกุลเพื่อยืนยันตัวตนก่อนเปิดเผยเลขสมาชิก ถ้าข้อความปัจจุบันของผู้ใช้มีชื่อ-นามสกุลอยู่แล้ว ให้เรียก submit_lookup_info ทันทีด้วยข้อมูลนั้น ถ้ายังไม่มีให้ถามชื่อ-นามสกุลอีกครั้งสั้นๆ ห้ามบอกเลขสมาชิกใดๆ จนกว่าจะยืนยันครบทั้ง 3 อย่าง`;
+    } else if (next === "national_id") {
+      flowNote = `\n\nหมายเหตุระบบ (สำคัญ): ผู้ใช้ถามหาเลขสมาชิกของตัวเอง ได้ชื่อ-นามสกุลแล้ว กำลังรอเลขประจำตัวประชาชน 13 หลัก ถ้าข้อความปัจจุบันของผู้ใช้มีเลขบัตรประชาชนอยู่แล้ว ให้เรียก submit_lookup_info ทันทีด้วยข้อมูลนั้น ถ้ายังไม่มีให้ถามอีกครั้งสั้นๆ ห้ามบอกเลขสมาชิกใดๆ จนกว่าจะยืนยันครบทั้ง 3 อย่าง`;
+    } else if (next === "phone") {
+      flowNote = `\n\nหมายเหตุระบบ (สำคัญ): ผู้ใช้ถามหาเลขสมาชิกของตัวเอง ได้ชื่อ-นามสกุลและเลขบัตรประชาชนแล้ว กำลังรอเบอร์โทรศัพท์ที่ลงทะเบียนไว้ ถ้าข้อความปัจจุบันของผู้ใช้มีเบอร์โทรอยู่แล้ว ให้เรียก submit_lookup_info ทันทีด้วยข้อมูลนั้น (ระบบจะตรวจสอบกับทะเบียนสมาชิกให้เองทันทีที่ครบทั้ง 3 อย่าง) ถ้ายังไม่มีให้ถามอีกครั้งสั้นๆ ห้ามบอกเลขสมาชิกใดๆ จนกว่าจะยืนยันครบทั้ง 3 อย่าง`;
+    }
   }
 
   const base = `คุณคือผู้ช่วยด้านการเงินส่วนตัวที่ทำงานผ่าน LINE ให้กับสหกรณ์ออมทรัพย์ครูหนองคาย จำกัด
@@ -412,7 +446,7 @@ ${knowledgeText}
 
 **กฎที่ห้ามฝ่าฝืนเด็ดขาด**: เมื่อผู้ใช้พิมพ์บอกจำนวนเงิน+หมวดหมู่ธุรกรรม (แม้จะยังไม่มีสลิปก็ตาม) **ห้ามตอบเป็นข้อความเปล่าๆ ถามข้อมูลเพิ่มโดยไม่เรียก report_transaction ก่อนเด็ดขาด** ต่อให้ยอดเงินดูสูงผิดปกติหรือคุณอยากถามอะไรเพิ่มก็ตาม ให้เรียก report_transaction ด้วยข้อมูลที่มีก่อนเสมอ (ระบบจะเก็บยอดนี้ไว้เทียบกับสลิปที่จะตามมาทีหลังเองด้วย) แล้วค่อยใส่คำถามหรือข้อสังเกตของคุณลงในข้อความตอบกลับได้ตามปกติ — การเรียก tool กับการถามคำถามทำพร้อมกันได้ในคำตอบเดียว ไม่ต้องเลือกอย่างใดอย่างหนึ่ง
 
-หน้าที่ของคุณมี 13 อย่าง:
+หน้าที่ของคุณมี 14 อย่าง:
 
 1. เมื่อผู้ใช้เล่าถึงหรือส่งรูปหรือไฟล์ PDF ของสลิปธุรกรรมกับสหกรณ์ที่เกิดขึ้นแล้ว (ซื้อหุ้น, ชำระหนี้, ฝากเงิน, ชำระเก็บไม่ได้รายเดือน, ชำระประกัน, ชำระฌาปนกิจ, สสค, สสอค, สสชสอ, สสสก, สสสท) ให้เรียก report_transaction ทันทีเพื่อเริ่ม/อัปเดตการบันทึก **ทุกธุรกรรมต้องผ่านการยืนยันตัวตนสมาชิก (ชื่อ-นามสกุล + เลขสมาชิก, ถามครั้งเดียวแล้วจำไว้ถาวร) และมีรูปหรือไฟล์ PDF ของสลิปการโอนเงินก่อนจะบันทึกจริงเสมอ — ธุรกรรมชำระหนี้ต้องระบุประเภทเงินกู้เพิ่มด้วย ธุรกรรมฝากเงินต้องระบุเลขที่บัญชีที่จะฝากเพิ่มด้วย ถ้าชื่อในสลิปไม่ตรงกับชื่อสมาชิกที่ลงทะเบียนไว้ ต้องให้สมาชิกยืนยันก่อนด้วย** คุณไม่ต้องตัดสินใจเองว่าต้องขอข้อมูลอะไรต่อ ระบบจะตรวจสอบให้อัตโนมัติหลังจากเรียก tool แล้วบอกกลับมาว่ายังขาดอะไร ให้ทำตามนั้น
 2. เมื่อผู้ใช้ให้ชื่อ-นามสกุลและเลขสมาชิก (ไม่ว่าจะเสนอเองหรือตอบคำถามที่ถามไป) ให้เรียก submit_member_info
@@ -427,6 +461,7 @@ ${knowledgeText}
 11. เมื่อผู้ใช้ขอแบบฟอร์ม/เอกสารของสหกรณ์ (เช่น แบบฟอร์มเปลี่ยนแปลงคนค้ำประกัน, ใบสมัครสมาชิก, แบบฟอร์ม สสค./สสอค./สส.ชสอ./สส.สก./สส.สท.) **ให้แนะนำให้ติดต่อขอรับแบบฟอร์มที่สำนักงานสหกรณ์โดยตรงทางโทรศัพท์/อีเมลตามข้อมูลติดต่อด้านบน ไม่ต้องเรียก tool ใดๆ และห้ามพิมพ์ลิงก์เว็บไซต์แบบเต็มเด็ดขาดตามกฎด้านบน**
 12. เมื่อผู้ใช้ถามคำถามความรู้ทั่วไปเกี่ยวกับการเงิน (เช่น วิธีลงทุน, หลักการกู้ยืมทั่วไป) ที่ไม่เกี่ยวกับข้อมูลของสหกรณ์นี้โดยเฉพาะและไม่เกี่ยวกับข้อมูลส่วนตัวของเขา ให้ตอบด้วยความรู้ทั่วไปโดยตรง ไม่ต้องเรียกเครื่องมือใดๆ และควรระบุว่าเป็นข้อมูลทั่วไป ไม่ใช่คำแนะนำทางการเงินจากผู้เชี่ยวชาญที่มีใบอนุญาต
 13. เมื่อผู้ใช้ขอเปลี่ยน/ตั้งชื่อเล่นของตัวเอง (เช่น "เปลี่ยนชื่อเรียกฉันเป็น...", "ตั้งชื่อเล่นว่า...") ให้เรียก set_nickname ด้วยชื่อที่ผู้ใช้ระบุ แล้วตอบยืนยันสั้นๆ ห้ามเรียก tool นี้เพื่อเหตุผลอื่นนอกจากนี้เด็ดขาด (คนละเรื่องกับชื่อ-นามสกุลสมาชิกในข้อ 2)
+14. เมื่อผู้ใช้ถามหาเลขสมาชิกของตัวเอง (เช่น "เลขสมาชิกฉันเท่าไหร่", "ลืมเลขสมาชิก") **ห้ามบอกเลขสมาชิกทันทีเด็ดขาด แม้จะเคยรู้จากบทสนทนาก่อนหน้าหรือจากข้อ 2 ก็ตาม** ต้องขอข้อมูลยืนยันตัวตน 3 อย่างก่อนเสมอ: ชื่อ-นามสกุล, เลขประจำตัวประชาชน 13 หลัก, เบอร์โทรศัพท์ที่ลงทะเบียนไว้ แล้วเรียก submit_lookup_info ทุกครั้งที่ได้ข้อมูลใหม่แม้จะยังไม่ครบ ระบบจะตรวจสอบกับทะเบียนสมาชิกให้เองทันทีที่ครบทั้ง 3 อย่าง แล้วบอกผลกลับมาว่าตรงหรือไม่ตรง ให้ทำตามนั้น ห้ามเดาหรือบอกเลขสมาชิกเองโดยไม่ผ่านการยืนยันนี้เด็ดขาด
 
 กฎการตรวจสอบสลิป (ใช้ทุกครั้งที่มีไฟล์แนบเข้ามา ไม่ว่าจะเป็นรูปภาพหรือไฟล์ PDF และไม่ว่าจะอยู่ขั้นตอนไหนของการเก็บข้อมูล):
 
@@ -536,6 +571,36 @@ async function loadPendingServiceRequest(
   if (!pending) return null;
   if (Date.now() - pending.createdAt.getTime() > PENDING_TRANSACTION_EXPIRY_MS) {
     await prisma.pendingServiceRequest.delete({ where: { lineUserId } }).catch(() => {});
+    return null;
+  }
+  return pending;
+}
+
+// An in-progress "what's my member number" identity check — see
+// PendingMemberLookup in schema.prisma. Independent of the transaction and
+// service-request flows above; a member can ask this at any time.
+type PendingLookupInfo = {
+  fullName: string | null;
+  nationalId: string | null;
+  phone: string | null;
+};
+
+type LookupRequirement = "full_name" | "national_id" | "phone" | null;
+
+function computeLookupRequirement(pending: PendingLookupInfo): LookupRequirement {
+  if (!pending.fullName) return "full_name";
+  if (!pending.nationalId) return "national_id";
+  if (!pending.phone) return "phone";
+  return null;
+}
+
+async function loadPendingLookup(lineUserId: string): Promise<PendingLookupInfo | null> {
+  const pending = await prisma.pendingMemberLookup.findUnique({
+    where: { lineUserId },
+  });
+  if (!pending) return null;
+  if (Date.now() - pending.createdAt.getTime() > PENDING_TRANSACTION_EXPIRY_MS) {
+    await prisma.pendingMemberLookup.delete({ where: { lineUserId } }).catch(() => {});
     return null;
   }
   return pending;
@@ -1425,6 +1490,78 @@ async function setNickname(
   return `Nickname set to "${nickname}".`;
 }
 
+type SubmitLookupInfoInput = {
+  fullName?: unknown;
+  nationalId?: unknown;
+  phone?: unknown;
+};
+
+async function submitLookupInfo(
+  input: SubmitLookupInfoInput,
+  ctx: ToolContext
+): Promise<string> {
+  const fullName =
+    typeof input.fullName === "string" && input.fullName.trim() && !isPlaceholderText(input.fullName)
+      ? input.fullName.trim()
+      : null;
+  const nationalId =
+    typeof input.nationalId === "string" &&
+    input.nationalId.trim() &&
+    !isPlaceholderText(input.nationalId)
+      ? input.nationalId.trim()
+      : null;
+  const phone =
+    typeof input.phone === "string" && input.phone.trim() && !isPlaceholderText(input.phone)
+      ? input.phone.trim()
+      : null;
+
+  const pending = await prisma.pendingMemberLookup.upsert({
+    where: { lineUserId: ctx.lineUserId },
+    create: { lineUserId: ctx.lineUserId, fullName, nationalId, phone },
+    update: {
+      ...(fullName ? { fullName } : {}),
+      ...(nationalId ? { nationalId } : {}),
+      ...(phone ? { phone } : {}),
+    },
+  });
+
+  const next = computeLookupRequirement(pending);
+  if (next === "full_name") {
+    return "Still missing: the member's full name, needed to verify identity before revealing a member number. Ask for it next, in Thai. Do not reveal anything yet.";
+  }
+  if (next === "national_id") {
+    return "Still missing: the member's 13-digit national ID number, needed to verify identity before revealing a member number. Ask for it next, in Thai. Do not reveal anything yet.";
+  }
+  if (next === "phone") {
+    return "Still missing: the member's registered phone number, needed to verify identity before revealing a member number. Ask for it next, in Thai. Do not reveal anything yet.";
+  }
+
+  // All three collected — check against the roster in application code
+  // rather than a DB-level exact match, since a member's own typed
+  // national ID/phone formatting (dashes, spaces) won't necessarily match
+  // however the source spreadsheet happened to store it. The roster is
+  // small (~1,200 rows), so pulling it in full for an in-memory check is
+  // simpler and more robust than trying to normalize inside SQL.
+  const candidates = await prisma.memberRoster.findMany({
+    select: { memberNumber: true, memberName: true, nationalId: true, phone: true },
+  });
+  const match = candidates.find((roster) =>
+    matchesIdentity(roster, {
+      fullName: pending.fullName!,
+      nationalId: pending.nationalId!,
+      phone: pending.phone!,
+    })
+  );
+
+  await prisma.pendingMemberLookup.delete({ where: { lineUserId: ctx.lineUserId } }).catch(() => {});
+
+  if (!match) {
+    return "No roster record matched the identity info provided. Apologize to the user, in Thai, and tell them to contact the cooperative office directly to verify their identity and get their member number. Do not reveal which specific field (name/ID/phone) didn't match, and never guess or make up a member number.";
+  }
+
+  return `Verified: this member's เลขสมาชิก is ${match.memberNumber}. Tell them clearly, in Thai.`;
+}
+
 async function executeTool(
   name: string,
   input: unknown,
@@ -1462,6 +1599,9 @@ async function executeTool(
     if (name === "set_nickname") {
       return await setNickname(input as SetNicknameInput, ctx);
     }
+    if (name === "submit_lookup_info") {
+      return await submitLookupInfo(input as SubmitLookupInfoInput, ctx);
+    }
     if (name === "decline_unreadable_image") {
       const reason =
         typeof (input as { reason?: unknown })?.reason === "string"
@@ -1486,10 +1626,11 @@ export async function runFinanceAgent(
   slipImageHash: string | null = null,
   slipIsPdf: boolean = false
 ): Promise<FinanceAgentReply> {
-  const [lineUser, pending, pendingService, knowledgeText] = await Promise.all([
+  const [lineUser, pending, pendingService, pendingLookup, knowledgeText] = await Promise.all([
     loadLineUser(lineUserId),
     loadPending(lineUserId),
     loadPendingServiceRequest(lineUserId),
+    loadPendingLookup(lineUserId),
     getKnowledgeText(),
   ]);
 
@@ -1509,6 +1650,7 @@ export async function runFinanceAgent(
     lineUser,
     pending,
     pendingService,
+    pendingLookup,
     knowledgeText
   );
   // A cache breakpoint on the static base block caches everything before it
@@ -1539,6 +1681,10 @@ export async function runFinanceAgent(
     const next = pending ? computeNextRequirement(lineUser, pending) : null;
     const serviceNext =
       !pending && pendingService ? computeServiceRequirement(lineUser, pendingService) : null;
+    const lookupNext =
+      !pending && !pendingService && pendingLookup
+        ? computeLookupRequirement(pendingLookup)
+        : null;
     if (turn === 0 && next === "member_info" && !hasAttachmentContent(userContent)) {
       toolChoice = { type: "tool", name: "submit_member_info" };
     } else if (turn === 0 && next === "category" && !hasAttachmentContent(userContent)) {
@@ -1555,6 +1701,8 @@ export async function runFinanceAgent(
       toolChoice = { type: "tool", name: "submit_member_info" };
     } else if (turn === 0 && serviceNext === "phone" && !hasAttachmentContent(userContent)) {
       toolChoice = { type: "tool", name: "submit_contact_phone" };
+    } else if (turn === 0 && lookupNext !== null && !hasAttachmentContent(userContent)) {
+      toolChoice = { type: "tool", name: "submit_lookup_info" };
     } else if (turn === 0 && hasAttachmentContent(userContent)) {
       toolChoice = { type: "any" };
     }

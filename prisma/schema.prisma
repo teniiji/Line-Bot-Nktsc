@@ -147,6 +147,22 @@ model PendingServiceRequest {
   createdAt    DateTime @default(now())
 }
 
+// An in-progress "what's my member number" identity check — holds
+// whatever identifying info (full name, national ID, phone) the member
+// has supplied so far across separate stateless webhook calls, the same
+// way PendingTransaction/PendingServiceRequest do. Matched against
+// MemberRoster once all three are present (lib/memberLookup.ts); deleted
+// right after, whether the match succeeds or fails, since there's nothing
+// left to track afterward.
+model PendingMemberLookup {
+  id         String   @id @default(cuid())
+  lineUserId String   @unique
+  fullName   String?
+  nationalId String?
+  phone      String?
+  createdAt  DateTime @default(now())
+}
+
 // One row per LINE user who has ever messaged the bot, keyed by their LINE
 // userId. displayName is fetched from LINE's profile API the first time we
 // see a user (best-effort, may be null if that call fails); nickname is set
@@ -213,10 +229,19 @@ model MemberRoster {
   responsibleCode String?
   lineUserId   String?
   nickname     String?
+  // 13-digit เลขประจำตัวประชาชน and registered phone number, imported from
+  // columns F/G of the "สมาชิก_LINE_OA" sheet — used only to verify a
+  // member's identity when they ask the bot for their own เลขสมาชิก (see
+  // lib/memberLookup.ts), never shown or matched against for anything
+  // else. Not unique/required at the DB level since import data quality
+  // varies; a record missing either simply can't be used for lookup.
+  nationalId   String?
+  phone        String?
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
   @@index([lineUserId])
+  @@index([nationalId])
 }
 
 // One editable line of the agent's "ข้อมูลอ้างอิงของสหกรณ์" system-prompt
