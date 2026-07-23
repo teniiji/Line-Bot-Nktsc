@@ -6,6 +6,7 @@ import { Prisma } from "@prisma/client";
 import { put } from "@vercel/blob";
 import { lineClient, lineBlobClient } from "@/lib/lineClient";
 import { runFinanceAgent } from "@/lib/financeAgent";
+import { PENDING_TRANSACTION_EXPIRY_MS } from "@/lib/agent/state";
 import { ensureLineUser } from "@/lib/lineUsers";
 import { prisma } from "@/lib/prisma";
 
@@ -167,6 +168,18 @@ async function handleEvent(event: webhook.Event, origin: string): Promise<void> 
       .deleteMany({ where: { createdAt: { lt: cutoff } } })
       .catch((err) => console.error("[line/webhook] processed-event prune failed:", err));
   }
+
+  // In-flight member-number lookups hold a typed national ID, and
+  // loadPendingLookup's lazy expiry only deletes an expired row when that
+  // same member messages again — a lookup abandoned by someone who never
+  // returns would otherwise keep their national ID stored indefinitely.
+  // Prune every expired row on every event instead (fire-and-forget, never
+  // blocks handling): the table only ever holds the handful of lookups
+  // currently in progress, so this is a near-free delete.
+  const lookupCutoff = new Date(Date.now() - PENDING_TRANSACTION_EXPIRY_MS);
+  prisma.pendingMemberLookup
+    .deleteMany({ where: { createdAt: { lt: lookupCutoff } } })
+    .catch((err) => console.error("[line/webhook] pending-lookup prune failed:", err));
 
   const lineUserId = event.source.userId;
 
