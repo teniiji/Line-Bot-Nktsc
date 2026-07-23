@@ -292,6 +292,18 @@ export async function submitMemberInfo(
   if (isPlaceholderText(fullName) || isPlaceholderText(memberNumber)) {
     return "Error: fullName and memberNumber must be the member's actual name and number — never a placeholder like 'unknown' or '-'. If the user hasn't actually stated their real name and member number yet, ask them again, in Thai, instead of calling this tool.";
   }
+  // A message giving a name alongside a 13-digit all-numeric string is far
+  // more likely to be a เลขประจำตัวประชาชน (national ID) than a cooperative
+  // member number — real member numbers here run a handful of digits, never
+  // 13. Seen in production: a member answering the member-number-lookup
+  // flow's identity questions (name + national ID + phone) got misfiled
+  // through this tool instead, because that flow left no state behind for
+  // the model to recognize the reply as belonging to it (see
+  // submit_lookup_info's description). Reject deterministically rather than
+  // trust the model to keep telling the two flows apart.
+  if (/^\d{13}$/.test(memberNumber)) {
+    return "Error: this looks like a 13-digit เลขประจำตัวประชาชน (national ID number), not a เลขสมาชิก (member number) — cooperative member numbers are much shorter. If the member was actually trying to look up their own member number, use submit_lookup_info instead (it needs their name, national ID, and phone). If they really do have a member number, ask them to confirm it — don't save this value as-is.";
+  }
 
   // Verify the claimed member number against the imported roster.
   const roster = await prisma.memberRoster.findUnique({ where: { memberNumber } });
