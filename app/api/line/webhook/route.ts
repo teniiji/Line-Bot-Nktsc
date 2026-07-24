@@ -199,25 +199,15 @@ async function handleEvent(event: webhook.Event, origin: string): Promise<void> 
     return;
   }
 
-  // Staff-toggleable maintenance mode (dashboard > ตั้งค่าระบบ) — checked
-  // before any other work so a scheduled maintenance window doesn't burn a
-  // Claude call or write any pending state. Deliberately still runs the
-  // dedup/prune steps above it so a retried delivery during maintenance
-  // doesn't double-reply once messaging is re-enabled.
+  // Staff-toggleable (dashboard > ตั้งค่าระบบ) — checked before any other
+  // work so a scheduled window doesn't burn a Claude call or write any
+  // pending state. Deliberately still runs the dedup/prune steps above it
+  // so a retried delivery during the pause doesn't double-reply once
+  // messaging is re-enabled. Silent by design (no apology text) — this
+  // switch means staff are answering every member directly in chat.line.biz
+  // for the time being, so an automated reply would just talk over them.
   if (!(await isFeatureEnabled(MESSAGING_ENABLED))) {
-    try {
-      await lineClient.replyMessage({
-        replyToken: event.replyToken,
-        messages: [
-          {
-            type: "text",
-            text: "ขออภัยค่ะ ขณะนี้ระบบปิดปรับปรุงชั่วคราว กรุณาติดต่อสำนักงานสหกรณ์โดยตรงทางโทรศัพท์ หรือลองใหม่อีกครั้งภายหลังนะคะ",
-          },
-        ],
-      });
-    } catch (err) {
-      console.error("[line/webhook] LINE reply error (maintenance mode):", err);
-    }
+    console.log("[line/webhook] skipping reply — messaging paused for all members");
     return;
   }
 
