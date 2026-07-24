@@ -8,6 +8,7 @@ import ExpenseForm, { ExpenseFormData } from "@/components/ExpenseForm";
 import ExpenseFilters, { Filters } from "@/components/ExpenseFilters";
 import ExpenseList from "@/components/ExpenseList";
 import LineUsersPanel from "@/components/LineUsersPanel";
+import MemberContactPanel from "@/components/MemberContactPanel";
 import ServiceRequestsPanel from "@/components/ServiceRequestsPanel";
 import KnowledgePanel from "@/components/KnowledgePanel";
 import DepartmentContactsPanel from "@/components/DepartmentContactsPanel";
@@ -236,6 +237,7 @@ export default function Dashboard() {
             content: (
               <div className="space-y-6">
                 <LineUsersPanel />
+                <MemberContactPanel />
                 <TestDataCleanupPanel />
               </div>
             ),

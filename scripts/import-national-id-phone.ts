@@ -21,29 +21,13 @@
 import ExcelJS from "exceljs";
 import { PrismaClient } from "@prisma/client";
 import { cellText as cell } from "./excelUtils";
+import { parseNationalId, parsePhone } from "../lib/identityFormat";
 
 const prisma = new PrismaClient();
 
 const MEMBER_SHEET_NAME = "สมาชิก_LINE_OA";
 const NATIONAL_ID_COLUMN = 6; // F
 const PHONE_COLUMN = 7; // G
-
-function parseNationalId(raw: string | null): string | null {
-  if (!raw) return null;
-  const digits = raw.replace(/\D/g, "");
-  return digits.length === 13 ? digits : null;
-}
-
-// Excel/pandas round-tripping sometimes drops a phone number's leading
-// zero (stored as a plain number at some point) — a 9-digit result missing
-// only that leading zero is common enough to fix rather than discard.
-function parsePhone(raw: string | null): string | null {
-  if (!raw) return null;
-  const digits = raw.replace(/\D/g, "");
-  if (digits.length === 10) return digits;
-  if (digits.length === 9) return `0${digits}`;
-  return null;
-}
 
 async function main() {
   const filePath = process.argv[2];

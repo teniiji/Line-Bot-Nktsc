@@ -30,6 +30,15 @@ export interface LineUser {
   createdAt: string;
 }
 
+export interface MemberRosterEntry {
+  id: string;
+  memberNumber: string;
+  memberName: string;
+  unitName: string | null;
+  nationalId: string | null;
+  phone: string | null;
+}
+
 export interface ServiceRequestLogEntry {
   id: string;
   lineUserId: string;
