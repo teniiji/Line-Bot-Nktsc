@@ -15,9 +15,16 @@ interface ExpenseFiltersProps {
   onChange: (filters: Filters) => void;
 }
 
-const toIso = (d: Date) => d.toISOString().slice(0, 10);
+export const toIso = (d: Date) => d.toISOString().slice(0, 10);
 
 const DATE_PRESETS: { label: string; range: () => { from: string; to: string } }[] = [
+  {
+    label: "วันนี้",
+    range: () => {
+      const today = toIso(new Date());
+      return { from: today, to: today };
+    },
+  },
   {
     label: "เดือนนี้",
     range: () => {

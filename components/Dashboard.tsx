@@ -5,7 +5,7 @@ import { Expense, ExpenseSummary } from "@/lib/types";
 import { formatAmount } from "@/lib/format";
 import { downloadExpensesCsv } from "@/lib/csv";
 import ExpenseForm, { ExpenseFormData } from "@/components/ExpenseForm";
-import ExpenseFilters, { Filters } from "@/components/ExpenseFilters";
+import ExpenseFilters, { Filters, toIso } from "@/components/ExpenseFilters";
 import ExpenseList from "@/components/ExpenseList";
 import LineUsersPanel from "@/components/LineUsersPanel";
 import MemberContactPanel from "@/components/MemberContactPanel";
@@ -41,19 +41,19 @@ export default function Dashboard() {
   const [editingExpense, setEditingExpense] = useState<Expense | null>(null);
   const [pendingDelete, setPendingDelete] = useState<Expense | null>(null);
   const [pendingVerify, setPendingVerify] = useState<Expense | null>(null);
-  const [filters, setFilters] = useState<Filters>({
-    category: "All",
-    from: "",
-    to: "",
-    verified: "",
+  const [filters, setFilters] = useState<Filters>(() => {
+    const today = toIso(new Date());
+    return { category: "All", from: today, to: today, verified: "" };
   });
 
   const buildParams = useCallback(
-    (extra?: Record<string, string>) => {
+    (extra?: Record<string, string>, options?: { includeDate?: boolean }) => {
       const params = new URLSearchParams();
       if (filters.category !== "All") params.set("category", filters.category);
-      if (filters.from) params.set("from", filters.from);
-      if (filters.to) params.set("to", filters.to);
+      if (options?.includeDate !== false) {
+        if (filters.from) params.set("from", filters.from);
+        if (filters.to) params.set("to", filters.to);
+      }
       if (filters.verified) params.set("verified", filters.verified);
       if (extra) {
         for (const [key, value] of Object.entries(extra)) params.set(key, value);
@@ -66,6 +66,11 @@ export default function Dashboard() {
   // The list (current page only) and the summary (totals/charts over every
   // matching row) are separate, lightweight server-side queries instead of
   // fetching the entire filtered table and aggregating it in the browser.
+  // The summary cards intentionally ignore the date range specifically (still
+  // respect category/verified) — "ยอดรวมทั้งหมด"/"เดือนนี้"/the charts are
+  // meant to always show the true overall picture, not silently shrink to
+  // match whatever date range the list below happens to be scoped to (the
+  // list defaults to "today" — see filters' initial state).
   const fetchExpenses = useCallback(async () => {
     setLoading(true);
     const [listRes, summaryRes] = await Promise.all([
@@ -75,7 +80,7 @@ export default function Dashboard() {
           pageSize: String(PAGE_SIZE),
         }).toString()}`
       ),
-      fetch(`/api/expenses/summary?${buildParams().toString()}`),
+      fetch(`/api/expenses/summary?${buildParams(undefined, { includeDate: false }).toString()}`),
     ]);
     const listData = await listRes.json();
     const summaryData = await summaryRes.json();
