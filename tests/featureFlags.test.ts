@@ -1,0 +1,47 @@
+import { describe, expect, it } from "vitest";
+import {
+  DEFAULT_FLAGS,
+  departmentNotifyKey,
+  MESSAGING_ENABLED,
+  TRANSACTIONS_ENABLED,
+  SERVICE_REQUESTS_ENABLED,
+  MEMBER_LOOKUP_ENABLED,
+} from "../lib/featureFlags";
+import { DEPARTMENTS } from "../lib/departments";
+
+describe("departmentNotifyKey", () => {
+  it("prefixes the department name, including one containing a slash", () => {
+    expect(departmentNotifyKey("สินเชื่อ")).toBe("dept_notify_สินเชื่อ");
+    expect(departmentNotifyKey("บริหารสำนักงาน/ธุรการ")).toBe(
+      "dept_notify_บริหารสำนักงาน/ธุรการ"
+    );
+  });
+});
+
+describe("DEFAULT_FLAGS", () => {
+  it("has a unique key per entry (FeatureFlag.key is a DB unique column)", () => {
+    const keys = DEFAULT_FLAGS.map((f) => f.key);
+    expect(new Set(keys).size).toBe(keys.length);
+  });
+
+  it("includes all four global switches", () => {
+    const keys = DEFAULT_FLAGS.map((f) => f.key);
+    expect(keys).toContain(MESSAGING_ENABLED);
+    expect(keys).toContain(TRANSACTIONS_ENABLED);
+    expect(keys).toContain(SERVICE_REQUESTS_ENABLED);
+    expect(keys).toContain(MEMBER_LOOKUP_ENABLED);
+  });
+
+  it("includes exactly one notify flag per department in DEPARTMENTS", () => {
+    const keys = DEFAULT_FLAGS.map((f) => f.key);
+    for (const department of DEPARTMENTS) {
+      expect(keys).toContain(departmentNotifyKey(department));
+    }
+    const deptFlagCount = DEFAULT_FLAGS.filter((f) => f.key.startsWith("dept_notify_")).length;
+    expect(deptFlagCount).toBe(DEPARTMENTS.length);
+  });
+
+  it("defaults every switch to enabled (unchanged behavior right after deploy)", () => {
+    expect(DEFAULT_FLAGS.every((f) => f.enabled === true)).toBe(true);
+  });
+});

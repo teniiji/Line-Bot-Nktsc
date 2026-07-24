@@ -9,6 +9,7 @@ import ExpenseFilters, { Filters } from "@/components/ExpenseFilters";
 import ExpenseList from "@/components/ExpenseList";
 import LineUsersPanel from "@/components/LineUsersPanel";
 import MemberContactPanel from "@/components/MemberContactPanel";
+import FeatureFlagsPanel from "@/components/FeatureFlagsPanel";
 import ServiceRequestsPanel from "@/components/ServiceRequestsPanel";
 import KnowledgePanel from "@/components/KnowledgePanel";
 import DepartmentContactsPanel from "@/components/DepartmentContactsPanel";
@@ -241,6 +242,11 @@ export default function Dashboard() {
                 <TestDataCleanupPanel />
               </div>
             ),
+          },
+          {
+            id: "settings",
+            label: "ตั้งค่าระบบ",
+            content: <FeatureFlagsPanel />,
           },
         ]}
       />

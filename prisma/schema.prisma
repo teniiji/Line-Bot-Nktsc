@@ -260,14 +260,32 @@ model KnowledgeEntry {
   updatedAt DateTime @updatedAt
 }
 
+// Staff-toggleable on/off switches (lib/featureFlags.ts), editable from the
+// dashboard's "ตั้งค่าระบบ" tab without a code deploy — e.g. a maintenance
+// mode, pausing transaction logging during month-end close, or muting a
+// single department's push notifications. `key` is either one of a fixed
+// set of global switches, or `dept_notify_<department>` for a per-department
+// notification mute (see lib/featureFlags.ts's departmentNotifyKey). Absent
+// or unreadable rows are treated as enabled (fail open) — a flags outage
+// must never silently disable the bot.
+model FeatureFlag {
+  id        String   @id @default(cuid())
+  key       String   @unique
+  label     String
+  enabled   Boolean  @default(true)
+  updatedAt DateTime @updatedAt
+}
+
 // Audit log of every supporting-document service request the bot attempted
 // to forward to staff — written just before PendingServiceRequest is
 // cleared, which previously left no record of who asked for what, who it
 // went to, or whether the push succeeded. One row per attempt; status is
-// "forwarded" (push succeeded), "failed" (push errored), or
-// "unconfigured" (no forward target was set up). Member identity is
-// snapshotted here the same way Expense snapshots it, so the log stays
-// accurate if the member later changes their saved name.
+// "forwarded" (push succeeded), "failed" (push errored), "unconfigured" (no
+// forward target was set up), or "muted" (a staff-toggled FeatureFlag paused
+// that department's notifications — the request was still received and
+// logged, just not pushed). Member identity is snapshotted here the same
+// way Expense snapshots it, so the log stays accurate if the member later
+// changes their saved name.
 model ServiceRequestLog {
   id             String   @id @default(cuid())
   lineUserId     String

@@ -13,6 +13,12 @@ import { detectNamedDepartment } from "../departmentMatch";
 import { matchesIdentity } from "../memberLookup";
 import { classifyRecipient } from "../recipientCheck";
 import {
+  isFeatureEnabled,
+  TRANSACTIONS_ENABLED,
+  SERVICE_REQUESTS_ENABLED,
+  MEMBER_LOOKUP_ENABLED,
+} from "../featureFlags";
+import {
   loadLineUser,
   loadPending,
   loadPendingServiceRequest,
@@ -141,6 +147,12 @@ export async function reportTransaction(
   input: ReportTransactionInput,
   ctx: ToolContext
 ): Promise<string> {
+  // Staff-toggleable (dashboard > ตั้งค่าระบบ) — checked before touching any
+  // pending state so a slip sent while paused never gets half-recorded.
+  if (!(await isFeatureEnabled(TRANSACTIONS_ENABLED))) {
+    return "Error: transaction logging is temporarily paused by staff. Apologize to the user, in Thai, and tell them to try again later or contact the cooperative office directly — do not log anything.";
+  }
+
   const { category, amount, description, date, referenceNumber, senderName, recipientName } =
     input;
 
@@ -556,6 +568,12 @@ export async function flagSupportingDocument(
   input: FlagSupportingDocumentInput,
   ctx: ToolContext
 ): Promise<string> {
+  // Staff-toggleable (dashboard > ตั้งค่าระบบ) — checked before creating any
+  // pending state so a document sent while paused never starts a flow.
+  if (!(await isFeatureEnabled(SERVICE_REQUESTS_ENABLED))) {
+    return "Error: service requests are temporarily paused by staff. Apologize to the user, in Thai, and tell them to try again later or contact the cooperative office directly — do not start collecting any info for this request.";
+  }
+
   const documentType =
     typeof input.documentType === "string" &&
     DOCUMENT_TYPES.includes(input.documentType as (typeof DOCUMENT_TYPES)[number])
@@ -671,6 +689,13 @@ export async function requestStaffHelp(
   input: RequestStaffHelpInput,
   ctx: ToolContext
 ): Promise<string> {
+  // Staff-toggleable (dashboard > ตั้งค่าระบบ) — same switch as
+  // flagSupportingDocument, since this is the text-only entry point to the
+  // same service-request flow.
+  if (!(await isFeatureEnabled(SERVICE_REQUESTS_ENABLED))) {
+    return "Error: service requests are temporarily paused by staff. Apologize to the user, in Thai, and tell them to try again later or contact the cooperative office directly — do not start collecting any info for this request.";
+  }
+
   const purpose = typeof input.purpose === "string" ? input.purpose.trim() : "";
   if (!purpose) {
     return "Error: purpose must be a non-empty string.";
@@ -781,6 +806,12 @@ export async function submitLookupInfo(
   input: SubmitLookupInfoInput,
   ctx: ToolContext
 ): Promise<string> {
+  // Staff-toggleable (dashboard > ตั้งค่าระบบ) — checked before creating any
+  // pending state so this never half-collects identity info while paused.
+  if (!(await isFeatureEnabled(MEMBER_LOOKUP_ENABLED))) {
+    return "Error: member-number lookup is temporarily paused by staff. Apologize to the user, in Thai, and tell them to try again later or contact the cooperative office directly — do not ask for or store any identity info for this.";
+  }
+
   const fullName =
     typeof input.fullName === "string" && input.fullName.trim() && !isPlaceholderText(input.fullName)
       ? input.fullName.trim()
