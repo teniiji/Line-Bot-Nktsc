@@ -7,6 +7,7 @@ import { pickLoanForwardTarget } from "../loanRouting";
 import { pickDepartmentForwardTargets } from "../departmentRouting";
 import { getCategoryDepartment } from "../categoryDepartments";
 import { formatAmount } from "../format";
+import { NO_DOCUMENT } from "../documentTypes";
 import type { LineUserInfo, PendingServiceInfo } from "./types";
 
 // Picks where to forward, as one or more LINE user IDs (every non-loan
@@ -138,7 +139,11 @@ export async function forwardServiceRequest(
   const verifyMark = lineUser.verified
     ? "✅ ยืนยันตัวตนจากทะเบียน"
     : "⚠️ ยังไม่ยืนยัน (เลขสมาชิกไม่พบในทะเบียน — กรุณาตรวจสอบ)";
-  const text = `📋 คำขอจากสมาชิก (ผ่าน LINE Bot)\nเอกสารที่ส่งมา: ${pendingService.documentType}\nแผนก: ${pendingService.department}\nคำขอ: ${pendingService.requestType}\nชื่อ-นามสกุล: ${lineUser.fullName}\nเลขสมาชิก: ${lineUser.memberNumber}\nเบอร์โทรติดต่อกลับ: ${lineUser.phone ?? "-"}\nสถานะ: ${verifyMark}`;
+  const documentLine =
+    pendingService.documentType === NO_DOCUMENT
+      ? ""
+      : `เอกสารที่ส่งมา: ${pendingService.documentType}\n`;
+  const text = `📋 คำขอจากสมาชิก (ผ่าน LINE Bot)\n${documentLine}แผนก: ${pendingService.department}\nคำขอ: ${pendingService.requestType}\nชื่อ-นามสกุล: ${lineUser.fullName}\nเลขสมาชิก: ${lineUser.memberNumber}\nเบอร์โทรติดต่อกลับ: ${lineUser.phone ?? "-"}\nสถานะ: ${verifyMark}`;
 
   // imageUrl is the best-effort Blob backup of the document the member
   // sent (null if BLOB_READ_WRITE_TOKEN isn't configured). LINE's

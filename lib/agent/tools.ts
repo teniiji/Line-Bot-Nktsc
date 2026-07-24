@@ -188,6 +188,28 @@ export const tools: Anthropic.Tool[] = [
     },
   },
   {
+    name: "request_staff_help",
+    description:
+      "Call when the member has a request that needs cooperative staff to act on, but there is NO document to attach and none is needed — most commonly a forgotten app/system password or being unable to log in (ลืมรหัสผ่าน, เข้าแอปไม่ได้). Never attempt to reset a password or explain a self-service reset flow yourself — this bot has no such capability, and the cooperative's own process is for staff to reset it manually after confirming identity. Do not use this for a request that came with an attached document (use flag_supporting_document for those instead) or for anything already covered by a more specific tool (transaction logging, loan/rate questions answerable from the reference data). Starts the same identity + callback-phone collection flow as a document-based request, then forwards to the right department.",
+    input_schema: {
+      type: "object",
+      properties: {
+        purpose: {
+          type: "string",
+          description:
+            "The member's request, described in their own words or close to it (e.g. 'ลืมรหัสผ่านเข้าแอปไม่ได้').",
+        },
+        department: {
+          type: "string",
+          enum: [...DEPARTMENTS],
+          description:
+            "Which team should handle this. IMPORTANT: if the user's own wording names one of the department options directly, always use that named department. Otherwise use the topic-based guide: 'สารสนเทศ' for IT/app/system issues (รวมถึงลืมรหัสผ่าน/เข้าแอปไม่ได้); fall back to the same guide as submit_service_purpose for anything else that reaches this tool.",
+        },
+      },
+      required: ["purpose", "department"],
+    },
+  },
+  {
     name: "get_transaction_summary",
     description:
       "Look up totals from the user's own previously recorded transactions, optionally filtered by date range and/or category. Use this when the user asks about their own spending, debt, or savings history.",
