@@ -9,6 +9,7 @@ import { runFinanceAgent } from "@/lib/financeAgent";
 import { PENDING_TRANSACTION_EXPIRY_MS } from "@/lib/agent/state";
 import { ensureLineUser } from "@/lib/lineUsers";
 import { prisma } from "@/lib/prisma";
+import { isFeatureEnabled, MESSAGING_ENABLED } from "@/lib/featureFlags";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -182,6 +183,28 @@ async function handleEvent(event: webhook.Event, origin: string): Promise<void> 
     .catch((err) => console.error("[line/webhook] pending-lookup prune failed:", err));
 
   const lineUserId = event.source.userId;
+
+  // Staff-toggleable maintenance mode (dashboard > ตั้งค่าระบบ) — checked
+  // before any other work so a scheduled maintenance window doesn't burn a
+  // Claude call or write any pending state. Deliberately still runs the
+  // dedup/prune steps above it so a retried delivery during maintenance
+  // doesn't double-reply once messaging is re-enabled.
+  if (!(await isFeatureEnabled(MESSAGING_ENABLED))) {
+    try {
+      await lineClient.replyMessage({
+        replyToken: event.replyToken,
+        messages: [
+          {
+            type: "text",
+            text: "ขออภัยค่ะ ขณะนี้ระบบปิดปรับปรุงชั่วคราว กรุณาติดต่อสำนักงานสหกรณ์โดยตรงทางโทรศัพท์ หรือลองใหม่อีกครั้งภายหลังนะคะ",
+          },
+        ],
+      });
+    } catch (err) {
+      console.error("[line/webhook] LINE reply error (maintenance mode):", err);
+    }
+    return;
+  }
 
   // LINE's "file" message type covers any generic file upload (PDF, Word,
   // Excel, ...). Only PDFs are supported as slips/documents — anything else

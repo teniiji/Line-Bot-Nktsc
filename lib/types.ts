@@ -51,6 +51,14 @@ export interface ServiceRequestLogEntry {
   department: string | null;
   imageUrl: string | null;
   forwardedTo: string | null;
-  status: "forwarded" | "failed" | "unconfigured";
+  status: "forwarded" | "failed" | "unconfigured" | "muted";
   createdAt: string;
+}
+
+export interface FeatureFlagEntry {
+  id: string;
+  key: string;
+  label: string;
+  enabled: boolean;
+  updatedAt: string;
 }

@@ -8,6 +8,7 @@ import { pickDepartmentForwardTargets } from "../departmentRouting";
 import { getCategoryDepartment } from "../categoryDepartments";
 import { formatAmount } from "../format";
 import { NO_DOCUMENT } from "../documentTypes";
+import { isFeatureEnabled, departmentNotifyKey } from "../featureFlags";
 import type { LineUserInfo, PendingServiceInfo } from "./types";
 
 // Picks where to forward, as one or more LINE user IDs (every non-loan
@@ -90,7 +91,7 @@ export async function logServiceRequest(
   lineUserId: string,
   pendingService: PendingServiceInfo,
   lineUser: LineUserInfo,
-  status: "forwarded" | "failed" | "unconfigured",
+  status: "forwarded" | "failed" | "unconfigured" | "muted",
   forwardedTo: string | null
 ): Promise<void> {
   try {
@@ -125,6 +126,19 @@ export async function forwardServiceRequest(
   pendingService: PendingServiceInfo,
   lineUser: LineUserInfo
 ): Promise<string> {
+  // Staff-toggleable per-department mute (dashboard > ตั้งค่าระบบ) — the
+  // request is still logged (so nothing is lost), just not pushed. Checked
+  // before resolveForwardTargets so a muted department's contacts aren't
+  // even looked up.
+  if (
+    pendingService.department &&
+    !(await isFeatureEnabled(departmentNotifyKey(pendingService.department)))
+  ) {
+    await logServiceRequest(lineUserId, pendingService, lineUser, "muted", null);
+    await prisma.pendingServiceRequest.delete({ where: { lineUserId } }).catch(() => {});
+    return "The request was recorded, but staff have temporarily paused push notifications for this department (a deliberate setting, not a configuration problem). Tell the user, in Thai, that their request has been received and staff will follow up — do not mention the pause itself.";
+  }
+
   const targetIds = await resolveForwardTargets(lineUserId, pendingService.department);
   if (targetIds.length === 0) {
     await logServiceRequest(lineUserId, pendingService, lineUser, "unconfigured", null);
@@ -215,6 +229,18 @@ export async function notifyTransactionForward(
 ): Promise<void> {
   try {
     const department = getCategoryDepartment(expense.category);
+
+    // Staff-toggleable per-department mute (dashboard > ตั้งค่าระบบ) — the
+    // transaction itself is already logged by the time this runs, so muting
+    // only skips the push notification, never the record.
+    if (department && !(await isFeatureEnabled(departmentNotifyKey(department)))) {
+      await prisma.expense.update({
+        where: { id: expense.id },
+        data: { forwardStatus: "muted", forwardedTo: null },
+      });
+      return;
+    }
+
     const targetIds = await resolveForwardTargets(lineUserId, department);
     if (targetIds.length === 0) {
       await prisma.expense.update({

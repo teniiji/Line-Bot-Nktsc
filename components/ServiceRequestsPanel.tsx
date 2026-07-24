@@ -10,12 +10,14 @@ const STATUS_LABELS: Record<ServiceRequestLogEntry["status"], string> = {
   forwarded: "ส่งต่อสำเร็จ",
   failed: "ส่งต่อไม่สำเร็จ",
   unconfigured: "ยังไม่ตั้งค่าผู้รับ",
+  muted: "ปิดแจ้งเตือนแผนกนี้ไว้",
 };
 
 const STATUS_STYLES: Record<ServiceRequestLogEntry["status"], string> = {
   forwarded: "bg-green-50 text-green-700 border-green-200",
   failed: "bg-red-50 text-red-700 border-red-200",
   unconfigured: "bg-amber-50 text-amber-700 border-amber-200",
+  muted: "bg-slate-100 text-slate-600 border-slate-200",
 };
 
 const formatDateTime = (iso: string) =>
@@ -89,6 +91,7 @@ export default function ServiceRequestsPanel() {
           <option value="forwarded">ส่งต่อสำเร็จ</option>
           <option value="failed">ส่งต่อไม่สำเร็จ</option>
           <option value="unconfigured">ยังไม่ตั้งค่าผู้รับ</option>
+          <option value="muted">ปิดแจ้งเตือนแผนกนี้ไว้</option>
         </select>
       </div>
 
