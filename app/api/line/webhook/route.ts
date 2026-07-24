@@ -184,6 +184,21 @@ async function handleEvent(event: webhook.Event, origin: string): Promise<void> 
 
   const lineUserId = event.source.userId;
 
+  // Staff-set per-member pause (dashboard > สมาชิก LINE) — for when staff
+  // are handling this specific member's conversation manually in
+  // chat.line.biz and don't want the bot replying at all, not even a
+  // maintenance-mode apology (that would talk over what staff are typing).
+  // Checked before the global maintenance-mode switch since it's more
+  // specific to this one conversation.
+  const pausedUser = await prisma.lineUser.findUnique({
+    where: { id: lineUserId },
+    select: { botPaused: true },
+  });
+  if (pausedUser?.botPaused) {
+    console.log(`[line/webhook] skipping reply — bot paused for this member`);
+    return;
+  }
+
   // Staff-toggleable maintenance mode (dashboard > ตั้งค่าระบบ) — checked
   // before any other work so a scheduled maintenance window doesn't burn a
   // Claude call or write any pending state. Deliberately still runs the

@@ -34,7 +34,7 @@ export async function GET(request: NextRequest) {
     prisma.lineUser.findMany({
       where,
       orderBy: { createdAt: "desc" },
-      select: { id: true, displayName: true, nickname: true, createdAt: true },
+      select: { id: true, displayName: true, nickname: true, botPaused: true, createdAt: true },
       skip: (page - 1) * pageSize,
       take: pageSize,
     }),
