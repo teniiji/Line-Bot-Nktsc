@@ -18,7 +18,7 @@ export function departmentNotifyKey(department: string): string {
 export const DEFAULT_FLAGS: { key: string; label: string; enabled: boolean }[] = [
   {
     key: MESSAGING_ENABLED,
-    label: "รับข้อความจากสมาชิก (ปิด = โหมดปิดปรับปรุงระบบทั้งหมด)",
+    label: "รับข้อความจากสมาชิก (ปิด = บอทเงียบทั้งหมด ให้เจ้าหน้าที่ตอบเองผ่าน chat.line.biz)",
     enabled: true,
   },
   {
