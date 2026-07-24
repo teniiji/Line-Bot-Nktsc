@@ -89,6 +89,7 @@ npx prisma migrate deploy    # ตอนขึ้น Production
 npx tsx scripts/import-org-data.ts <path-to-file.xlsx>              # นำเข้าสมาชิก/หน่วยงาน (รวมรหัสผู้รับผิดชอบจากคอลัมน์ H, เลขบัตรประชาชนจากคอลัมน์ F, เบอร์โทรจากคอลัมน์ G)
 npx tsx scripts/import-responsible-contacts.ts <path-to-file.xlsx>  # นำเข้ารหัส -> LINE UserId ผู้รับผิดชอบ (วิธีจับคู่หลัก)
 npx tsx scripts/import-loan-contacts.ts <path-to-file.xlsx>         # นำเข้าผู้รับผิดชอบตามชื่อหน่วยงาน (fallback สำรอง)
+npx tsx scripts/import-national-id-phone.ts <path-to-file.xlsx>     # เติมเลขบัตรประชาชน/เบอร์โทรให้สมาชิกที่มีอยู่แล้วเท่านั้น (คอลัมน์ F/G) — ใช้เมื่อไฟล์หลักยังไม่มี 2 คอลัมน์นี้ตอน import-org-data.ts ครั้งแรก ไม่แตะ field อื่นเลย
 npx tsx scripts/inspect-responsible-codes.ts <path-to-file.xlsx>    # ตรวจโครงสร้างไฟล์ก่อน import จริง (read-only)
 
 # รันระบบและตรวจสอบ
