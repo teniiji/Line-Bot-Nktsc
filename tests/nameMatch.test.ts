@@ -34,4 +34,18 @@ describe("namesLikelyMatch", () => {
     expect(namesLikelyMatch("สมชาย ใจดี", "วิภาดา ภูริ่งพลอย")).toBe(false);
     expect(namesLikelyMatch("John Smith", "Jane Doe")).toBe(false);
   });
+
+  it("matches when the slip masks the surname but the given name matches", () => {
+    expect(namesLikelyMatch("ศักดิ์สิทธิ์ โคตรวันดี", "ศักดิ์สิทธิ์ ค***")).toBe(true);
+    expect(namesLikelyMatch("นายศักดิ์สิทธิ์ โคตรวันดี", "ศักดิ์สิทธิ์ ค.")).toBe(true);
+    expect(namesLikelyMatch("สมชาย ใจดี", "สมชาย xx")).toBe(true);
+  });
+
+  it("still flags a mismatch when the given name differs, even with a masked surname", () => {
+    expect(namesLikelyMatch("สมชาย ใจดี", "วิภาดา ภ***")).toBe(false);
+  });
+
+  it("still flags a mismatch when the surname genuinely differs and isn't masked", () => {
+    expect(namesLikelyMatch("สมชาย ใจดี", "สมชาย รักชาติ")).toBe(false);
+  });
 });
