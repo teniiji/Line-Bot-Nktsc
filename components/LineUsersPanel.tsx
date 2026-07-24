@@ -16,6 +16,7 @@ export default function LineUsersPanel() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editValue, setEditValue] = useState("");
   const [saving, setSaving] = useState(false);
+  const [togglingId, setTogglingId] = useState<string | null>(null);
 
   // Debounce the search box so every keystroke doesn't fire a request —
   // commits to `search` (which actually triggers the fetch) 300ms after
@@ -78,10 +79,34 @@ export default function LineUsersPanel() {
     }
   };
 
+  const togglePause = async (id: string, next: boolean) => {
+    setTogglingId(id);
+    const previous = users;
+    setUsers((prev) => prev.map((u) => (u.id === id ? { ...u, botPaused: next } : u)));
+    try {
+      const res = await fetch(`/api/line-users/${id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ botPaused: next }),
+      });
+      if (!res.ok) {
+        setUsers(previous);
+      }
+    } finally {
+      setTogglingId(null);
+    }
+  };
+
   return (
     <div className="bg-white rounded-lg shadow">
       <div className="flex items-center justify-between gap-3 px-4 py-3 border-b border-slate-100">
-        <h2 className="font-semibold">สมาชิกที่เคยทักบอท (LINE)</h2>
+        <div>
+          <h2 className="font-semibold">สมาชิกที่เคยทักบอท (LINE)</h2>
+          <p className="text-xs text-slate-500 mt-1">
+            ปิด "บอทตอบอัตโนมัติ" ของคนใดคนหนึ่งได้ เวลาเจ้าหน้าที่กำลังคุยกับสมาชิกคนนั้นเองใน
+            chat.line.biz — บอทจะไม่ตอบข้อความจากคนนี้เลย (ไม่กระทบสมาชิกคนอื่น)
+          </p>
+        </div>
         <input
           type="text"
           value={searchInput}
@@ -101,12 +126,13 @@ export default function LineUsersPanel() {
         </p>
       ) : (
         <div className="overflow-x-auto">
-          <table className="w-full text-sm min-w-[560px]">
+          <table className="w-full text-sm min-w-[680px]">
             <thead className="bg-slate-100 text-slate-600 text-left">
               <tr>
                 <th className="px-4 py-2">LINE User ID</th>
                 <th className="px-4 py-2">ชื่อที่แสดงใน LINE</th>
                 <th className="px-4 py-2">ชื่อเล่น</th>
+                <th className="px-4 py-2">บอทตอบอัตโนมัติ</th>
                 <th className="px-4 py-2"></th>
               </tr>
             </thead>
@@ -132,6 +158,25 @@ export default function LineUsersPanel() {
                     ) : (
                       user.nickname ?? "—"
                     )}
+                  </td>
+                  <td className="px-4 py-2">
+                    <button
+                      type="button"
+                      role="switch"
+                      aria-checked={!user.botPaused}
+                      aria-label="บอทตอบอัตโนมัติ"
+                      disabled={togglingId === user.id}
+                      onClick={() => togglePause(user.id, !user.botPaused)}
+                      className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors disabled:opacity-50 ${
+                        user.botPaused ? "bg-slate-300" : "bg-green-600"
+                      }`}
+                    >
+                      <span
+                        className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                          user.botPaused ? "translate-x-1" : "translate-x-6"
+                        }`}
+                      />
+                    </button>
                   </td>
                   <td className="px-4 py-2 whitespace-nowrap text-right space-x-3">
                     {editingId === user.id ? (

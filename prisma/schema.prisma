@@ -184,6 +184,13 @@ model LineUser {
   fullName     String?
   memberNumber String?
   phone        String?
+  // Staff-set per-member pause (dashboard > สมาชิก LINE) — when true, the
+  // webhook skips replying to this LINE user entirely (no automated reply
+  // of any kind, not even a maintenance-mode apology), for when staff are
+  // handling that specific member's conversation manually in chat.line.biz
+  // and don't want the bot talking over them. Independent of
+  // FeatureFlag.messaging_enabled, which pauses everyone at once.
+  botPaused    Boolean  @default(false)
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 }

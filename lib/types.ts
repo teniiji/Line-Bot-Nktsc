@@ -27,6 +27,7 @@ export interface LineUser {
   id: string;
   displayName: string | null;
   nickname: string | null;
+  botPaused: boolean;
   createdAt: string;
 }
 
