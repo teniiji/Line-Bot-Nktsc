@@ -18,3 +18,19 @@ describe("DEFAULT_KNOWLEDGE contact entry", () => {
     expect(contact?.content).not.toContain("nktsc.org");
   });
 });
+
+describe("DEFAULT_KNOWLEDGE", () => {
+  it("has a unique key per entry (KnowledgeEntry.key is a DB unique column)", () => {
+    const keys = DEFAULT_KNOWLEDGE.map((e) => e.key);
+    expect(new Set(keys).size).toBe(keys.length);
+  });
+
+  it("includes the mai-dai payment and loan eligibility facts pulled from the LINE OA FAQ", () => {
+    const maiDai = DEFAULT_KNOWLEDGE.find((e) => e.key === "mai_dai_payment");
+    expect(maiDai?.content).toContain("413-1-00127-6");
+    expect(maiDai?.content).toContain("447-0-32262-8");
+
+    const loanEligibility = DEFAULT_KNOWLEDGE.find((e) => e.key === "loan_eligibility");
+    expect(loanEligibility?.content).toContain("เงินเดือนคงเหลือ");
+  });
+});

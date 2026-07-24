@@ -4,7 +4,7 @@ import { Prisma } from "@prisma/client";
 import { prisma } from "../prisma";
 import { CATEGORIES } from "../categories";
 import { LOAN_TYPES } from "../loanTypes";
-import { DOCUMENT_TYPES } from "../documentTypes";
+import { DOCUMENT_TYPES, NO_DOCUMENT } from "../documentTypes";
 import { DEPARTMENTS } from "../departments";
 import { formatAmount } from "../format";
 import { isPlaceholderText } from "../placeholderText";
@@ -21,7 +21,13 @@ import {
   computeLookupRequirement,
 } from "./state";
 import { forwardServiceRequest, notifyTransactionForward } from "./forwarding";
-import type { LineUserInfo, PendingInfo, Requirement, ToolContext } from "./types";
+import type {
+  LineUserInfo,
+  PendingInfo,
+  PendingServiceInfo,
+  Requirement,
+  ToolContext,
+} from "./types";
 
 // Creates the Expense row from a now-complete pending transaction plus the
 // member's saved identity, then clears the pending record. Shared by every
@@ -581,6 +587,37 @@ export async function flagSupportingDocument(
 }
 
 
+// Shared by every tool handler that might supply the last missing piece of
+// a service request (purpose+department, member info, or phone) — checks
+// what's still needed and either asks for it or forwards. Both the
+// document-triggered flow (submitServicePurpose) and the text-only flow
+// (requestStaffHelp) reach this once purpose+department are known.
+async function advanceServiceRequest(
+  lineUserId: string,
+  pendingService: PendingServiceInfo
+): Promise<string> {
+  const lineUser = await loadLineUser(lineUserId);
+  const next = computeServiceRequirement(lineUser, pendingService);
+  if (next === "member_info") {
+    return "Still missing: member full name and member number, needed to forward this request. Ask the user for their ชื่อ-นามสกุล and เลขสมาชิก next, in Thai.";
+  }
+  if (next === "phone") {
+    return "Still missing: a callback phone number for this request, needed to forward it. Ask the user next, in Thai.";
+  }
+  return await forwardServiceRequest(lineUserId, pendingService, lineUser as LineUserInfo);
+}
+
+
+// A department the user names outright in their own words is a stronger
+// signal than the model's topic-based guess — override rather than just
+// instructing the model to prefer it, since that instruction alone isn't
+// reliably followed in practice. Shared by submitServicePurpose and
+// requestStaffHelp.
+function resolveDepartment(purpose: string, modelDepartment: string): string {
+  return detectNamedDepartment(purpose) ?? modelDepartment;
+}
+
+
 export type SubmitServicePurposeInput = {
   purpose?: unknown;
   department?: unknown;
@@ -603,11 +640,7 @@ export async function submitServicePurpose(
   if (!modelDepartment) {
     return `Error: department must be one of ${DEPARTMENTS.join(", ")}.`;
   }
-  // A department the user names outright in their own words is a stronger
-  // signal than the model's topic-based guess — override rather than just
-  // instructing the model to prefer it, since that instruction alone isn't
-  // reliably followed in practice.
-  const department = detectNamedDepartment(purpose) ?? modelDepartment;
+  const department = resolveDepartment(purpose, modelDepartment);
 
   const pendingService = await loadPendingServiceRequest(ctx.lineUserId);
   if (!pendingService) {
@@ -619,15 +652,60 @@ export async function submitServicePurpose(
     data: { requestType: purpose, department, createdAt: new Date() },
   });
 
-  const lineUser = await loadLineUser(ctx.lineUserId);
-  const next = computeServiceRequirement(lineUser, updated);
-  if (next === "member_info") {
-    return "Still missing: member full name and member number, needed to forward this request. Ask the user for their ชื่อ-นามสกุล and เลขสมาชิก next, in Thai.";
+  return await advanceServiceRequest(ctx.lineUserId, updated);
+}
+
+
+export type RequestStaffHelpInput = {
+  purpose?: unknown;
+  department?: unknown;
+};
+
+
+// Starts the same identity + callback-phone collection and forwarding flow
+// as submitServicePurpose, but for a request that has no document attached
+// at all (e.g. a forgotten password) — creates the PendingServiceRequest
+// row itself instead of requiring flag_supporting_document to have created
+// one first.
+export async function requestStaffHelp(
+  input: RequestStaffHelpInput,
+  ctx: ToolContext
+): Promise<string> {
+  const purpose = typeof input.purpose === "string" ? input.purpose.trim() : "";
+  if (!purpose) {
+    return "Error: purpose must be a non-empty string.";
   }
-  if (next === "phone") {
-    return "Still missing: a callback phone number for this request, needed to forward it. Ask the user next, in Thai.";
+  const modelDepartment =
+    typeof input.department === "string" &&
+    (DEPARTMENTS as readonly string[]).includes(input.department)
+      ? input.department
+      : null;
+  if (!modelDepartment) {
+    return `Error: department must be one of ${DEPARTMENTS.join(", ")}.`;
   }
-  return await forwardServiceRequest(ctx.lineUserId, updated, lineUser as LineUserInfo);
+  const department = resolveDepartment(purpose, modelDepartment);
+
+  const updated = await prisma.pendingServiceRequest.upsert({
+    where: { lineUserId: ctx.lineUserId },
+    create: {
+      lineUserId: ctx.lineUserId,
+      documentType: NO_DOCUMENT,
+      requestType: purpose,
+      department,
+      imageUrl: null,
+      imageIsPdf: false,
+    },
+    update: {
+      documentType: NO_DOCUMENT,
+      requestType: purpose,
+      department,
+      imageUrl: null,
+      imageIsPdf: false,
+      createdAt: new Date(),
+    },
+  });
+
+  return await advanceServiceRequest(ctx.lineUserId, updated);
 }
 
 
@@ -796,6 +874,9 @@ export async function executeTool(
     }
     if (name === "submit_service_purpose") {
       return await submitServicePurpose(input as SubmitServicePurposeInput, ctx);
+    }
+    if (name === "request_staff_help") {
+      return await requestStaffHelp(input as RequestStaffHelpInput, ctx);
     }
     if (name === "get_transaction_summary") {
       return await getTransactionSummary(input as SummaryInput, ctx.lineUserId);
