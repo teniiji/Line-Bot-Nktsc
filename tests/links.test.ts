@@ -37,4 +37,18 @@ describe("stripDisallowedLinks", () => {
     const text = "เว็บไซต์ www.nktscoop.com ค่ะ";
     expect(stripDisallowedLinks(text)).toBe(text);
   });
+
+  it("lets through a link whose host is in extraAllowedHosts", () => {
+    const text = "แบบฟอร์มอยู่ที่ https://drive.google.com/file/d/abc123 ค่ะ";
+    expect(stripDisallowedLinks(text, new Set(["drive.google.com"]))).toBe(text);
+  });
+
+  it("still strips links whose host is not in extraAllowedHosts", () => {
+    expect(
+      stripDisallowedLinks(
+        "ลิงก์ https://evil.example/x ค่ะ",
+        new Set(["drive.google.com"])
+      )
+    ).toBe("ลิงก์ [ลิงก์ถูกลบเพื่อความปลอดภัย] ค่ะ");
+  });
 });

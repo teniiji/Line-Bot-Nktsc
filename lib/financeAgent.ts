@@ -6,6 +6,7 @@
 import type Anthropic from "@anthropic-ai/sdk";
 import { anthropic } from "./anthropicClient";
 import { getKnowledgeText } from "./knowledge";
+import { getFormLinksData } from "./formLinks";
 import { stripDisallowedLinks } from "./links";
 import { tools } from "./agent/tools";
 import { buildSystemPrompt } from "./agent/prompts";
@@ -54,13 +55,15 @@ export async function runFinanceAgent(
   slipImageHash: string | null = null,
   slipIsPdf: boolean = false
 ): Promise<FinanceAgentReply> {
-  const [lineUser, pending, pendingService, pendingLookup, knowledgeText] = await Promise.all([
-    loadLineUser(lineUserId),
-    loadPending(lineUserId),
-    loadPendingServiceRequest(lineUserId),
-    loadPendingLookup(lineUserId),
-    getKnowledgeText(),
-  ]);
+  const [lineUser, pending, pendingService, pendingLookup, knowledgeText, formLinksData] =
+    await Promise.all([
+      loadLineUser(lineUserId),
+      loadPending(lineUserId),
+      loadPendingServiceRequest(lineUserId),
+      loadPendingLookup(lineUserId),
+      getKnowledgeText(),
+      getFormLinksData(),
+    ]);
 
   // The caller kicks off the Blob upload before calling this function but
   // doesn't await it, so it runs concurrently with the first Claude API
@@ -79,7 +82,8 @@ export async function runFinanceAgent(
     pending,
     pendingService,
     pendingLookup,
-    knowledgeText
+    knowledgeText,
+    formLinksData.text
   );
   // A cache breakpoint on the static base block caches everything before it
   // in the request (all tool definitions + this base system prompt), since
@@ -186,7 +190,10 @@ export async function runFinanceAgent(
         );
       }
       return {
-        text: stripDisallowedLinks(text || "ขอโทษค่ะ ไม่สามารถตอบได้ในตอนนี้"),
+        text: stripDisallowedLinks(
+          text || "ขอโทษค่ะ ไม่สามารถตอบได้ในตอนนี้",
+          formLinksData.hosts
+        ),
         quickReplies: await computeQuickReplies(lineUserId),
       };
     }
@@ -228,7 +235,8 @@ export async function runFinanceAgent(
   );
   return {
     text: stripDisallowedLinks(
-      finalText?.text.trim() || "ขอโทษค่ะ ดำเนินการไม่สำเร็จ ลองใหม่อีกครั้งนะคะ"
+      finalText?.text.trim() || "ขอโทษค่ะ ดำเนินการไม่สำเร็จ ลองใหม่อีกครั้งนะคะ",
+      formLinksData.hosts
     ),
     quickReplies: await computeQuickReplies(lineUserId),
   };

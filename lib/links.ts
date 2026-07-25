@@ -12,7 +12,16 @@
 // "www.nktscoop.com" here once that's verified.
 export const ALLOWED_LINK_HOSTS = new Set<string>([]);
 
-export function stripDisallowedLinks(text: string): string {
+// extraAllowedHosts lets a caller allow specific hosts for just this one
+// call — used for FormLink URLs (lib/formLinks.ts), which staff enter
+// themselves through the dashboard so the bot can share a form's direct
+// link. The FormLink API route (app/api/form-links) separately rejects
+// nktscoop.com/www.nktscoop.com at write time so staff can't reintroduce
+// the compromised domain here even by accident.
+export function stripDisallowedLinks(
+  text: string,
+  extraAllowedHosts: Set<string> = new Set()
+): string {
   return text.replace(/https?:\/\/[^\s<>()[\]{}"']+/gi, (url) => {
     let hostname: string;
     try {
@@ -20,7 +29,7 @@ export function stripDisallowedLinks(text: string): string {
     } catch {
       hostname = "";
     }
-    if (ALLOWED_LINK_HOSTS.has(hostname)) {
+    if (ALLOWED_LINK_HOSTS.has(hostname) || extraAllowedHosts.has(hostname)) {
       return url;
     }
     console.warn("[financeAgent] stripped disallowed link from reply:", url);

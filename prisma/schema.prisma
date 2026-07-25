@@ -267,6 +267,23 @@ model KnowledgeEntry {
   updatedAt DateTime @updatedAt
 }
 
+// Direct download link per form type (แบบฟอร์มกู้เงินสามัญ, สสค., ใบสมัคร
+// สมาชิก ฯลฯ), maintained by staff from the dashboard — starts empty (no
+// seed rows, since only staff have the real URLs). The bot's blanket rule
+// against printing full links (lib/agent/prompts.ts — added after LINE
+// rendered a gambling-site preview card for the cooperative's own,
+// since-expired domain) makes a narrow, explicit exception ONLY for URLs
+// staff have entered here, on the assumption staff won't reuse that
+// compromised domain. See lib/formLinks.ts.
+model FormLink {
+  id        String   @id @default(cuid())
+  key       String   @unique
+  label     String
+  url       String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
 // Staff-toggleable on/off switches (lib/featureFlags.ts), editable from the
 // dashboard's "ตั้งค่าระบบ" tab without a code deploy — e.g. a maintenance
 // mode, pausing transaction logging during month-end close, or muting a
