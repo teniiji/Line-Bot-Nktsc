@@ -12,6 +12,7 @@ import MemberContactPanel from "@/components/MemberContactPanel";
 import FeatureFlagsPanel from "@/components/FeatureFlagsPanel";
 import ServiceRequestsPanel from "@/components/ServiceRequestsPanel";
 import KnowledgePanel from "@/components/KnowledgePanel";
+import FormLinksPanel from "@/components/FormLinksPanel";
 import DepartmentContactsPanel from "@/components/DepartmentContactsPanel";
 import ResponsibleContactsPanel from "@/components/ResponsibleContactsPanel";
 import SummaryCards from "@/components/SummaryCards";
@@ -235,7 +236,12 @@ export default function Dashboard() {
           {
             id: "knowledge",
             label: "ฐานความรู้",
-            content: <KnowledgePanel />,
+            content: (
+              <div className="space-y-6">
+                <KnowledgePanel />
+                <FormLinksPanel />
+              </div>
+            ),
           },
           {
             id: "line-users",
