@@ -106,6 +106,7 @@ npx tsx scripts/import-loan-contacts.ts <path-to-file.xlsx>         # นำเ�
 npx tsx scripts/import-national-id-phone.ts <path-to-file.xlsx>     # เติมเลขบัตรประชาชน/เบอร์โทรให้สมาชิกที่มีอยู่แล้วเท่านั้น (คอลัมน์ F/G) — ใช้เมื่อไฟล์หลักยังไม่มี 2 คอลัมน์นี้ตอน import-org-data.ts ครั้งแรก ไม่แตะ field อื่นเลย
 npx tsx scripts/inspect-responsible-codes.ts <path-to-file.xlsx>    # ตรวจโครงสร้างไฟล์ก่อน import จริง (read-only)
 npx tsx scripts/import-form-links.ts <path-to-file.xlsx>            # นำเข้าลิงก์แบบฟอร์มเป็นชุด (คอลัมน์ ลำดับ/หมวดหมู่/ชื่อแบบฟอร์ม/ลิงก์ดาวน์โหลด) — key อิงเลขลำดับ ไม่ใช่ชื่อแบบฟอร์ม
+npx tsx scripts/import-line-nicknames.ts <path-to-file.xlsx>        # เติมชื่อเล่นให้ LineUser จากคอลัมน์ "Nickname (LINE OA)" ในสมาชิก_LINE_OA — อัปเดตเฉพาะคนที่เคยทักบอทแล้วเท่านั้น ไม่สร้างแถวใหม่
 
 # รันระบบและตรวจสอบ
 npm run dev                  # รัน Local server (ตั้ง Webhook ไปที่ /api/line/webhook)
