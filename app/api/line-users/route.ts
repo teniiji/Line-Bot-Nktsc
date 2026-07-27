@@ -20,6 +20,7 @@ export async function GET(request: NextRequest) {
           { displayName: { contains: search, mode: "insensitive" } },
           { nickname: { contains: search, mode: "insensitive" } },
           { id: { contains: search, mode: "insensitive" } },
+          { memberNumber: { contains: search, mode: "insensitive" } },
         ],
       }
     : {};
@@ -30,16 +31,45 @@ export async function GET(request: NextRequest) {
     Math.max(1, Number(searchParams.get("pageSize")) || DEFAULT_PAGE_SIZE)
   );
 
-  const [data, total] = await Promise.all([
+  const [rows, total] = await Promise.all([
     prisma.lineUser.findMany({
       where,
       orderBy: { createdAt: "desc" },
-      select: { id: true, displayName: true, nickname: true, botPaused: true, createdAt: true },
+      select: {
+        id: true,
+        displayName: true,
+        nickname: true,
+        fullName: true,
+        memberNumber: true,
+        botPaused: true,
+        createdAt: true,
+      },
       skip: (page - 1) * pageSize,
       take: pageSize,
     }),
     prisma.lineUser.count({ where }),
   ]);
+
+  // สังกัด (unitName) isn't stored on LineUser itself — MemberRoster is the
+  // canonical source, keyed by memberNumber (which LineUser only gets once
+  // a member has gone through report_transaction's identity step). One
+  // batched lookup for the whole page instead of N+1 findUnique calls.
+  const memberNumbers = rows
+    .map((r) => r.memberNumber)
+    .filter((n): n is string => n !== null);
+  const rosterEntries =
+    memberNumbers.length > 0
+      ? await prisma.memberRoster.findMany({
+          where: { memberNumber: { in: memberNumbers } },
+          select: { memberNumber: true, unitName: true },
+        })
+      : [];
+  const unitByMemberNumber = new Map(rosterEntries.map((r) => [r.memberNumber, r.unitName]));
+
+  const data = rows.map((r) => ({
+    ...r,
+    unitName: r.memberNumber ? unitByMemberNumber.get(r.memberNumber) ?? null : null,
+  }));
 
   return NextResponse.json({ data, total, page, pageSize });
 }
