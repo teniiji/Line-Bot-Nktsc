@@ -1,9 +1,11 @@
-// Blocked outright: the cooperative's own official domain, currently
-// suspected of serving different (gambling-spam) content to LINE's
-// link-preview fetcher than to a normal browser — see lib/links.ts. Staff
-// should host forms somewhere else (Google Drive, etc.) until that's
-// resolved. Shared by both app/api/form-links routes (create + update).
-export const BLOCKED_FORM_LINK_HOSTS = new Set(["nktscoop.com", "www.nktscoop.com"]);
+// Hosts blocked outright from FormLink URLs. Empty for now: nktscoop.com
+// (the cooperative's own domain) was blocked here after LINE's link-preview
+// fetcher rendered gambling-spam content for it (see lib/links.ts) — staff
+// have since confirmed that's resolved, so it's no longer listed. Kept as a
+// named set (mirroring lib/links.ts's ALLOWED_LINK_HOSTS pattern) so a
+// future domain can be blocked the same way without restructuring this
+// file. Shared by both app/api/form-links routes (create + update).
+export const BLOCKED_FORM_LINK_HOSTS = new Set<string>([]);
 
 // Returns an error message in Thai if the URL should be rejected, or null
 // if it's fine to save.
