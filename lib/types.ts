@@ -27,6 +27,15 @@ export interface LineUser {
   id: string;
   displayName: string | null;
   nickname: string | null;
+  // Set once a member has gone through report_transaction's identity step
+  // (submit_member_info) — null for anyone who has only ever asked a
+  // general question. unitName is never null on LineUser itself (it isn't
+  // a column there); the API joins it in from MemberRoster by
+  // memberNumber, so it's null both when memberNumber is unknown and when
+  // MemberRoster has no unitName recorded for that member.
+  fullName: string | null;
+  memberNumber: string | null;
+  unitName: string | null;
   botPaused: boolean;
   createdAt: string;
 }

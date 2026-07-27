@@ -72,7 +72,11 @@ export default function LineUsersPanel() {
       });
       if (res.ok) {
         const updated: LineUser = await res.json();
-        setUsers((prev) => prev.map((u) => (u.id === id ? updated : u)));
+        // Spread onto the existing row rather than replacing it — the PUT
+        // response doesn't include unitName (it's joined in from
+        // MemberRoster by the GET route, not a LineUser column), so a
+        // full replace would blank it out until the next page refetch.
+        setUsers((prev) => prev.map((u) => (u.id === id ? { ...u, ...updated } : u)));
       }
     } finally {
       setSaving(false);
@@ -114,14 +118,15 @@ export default function LineUsersPanel() {
           <h2 className="font-semibold">สมาชิกที่เคยทักบอท (LINE)</h2>
           <p className="text-xs text-slate-500 mt-1">
             ปิด "บอทตอบอัตโนมัติ" ของคนใดคนหนึ่งได้ เวลาเจ้าหน้าที่กำลังคุยกับสมาชิกคนนั้นเองใน
-            chat.line.biz — บอทจะไม่ตอบข้อความจากคนนี้เลย (ไม่กระทบสมาชิกคนอื่น)
+            chat.line.biz — บอทจะไม่ตอบข้อความจากคนนี้เลย (ไม่กระทบสมาชิกคนอื่น) — "เลขสมาชิก"/"สังกัด"
+            จะขึ้นก็ต่อเมื่อคนนั้นเคยยืนยันตัวตนตอนบันทึกธุรกรรมแล้วเท่านั้น
           </p>
         </div>
         <input
           type="text"
           value={searchInput}
           onChange={(e) => setSearchInput(e.target.value)}
-          placeholder="ค้นหาชื่อ, ชื่อเล่น, หรือ LINE UserId"
+          placeholder="ค้นหาชื่อ, ชื่อเล่น, เลขสมาชิก, หรือ LINE UserId"
           className="text-sm border border-slate-300 rounded px-3 py-1.5 w-64"
         />
       </div>
@@ -136,12 +141,14 @@ export default function LineUsersPanel() {
         </p>
       ) : (
         <div className="overflow-x-auto">
-          <table className="w-full text-sm min-w-[680px]">
+          <table className="w-full text-sm min-w-[900px]">
             <thead className="bg-slate-100 text-slate-600 text-left">
               <tr>
                 <th className="px-4 py-2">LINE User ID</th>
                 <th className="px-4 py-2">ชื่อที่แสดงใน LINE</th>
                 <th className="px-4 py-2">ชื่อเล่น</th>
+                <th className="px-4 py-2">เลขสมาชิก</th>
+                <th className="px-4 py-2">สังกัด</th>
                 <th className="px-4 py-2">บอทตอบอัตโนมัติ</th>
                 <th className="px-4 py-2"></th>
               </tr>
@@ -169,6 +176,10 @@ export default function LineUsersPanel() {
                       user.nickname ?? "—"
                     )}
                   </td>
+                  <td className="px-4 py-2 whitespace-nowrap" title={user.fullName ?? undefined}>
+                    {user.memberNumber ?? "—"}
+                  </td>
+                  <td className="px-4 py-2">{user.unitName ?? "—"}</td>
                   <td className="px-4 py-2">
                     <button
                       type="button"

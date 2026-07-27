@@ -31,7 +31,15 @@ export async function PUT(
     const user = await prisma.lineUser.update({
       where: { id: params.id },
       data,
-      select: { id: true, displayName: true, nickname: true, botPaused: true, createdAt: true },
+      select: {
+        id: true,
+        displayName: true,
+        nickname: true,
+        fullName: true,
+        memberNumber: true,
+        botPaused: true,
+        createdAt: true,
+      },
     });
     return NextResponse.json(user);
   } catch {
