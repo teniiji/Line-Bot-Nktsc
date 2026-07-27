@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { LineUser } from "@/lib/types";
+import ConfirmDialog from "@/components/ConfirmDialog";
 
 const PAGE_SIZE = 20;
 const SEARCH_DEBOUNCE_MS = 300;
@@ -17,6 +18,7 @@ export default function LineUsersPanel() {
   const [editValue, setEditValue] = useState("");
   const [saving, setSaving] = useState(false);
   const [togglingId, setTogglingId] = useState<string | null>(null);
+  const [pendingDelete, setPendingDelete] = useState<LineUser | null>(null);
 
   // Debounce the search box so every keystroke doesn't fire a request —
   // commits to `search` (which actually triggers the fetch) 300ms after
@@ -95,6 +97,14 @@ export default function LineUsersPanel() {
     } finally {
       setTogglingId(null);
     }
+  };
+
+  const handleConfirmDelete = async () => {
+    if (!pendingDelete) return;
+    const id = pendingDelete.id;
+    setPendingDelete(null);
+    await fetch(`/api/line-users/${id}`, { method: "DELETE" });
+    await fetchUsers();
   };
 
   return (
@@ -197,12 +207,20 @@ export default function LineUsersPanel() {
                         </button>
                       </>
                     ) : (
-                      <button
-                        onClick={() => startEdit(user)}
-                        className="text-slate-600 hover:underline py-1"
-                      >
-                        แก้ไข
-                      </button>
+                      <>
+                        <button
+                          onClick={() => startEdit(user)}
+                          className="text-slate-600 hover:underline py-1"
+                        >
+                          แก้ไข
+                        </button>
+                        <button
+                          onClick={() => setPendingDelete(user)}
+                          className="text-red-600 hover:underline py-1"
+                        >
+                          ลบ
+                        </button>
+                      </>
                     )}
                   </td>
                 </tr>
@@ -235,6 +253,21 @@ export default function LineUsersPanel() {
           </button>
         </div>
       )}
+
+      <ConfirmDialog
+        open={pendingDelete !== null}
+        title="ลบสมาชิกคนนี้จากรายชื่อ?"
+        description={
+          pendingDelete
+            ? `จะลบแค่ชื่อเล่น/สถานะบอทตอบอัตโนมัติของ "${
+                pendingDelete.nickname || pendingDelete.displayName || pendingDelete.id
+              }" — ไม่กระทบประวัติธุรกรรม/คำขอบริการที่เคยบันทึกไว้ ถ้าทักบอทเข้ามาใหม่จะถูกเพิ่มกลับมาในรายชื่ออัตโนมัติ`
+            : undefined
+        }
+        confirmLabel="ลบ"
+        onConfirm={handleConfirmDelete}
+        onCancel={() => setPendingDelete(null)}
+      />
     </div>
   );
 }
