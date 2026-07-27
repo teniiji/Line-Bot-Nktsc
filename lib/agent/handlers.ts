@@ -24,7 +24,7 @@ import {
   loadPendingServiceRequest,
   computeNextRequirement,
   computeServiceRequirement,
-  computeLookupRequirement,
+  computeLookupMissingFields,
 } from "./state";
 import { forwardServiceRequest, notifyTransactionForward } from "./forwarding";
 import type {
@@ -837,15 +837,15 @@ export async function submitLookupInfo(
     },
   });
 
-  const next = computeLookupRequirement(pending);
-  if (next === "full_name") {
-    return "Still missing: the member's full name, needed to verify identity before revealing a member number. Ask for it next, in Thai. Do not reveal anything yet.";
-  }
-  if (next === "national_id") {
-    return "Still missing: the member's 13-digit national ID number, needed to verify identity before revealing a member number. Ask for it next, in Thai. Do not reveal anything yet.";
-  }
-  if (next === "phone") {
-    return "Still missing: the member's registered phone number, needed to verify identity before revealing a member number. Ask for it next, in Thai. Do not reveal anything yet.";
+  const missing = computeLookupMissingFields(pending);
+  if (missing.length > 0) {
+    const labels: Record<string, string> = {
+      full_name: "the member's full name",
+      national_id: "the member's 13-digit national ID number (เลขประจำตัวประชาชน)",
+      phone: "the member's registered phone number",
+    };
+    const missingList = missing.map((f) => labels[f as string]).join("; ");
+    return `Still missing: ${missingList} — needed to verify identity before revealing a member number. Ask for all of the still-missing item(s) together in ONE message, in Thai (do not ask one at a time across multiple messages if more than one is missing). Do not reveal anything yet.`;
   }
 
   // All three collected — check against the roster in application code

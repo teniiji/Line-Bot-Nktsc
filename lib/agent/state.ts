@@ -150,6 +150,20 @@ export function computeLookupRequirement(pending: PendingLookupInfo): LookupRequ
   return null;
 }
 
+// Unlike computeLookupRequirement (single next field, for forcing a tool
+// call), this returns every still-missing field so the caller can ask for
+// all of them together in one message instead of one at a time across
+// several round trips — this is the member-number lookup flow's own
+// deliberate one-question-per-turn pacing, which a member asked to have
+// collapsed into a single ask.
+export function computeLookupMissingFields(pending: PendingLookupInfo): LookupRequirement[] {
+  const missing: Exclude<LookupRequirement, null>[] = [];
+  if (!pending.fullName) missing.push("full_name");
+  if (!pending.nationalId) missing.push("national_id");
+  if (!pending.phone) missing.push("phone");
+  return missing;
+}
+
 
 export async function loadPendingLookup(lineUserId: string): Promise<PendingLookupInfo | null> {
   const pending = await prisma.pendingMemberLookup.findUnique({
