@@ -38,3 +38,23 @@ export async function PUT(
     return NextResponse.json({ error: "User not found" }, { status: 404 });
   }
 }
+
+// LineUser has no foreign-key relations pointing at it (Expense,
+// PendingTransaction, PendingServiceRequest, PendingMemberLookup all store
+// lineUserId as a plain string, not a Prisma relation — see the comment on
+// the LineUser model in prisma/schema.prisma) — deleting a row here only
+// removes this person's nickname/botPaused/displayName record. Their
+// transaction/service-request history stays intact (it's keyed to
+// MemberRoster, not LineUser), and if they message the bot again a fresh
+// row is created for them automatically like any new member.
+export async function DELETE(
+  _request: NextRequest,
+  { params }: { params: { id: string } }
+) {
+  try {
+    await prisma.lineUser.delete({ where: { id: params.id } });
+    return NextResponse.json({ ok: true });
+  } catch {
+    return NextResponse.json({ error: "User not found" }, { status: 404 });
+  }
+}
