@@ -41,6 +41,30 @@ export function computeNextRequirement(
 }
 
 
+// Thai label for a Requirement, shown to staff in the "รายการค้าง" dashboard
+// panel (components/PendingTransactionsPanel.tsx) so they can see at a
+// glance what each unfinished PendingTransaction row is waiting on, without
+// needing to read the bot's own conversational phrasing.
+export function describeRequirement(req: Requirement): string {
+  switch (req) {
+    case "member_info":
+      return "รอชื่อ-นามสกุลและเลขสมาชิก";
+    case "slip":
+      return "รอรูปสลิปการโอนเงิน";
+    case "category":
+      return "รอหมวดหมู่ธุรกรรม";
+    case "loan_type":
+      return "รอประเภทเงินกู้";
+    case "deposit_account":
+      return "รอเลขที่บัญชีที่จะฝาก";
+    case "confirm_sender_name":
+      return "รอยืนยันว่าชื่อในสลิปเป็นของสมาชิกเอง";
+    case null:
+      return "ครบถ้วนแล้ว รอบันทึก";
+  }
+}
+
+
 // After a reply is produced, re-derive what the bot is now waiting on and
 // offer tappable buttons for the pick-one steps (category, loan type) so
 // the member selects instead of typing a free-form answer the model then

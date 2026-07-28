@@ -16,6 +16,7 @@ import FormLinksPanel from "@/components/FormLinksPanel";
 import DepartmentContactsPanel from "@/components/DepartmentContactsPanel";
 import ResponsibleContactsPanel from "@/components/ResponsibleContactsPanel";
 import SummaryCards from "@/components/SummaryCards";
+import PendingTransactionsPanel from "@/components/PendingTransactionsPanel";
 import CategoryChart from "@/components/CategoryChart";
 import TrendChart from "@/components/TrendChart";
 import ConfirmDialog from "@/components/ConfirmDialog";
@@ -186,6 +187,8 @@ export default function Dashboard() {
             content: (
               <div className="space-y-6">
                 <SummaryCards summary={summary} />
+
+                <PendingTransactionsPanel />
 
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
                   <CategoryChart data={summary.byCategory} />
