@@ -7,6 +7,7 @@ import {
   computeServiceRequirement,
   computeLookupMissingFields,
 } from "./state";
+import type { QuestionRequirement } from "./state";
 import type {
   LineUserInfo,
   PendingInfo,
@@ -26,13 +27,14 @@ export function buildSystemPrompt(
   pendingService: PendingServiceInfo | null,
   pendingLookup: PendingLookupInfo | null,
   knowledgeText: string,
-  formLinksText: string
+  formLinksText: string,
+  disabledRequirements: ReadonlySet<QuestionRequirement> = new Set()
 ): { base: string; dynamic: string } {
   const today = new Date().toISOString().slice(0, 10);
 
   let flowNote = "";
   if (pending) {
-    const next = computeNextRequirement(lineUser, pending);
+    const next = computeNextRequirement(lineUser, pending, disabledRequirements);
     const amountNote = pending.amount ? formatAmount(pending.amount) : "ยังไม่ทราบยอด";
     if (next === "member_info") {
       flowNote = `\n\nหมายเหตุระบบ (สำคัญ): มีธุรกรรมค้างอยู่ (${pending.category ?? "ยังไม่ทราบหมวดหมู่"}, ${amountNote}) กำลังรอข้อมูลสมาชิก (ชื่อ-นามสกุล และเลขสมาชิก) — นี่คือครั้งแรกที่ผู้ใช้คนนี้ทำธุรกรรม ถ้าข้อความปัจจุบันของผู้ใช้เป็นข้อความธรรมดาที่มีชื่อ-นามสกุลและเลขสมาชิกอยู่แล้ว ให้เรียก submit_member_info ทันทีด้วยข้อมูลนั้น ถ้าเป็นข้อความธรรมดาที่ไม่มีชื่อ-นามสกุลและเลขสมาชิก ให้ถามชื่อ-นามสกุลและเลขสมาชิกอีกครั้งสั้นๆ โดยไม่ต้องเรียก tool ใดๆ **ถ้าข้อความนี้เป็นรูปภาพหรือไฟล์ PDF (สลิปใหม่) ให้ตรวจสอบตามกฎขั้นที่ 1-1.5 ด้านล่างตามปกติแล้วเรียก report_transaction เพื่อบันทึกข้อมูลสลิปไว้ก่อน (หรือ decline_unreadable_image ถ้าสลิปไม่ถูกต้องจริงๆ) — ระบบจะเก็บสลิปนี้ไว้และถามชื่อ-นามสกุล/เลขสมาชิกในข้อความถัดไปเอง ห้ามปฏิเสธสลิปที่ถูกต้องเพียงเพราะยังไม่มีข้อมูลสมาชิก**`;

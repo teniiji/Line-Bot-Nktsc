@@ -1,6 +1,10 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { computeNextRequirement, describeRequirement } from "@/lib/agent/state";
+import {
+  computeNextRequirement,
+  describeRequirement,
+  loadDisabledRequirements,
+} from "@/lib/agent/state";
 import type { LineUserInfo } from "@/lib/agent/types";
 
 export const dynamic = "force-dynamic";
@@ -14,9 +18,12 @@ export const dynamic = "force-dynamic";
 // lib/agent/state.ts's PENDING_TRANSACTION_EXPIRY_MS comment), so this is
 // also how staff notice and can manually clear a stuck one.
 export async function GET() {
-  const pending = await prisma.pendingTransaction.findMany({
-    orderBy: { createdAt: "desc" },
-  });
+  const [pending, disabled] = await Promise.all([
+    prisma.pendingTransaction.findMany({
+      orderBy: { createdAt: "desc" },
+    }),
+    loadDisabledRequirements(),
+  ]);
 
   // PendingTransaction.lineUserId isn't a Prisma relation (see the
   // LineUser model comment in schema.prisma) — batch-fetch the matching
@@ -56,7 +63,7 @@ export async function GET() {
       amount: p.amount,
       hasSlip: p.hasSlip,
       createdAt: p.createdAt,
-      waitingFor: describeRequirement(computeNextRequirement(identity, p)),
+      waitingFor: describeRequirement(computeNextRequirement(identity, p, disabled)),
     };
   });
 

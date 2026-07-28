@@ -11,6 +11,17 @@ export const TRANSACTIONS_ENABLED = "transactions_enabled";
 export const SERVICE_REQUESTS_ENABLED = "service_requests_enabled";
 export const MEMBER_LOOKUP_ENABLED = "member_lookup_enabled";
 
+// Per-question switches for the transaction-recording flow (lib/agent/state.ts's
+// computeNextRequirement) — lets staff skip a specific follow-up question
+// (e.g. stop asking for loan type) without turning off transaction logging
+// entirely via TRANSACTIONS_ENABLED. Disabling one just means that field is
+// never asked for and stays null on the recorded Expense.
+export const ASK_MEMBER_INFO_ENABLED = "ask_member_info_enabled";
+export const ASK_CATEGORY_ENABLED = "ask_category_enabled";
+export const ASK_LOAN_TYPE_ENABLED = "ask_loan_type_enabled";
+export const ASK_DEPOSIT_ACCOUNT_ENABLED = "ask_deposit_account_enabled";
+export const ASK_CONFIRM_SENDER_NAME_ENABLED = "ask_confirm_sender_name_enabled";
+
 export function departmentNotifyKey(department: string): string {
   return `dept_notify_${department}`;
 }
@@ -34,6 +45,31 @@ export const DEFAULT_FLAGS: { key: string; label: string; enabled: boolean }[] =
   {
     key: MEMBER_LOOKUP_ENABLED,
     label: "ค้นหาเลขสมาชิก (ยืนยันตัวตน)",
+    enabled: true,
+  },
+  {
+    key: ASK_MEMBER_INFO_ENABLED,
+    label: "ถามชื่อ-เลขสมาชิก ตอนบันทึกธุรกรรม (ปิด = บันทึกได้แม้ยังไม่ทราบตัวตน)",
+    enabled: true,
+  },
+  {
+    key: ASK_CATEGORY_ENABLED,
+    label: "ถามประเภทธุรกรรม ตอนสลิปไม่ได้ระบุจุดประสงค์",
+    enabled: true,
+  },
+  {
+    key: ASK_LOAN_TYPE_ENABLED,
+    label: "ถามประเภทเงินกู้ ตอนบันทึกชำระหนี้",
+    enabled: true,
+  },
+  {
+    key: ASK_DEPOSIT_ACCOUNT_ENABLED,
+    label: "ถามเลขที่บัญชี ตอนบันทึกฝากเงิน",
+    enabled: true,
+  },
+  {
+    key: ASK_CONFIRM_SENDER_NAME_ENABLED,
+    label: "ถามยืนยันชื่อผู้โอน ตอนชื่อในสลิปไม่ตรงกับชื่อสมาชิก",
     enabled: true,
   },
   ...DEPARTMENTS.map((department) => ({

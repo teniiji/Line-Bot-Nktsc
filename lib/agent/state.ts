@@ -7,6 +7,14 @@ import { prisma } from "../prisma";
 import { namesLikelyMatch } from "../nameMatch";
 import { CATEGORIES } from "../categories";
 import { LOAN_TYPES } from "../loanTypes";
+import {
+  isFeatureEnabled,
+  ASK_MEMBER_INFO_ENABLED,
+  ASK_CATEGORY_ENABLED,
+  ASK_LOAN_TYPE_ENABLED,
+  ASK_DEPOSIT_ACCOUNT_ENABLED,
+  ASK_CONFIRM_SENDER_NAME_ENABLED,
+} from "../featureFlags";
 import type {
   LineUserInfo,
   PendingInfo,
@@ -17,20 +25,67 @@ import type {
   LookupRequirement,
 } from "./types";
 
+// The subset of Requirement that's an actual staff-toggleable question —
+// "slip" is the entry point (no slip, no transaction at all) and null means
+// nothing's left to ask, so neither can be individually disabled.
+export type QuestionRequirement =
+  | "member_info"
+  | "category"
+  | "loan_type"
+  | "deposit_account"
+  | "confirm_sender_name";
+
+const REQUIREMENT_FLAG_KEYS: Record<QuestionRequirement, string> = {
+  member_info: ASK_MEMBER_INFO_ENABLED,
+  category: ASK_CATEGORY_ENABLED,
+  loan_type: ASK_LOAN_TYPE_ENABLED,
+  deposit_account: ASK_DEPOSIT_ACCOUNT_ENABLED,
+  confirm_sender_name: ASK_CONFIRM_SENDER_NAME_ENABLED,
+};
+
+// Reads the 5 ask_*_enabled switches (dashboard > ตั้งค่าระบบ) and returns
+// which questions staff have turned off — pass the result into
+// computeNextRequirement so a disabled question is skipped (transaction
+// finalizes without that field) instead of blocking forever.
+export async function loadDisabledRequirements(): Promise<Set<QuestionRequirement>> {
+  const entries = Object.entries(REQUIREMENT_FLAG_KEYS) as [QuestionRequirement, string][];
+  const enabledFlags = await Promise.all(entries.map(([, key]) => isFeatureEnabled(key)));
+  const disabled = new Set<QuestionRequirement>();
+  entries.forEach(([req], i) => {
+    if (!enabledFlags[i]) disabled.add(req);
+  });
+  return disabled;
+}
+
 export function computeNextRequirement(
   lineUser: LineUserInfo | null,
-  pending: PendingInfo
+  pending: PendingInfo,
+  disabled: ReadonlySet<QuestionRequirement> = new Set()
 ): Requirement {
-  if (!lineUser?.fullName || !lineUser?.memberNumber) return "member_info";
+  if (!disabled.has("member_info") && (!lineUser?.fullName || !lineUser?.memberNumber)) {
+    return "member_info";
+  }
   if (!pending.hasSlip) return "slip";
-  if (!pending.category) return "category";
-  if (pending.category === "ชำระหนี้" && !pending.loanType) return "loan_type";
-  if (pending.category === "ฝากเงิน" && !pending.depositAccountNumber) return "deposit_account";
+  if (!disabled.has("category") && !pending.category) return "category";
+  if (!disabled.has("loan_type") && pending.category === "ชำระหนี้" && !pending.loanType) {
+    return "loan_type";
+  }
+  if (
+    !disabled.has("deposit_account") &&
+    pending.category === "ฝากเงิน" &&
+    !pending.depositAccountNumber
+  ) {
+    return "deposit_account";
+  }
   // Comparison happens here rather than at submit time, since a slip can
   // arrive before member identity is known (see the "member_info" flowNote
   // branch below) — this re-evaluates fresh every turn once both are
-  // available, whichever order they were supplied in.
+  // available, whichever order they were supplied in. Guarded on
+  // lineUser?.fullName since member_info may have been skipped above while
+  // still disabled, leaving fullName null.
   if (
+    !disabled.has("confirm_sender_name") &&
+    lineUser?.fullName &&
     pending.slipSenderName &&
     !pending.senderNameConfirmed &&
     !namesLikelyMatch(lineUser.fullName, pending.slipSenderName)

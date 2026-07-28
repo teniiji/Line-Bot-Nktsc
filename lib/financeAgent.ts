@@ -15,6 +15,7 @@ import {
   loadPending,
   loadPendingServiceRequest,
   loadPendingLookup,
+  loadDisabledRequirements,
   computeNextRequirement,
   computeServiceRequirement,
   computeLookupRequirement,
@@ -55,7 +56,7 @@ export async function runFinanceAgent(
   slipImageHash: string | null = null,
   slipIsPdf: boolean = false
 ): Promise<FinanceAgentReply> {
-  const [lineUser, pending, pendingService, pendingLookup, knowledgeText, formLinksData] =
+  const [lineUser, pending, pendingService, pendingLookup, knowledgeText, formLinksData, disabledRequirements] =
     await Promise.all([
       loadLineUser(lineUserId),
       loadPending(lineUserId),
@@ -63,6 +64,7 @@ export async function runFinanceAgent(
       loadPendingLookup(lineUserId),
       getKnowledgeText(),
       getFormLinksData(),
+      loadDisabledRequirements(),
     ]);
 
   // The caller kicks off the Blob upload before calling this function but
@@ -83,7 +85,8 @@ export async function runFinanceAgent(
     pendingService,
     pendingLookup,
     knowledgeText,
-    formLinksData.text
+    formLinksData.text,
+    disabledRequirements
   );
   // A cache breakpoint on the static base block caches everything before it
   // in the request (all tool definitions + this base system prompt), since
@@ -110,7 +113,7 @@ export async function runFinanceAgent(
     // always need vision judgement (real slip vs. not), so those force
     // "any" tool rather than a single named one.
     let toolChoice: Anthropic.ToolChoice | undefined;
-    const next = pending ? computeNextRequirement(lineUser, pending) : null;
+    const next = pending ? computeNextRequirement(lineUser, pending, disabledRequirements) : null;
     const serviceNext =
       !pending && pendingService ? computeServiceRequirement(lineUser, pendingService) : null;
     const lookupNext =

@@ -6,6 +6,11 @@ import {
   TRANSACTIONS_ENABLED,
   SERVICE_REQUESTS_ENABLED,
   MEMBER_LOOKUP_ENABLED,
+  ASK_MEMBER_INFO_ENABLED,
+  ASK_CATEGORY_ENABLED,
+  ASK_LOAN_TYPE_ENABLED,
+  ASK_DEPOSIT_ACCOUNT_ENABLED,
+  ASK_CONFIRM_SENDER_NAME_ENABLED,
 } from "../lib/featureFlags";
 import { DEPARTMENTS } from "../lib/departments";
 
@@ -30,6 +35,15 @@ describe("DEFAULT_FLAGS", () => {
     expect(keys).toContain(TRANSACTIONS_ENABLED);
     expect(keys).toContain(SERVICE_REQUESTS_ENABLED);
     expect(keys).toContain(MEMBER_LOOKUP_ENABLED);
+  });
+
+  it("includes all five per-question toggles for the transaction flow", () => {
+    const keys = DEFAULT_FLAGS.map((f) => f.key);
+    expect(keys).toContain(ASK_MEMBER_INFO_ENABLED);
+    expect(keys).toContain(ASK_CATEGORY_ENABLED);
+    expect(keys).toContain(ASK_LOAN_TYPE_ENABLED);
+    expect(keys).toContain(ASK_DEPOSIT_ACCOUNT_ENABLED);
+    expect(keys).toContain(ASK_CONFIRM_SENDER_NAME_ENABLED);
   });
 
   it("includes exactly one notify flag per department in DEPARTMENTS", () => {
