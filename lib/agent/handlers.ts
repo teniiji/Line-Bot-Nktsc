@@ -25,6 +25,7 @@ import {
   computeNextRequirement,
   computeServiceRequirement,
   computeLookupMissingFields,
+  loadDisabledRequirements,
 } from "./state";
 import { forwardServiceRequest, notifyTransactionForward } from "./forwarding";
 import type {
@@ -284,8 +285,11 @@ export async function reportTransaction(
     },
   });
 
-  const lineUser = await loadLineUser(ctx.lineUserId);
-  const next = computeNextRequirement(lineUser, pending);
+  const [lineUser, disabled] = await Promise.all([
+    loadLineUser(ctx.lineUserId),
+    loadDisabledRequirements(),
+  ]);
+  const next = computeNextRequirement(lineUser, pending, disabled);
   if (next === null) {
     const result = await finalizeTransaction(ctx.lineUserId, pending, lineUser as LineUserInfo);
     return result + mismatchNote;
@@ -363,7 +367,8 @@ export async function submitMemberInfo(
 
   const pending = await loadPending(ctx.lineUserId);
   if (pending) {
-    const next = computeNextRequirement(identity, pending);
+    const disabled = await loadDisabledRequirements();
+    const next = computeNextRequirement(identity, pending, disabled);
     if (next === null) {
       const result = await finalizeTransaction(ctx.lineUserId, pending, identity);
       return result + unverifiedNote;
@@ -423,8 +428,11 @@ export async function submitLoanType(
     data: { loanType, createdAt: new Date() },
   });
 
-  const lineUser = await loadLineUser(ctx.lineUserId);
-  const next = computeNextRequirement(lineUser, updated);
+  const [lineUser, disabled] = await Promise.all([
+    loadLineUser(ctx.lineUserId),
+    loadDisabledRequirements(),
+  ]);
+  const next = computeNextRequirement(lineUser, updated, disabled);
   if (next === null) {
     return await finalizeTransaction(ctx.lineUserId, updated, lineUser as LineUserInfo);
   }
@@ -457,8 +465,11 @@ export async function submitDepositAccount(
     data: { depositAccountNumber: accountNumber, createdAt: new Date() },
   });
 
-  const lineUser = await loadLineUser(ctx.lineUserId);
-  const next = computeNextRequirement(lineUser, updated);
+  const [lineUser, disabled] = await Promise.all([
+    loadLineUser(ctx.lineUserId),
+    loadDisabledRequirements(),
+  ]);
+  const next = computeNextRequirement(lineUser, updated, disabled);
   if (next === null) {
     return await finalizeTransaction(ctx.lineUserId, updated, lineUser as LineUserInfo);
   }
@@ -493,8 +504,11 @@ export async function confirmTransactionSender(
     data: { senderNameConfirmed: true, createdAt: new Date() },
   });
 
-  const lineUser = await loadLineUser(ctx.lineUserId);
-  const next = computeNextRequirement(lineUser, updated);
+  const [lineUser, disabled] = await Promise.all([
+    loadLineUser(ctx.lineUserId),
+    loadDisabledRequirements(),
+  ]);
+  const next = computeNextRequirement(lineUser, updated, disabled);
   if (next === null) {
     return await finalizeTransaction(ctx.lineUserId, updated, lineUser as LineUserInfo);
   }
