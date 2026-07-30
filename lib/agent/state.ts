@@ -140,6 +140,17 @@ export async function computeQuickReplies(lineUserId: string): Promise<string[]>
 
 export const PENDING_TRANSACTION_EXPIRY_MS = 30 * 60 * 1000;
 
+// How long an expired PendingTransaction row is kept around purely for
+// staff visibility in the "รายการค้าง" panel before being deleted for good.
+// Well past EXPIRY_MS on purpose: once a row is expired the bot has already
+// given up on it (loadPending discards it, and the member starts over on
+// their next message), but "a member sent a slip and never finished" is
+// exactly what staff want to notice and follow up on, so it shouldn't
+// vanish the moment the bot stops caring. Without this the table only ever
+// shrinks when the same member happens to message again, so a member who
+// goes quiet leaves their row behind permanently.
+export const PENDING_TRANSACTION_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
+
 
 export async function loadLineUser(lineUserId: string): Promise<LineUserInfo | null> {
   // Prefer the imported roster keyed by this LINE account's own userId —

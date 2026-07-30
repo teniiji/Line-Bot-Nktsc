@@ -6,7 +6,10 @@ import { Prisma } from "@prisma/client";
 import { put } from "@vercel/blob";
 import { lineClient, lineBlobClient } from "@/lib/lineClient";
 import { runFinanceAgent } from "@/lib/financeAgent";
-import { PENDING_TRANSACTION_EXPIRY_MS } from "@/lib/agent/state";
+import {
+  PENDING_TRANSACTION_EXPIRY_MS,
+  PENDING_TRANSACTION_RETENTION_MS,
+} from "@/lib/agent/state";
 import { ensureLineUser } from "@/lib/lineUsers";
 import { prisma } from "@/lib/prisma";
 import { isFeatureEnabled, MESSAGING_ENABLED } from "@/lib/featureFlags";
@@ -181,6 +184,20 @@ async function handleEvent(event: webhook.Event, origin: string): Promise<void> 
   prisma.pendingMemberLookup
     .deleteMany({ where: { createdAt: { lt: lookupCutoff } } })
     .catch((err) => console.error("[line/webhook] pending-lookup prune failed:", err));
+
+  // Same "only cleaned up if that member happens to come back" problem for
+  // unfinished transactions, but on a much longer clock: these stay visible
+  // in the dashboard's "รายการค้าง" panel well past the bot's own expiry so
+  // staff can follow up on a member who sent a slip and never finished (see
+  // PENDING_TRANSACTION_RETENTION_MS), and only the genuinely ancient ones
+  // are cleared here. Opportunistic like the processed-event prune above —
+  // this table grows slowly, so it doesn't need to run on every event.
+  if (Math.random() < 0.01) {
+    const pendingCutoff = new Date(Date.now() - PENDING_TRANSACTION_RETENTION_MS);
+    prisma.pendingTransaction
+      .deleteMany({ where: { createdAt: { lt: pendingCutoff } } })
+      .catch((err) => console.error("[line/webhook] pending-transaction prune failed:", err));
+  }
 
   const lineUserId = event.source.userId;
 

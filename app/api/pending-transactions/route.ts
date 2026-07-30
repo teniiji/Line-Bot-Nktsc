@@ -4,6 +4,7 @@ import {
   computeNextRequirement,
   describeRequirement,
   loadDisabledRequirements,
+  PENDING_TRANSACTION_EXPIRY_MS,
 } from "@/lib/agent/state";
 import type { LineUserInfo } from "@/lib/agent/types";
 
@@ -64,6 +65,11 @@ export async function GET() {
       hasSlip: p.hasSlip,
       createdAt: p.createdAt,
       waitingFor: describeRequirement(computeNextRequirement(identity, p, disabled)),
+      // Past the bot's own cutoff, loadPending discards this row rather than
+      // resuming it, so the bot is no longer waiting on anything here — the
+      // member would start over. Flagged so the panel doesn't imply staff are
+      // waiting on an answer that can no longer arrive.
+      expired: Date.now() - p.createdAt.getTime() > PENDING_TRANSACTION_EXPIRY_MS,
     };
   });
 

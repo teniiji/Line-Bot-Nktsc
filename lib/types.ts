@@ -47,6 +47,10 @@ export interface MemberRosterEntry {
   unitName: string | null;
   nationalId: string | null;
   phone: string | null;
+  // The LINE account this member is bound to, once they've identified
+  // themselves to the bot at least once. Staff can only clear it, never set
+  // it — see the PUT handler in app/api/member-roster/[memberNumber].
+  lineUserId: string | null;
 }
 
 export interface ServiceRequestLogEntry {
