@@ -44,6 +44,10 @@ export async function GET(request: NextRequest) {
         unitName: true,
         nationalId: true,
         phone: true,
+        // Which LINE account this member is bound to. Surfaced so staff can
+        // see and clear a stale binding — a mismatch here blocks the member
+        // from recording transactions (see the PUT handler's comment).
+        lineUserId: true,
       },
       skip: (page - 1) * pageSize,
       take: pageSize,

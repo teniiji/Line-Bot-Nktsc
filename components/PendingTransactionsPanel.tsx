@@ -14,6 +14,7 @@ interface PendingTransactionEntry {
   hasSlip: boolean;
   createdAt: string;
   waitingFor: string;
+  expired: boolean;
 }
 
 const formatDateTime = (iso: string) =>
@@ -69,6 +70,8 @@ export default function PendingTransactionsPanel() {
         <p className="text-xs text-slate-500 mt-1">
           สลิปที่บอทรับแล้วแต่ยังบันทึกไม่สำเร็จ — รอสมาชิกตอบข้อมูลที่ขาดอยู่ ยังไม่ขึ้นในตาราง "ธุรกรรม"
           ด้านล่างจนกว่าจะครบ ถ้าสมาชิกเงียบไปแล้วไม่ตอบ ลบทิ้งได้เลย (ไม่กระทบข้อมูลที่บันทึกสำเร็จแล้ว)
+          รายการที่ขึ้นว่า <span className="text-slate-600">"เลิกรอแล้ว"</span> คือค้างเกิน 30 นาที
+          บอทเลิกรอไปแล้ว ถ้าสมาชิกกลับมาคุยต่อจะเริ่มส่งสลิปใหม่ตั้งแต่ต้น — ควรติดต่อกลับหรือลบทิ้ง
         </p>
       </div>
       <div className="overflow-x-auto">
@@ -94,9 +97,18 @@ export default function PendingTransactionsPanel() {
                 <td className="px-4 py-2">{entry.category ?? "—"}</td>
                 <td className="px-4 py-2">{entry.amount !== null ? formatAmount(entry.amount) : "—"}</td>
                 <td className="px-4 py-2">
-                  <span className="inline-block px-2 py-0.5 rounded-full text-xs border bg-amber-50 text-amber-700 border-amber-200">
-                    {entry.waitingFor}
-                  </span>
+                  {entry.expired ? (
+                    <span
+                      className="inline-block px-2 py-0.5 rounded-full text-xs border bg-slate-100 text-slate-500 border-slate-200"
+                      title={`บอทเลิกรอแล้ว (ค้างเกิน 30 นาที) — ตอนค้างอยู่รอ: ${entry.waitingFor}`}
+                    >
+                      เลิกรอแล้ว · {entry.waitingFor}
+                    </span>
+                  ) : (
+                    <span className="inline-block px-2 py-0.5 rounded-full text-xs border bg-amber-50 text-amber-700 border-amber-200">
+                      {entry.waitingFor}
+                    </span>
+                  )}
                 </td>
                 <td className="px-4 py-2 whitespace-nowrap text-slate-500">
                   {formatDateTime(entry.createdAt)}

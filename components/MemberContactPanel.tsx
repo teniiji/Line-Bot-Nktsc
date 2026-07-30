@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { MemberRosterEntry } from "@/lib/types";
+import ConfirmDialog from "@/components/ConfirmDialog";
 
 const PAGE_SIZE = 20;
 const SEARCH_DEBOUNCE_MS = 300;
@@ -20,6 +21,7 @@ export default function MemberContactPanel() {
   const [editPhone, setEditPhone] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [pendingUnlink, setPendingUnlink] = useState<MemberRosterEntry | null>(null);
 
   useEffect(() => {
     const timer = setTimeout(() => setSearch(searchInput.trim()), SEARCH_DEBOUNCE_MS);
@@ -83,13 +85,31 @@ export default function MemberContactPanel() {
         setError(body.error || "บันทึกไม่สำเร็จ");
         return;
       }
-      setMembers((prev) => prev.map((m) => (m.id === body.id ? body : m)));
+      setMembers((prev) => prev.map((m) => (m.id === body.id ? { ...m, ...body } : m)));
       setEditingId(null);
       setEditNationalId("");
       setEditPhone("");
     } finally {
       setSaving(false);
     }
+  };
+
+  const confirmUnlink = async () => {
+    if (!pendingUnlink) return;
+    const memberNumber = pendingUnlink.memberNumber;
+    setPendingUnlink(null);
+    setError(null);
+    const res = await fetch(`/api/member-roster/${memberNumber}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ lineUserId: "" }),
+    });
+    const body = await res.json();
+    if (!res.ok) {
+      setError(body.error || "ปลดการเชื่อมต่อไม่สำเร็จ");
+      return;
+    }
+    setMembers((prev) => prev.map((m) => (m.id === body.id ? { ...m, ...body } : m)));
   };
 
   return (
@@ -100,6 +120,9 @@ export default function MemberContactPanel() {
           <p className="text-xs text-slate-500 mt-1">
             ใช้เมื่อสมาชิกโทรแจ้งเปลี่ยนเบอร์โทร หรือข้อมูลเลขบัตรผิด — ค้นหาด้วยเลขสมาชิกหรือชื่อ
             แล้วแก้ไขได้ทันที ข้อมูลนี้ใช้ยืนยันตัวตนก่อนแจ้งเลขสมาชิกทาง LINE เท่านั้น
+            ส่วนคอลัมน์ "เชื่อมต่อ LINE" บอกว่าเลขสมาชิกนี้ผูกกับบัญชี LINE ไหนอยู่ — ถ้าสมาชิกแจ้งว่า
+            บอทตอบว่า "เลขสมาชิกนี้ผูกกับบัญชี LINE อื่นแล้ว" (เช่น เปลี่ยนเครื่อง/เปลี่ยนบัญชี LINE
+            หรือค้างจาก LINE OA ช่องเดิม) ให้กด "ปลด" แล้วสมาชิกจะผูกใหม่ได้เองในข้อความถัดไป
           </p>
         </div>
         <input
@@ -132,6 +155,7 @@ export default function MemberContactPanel() {
                 <th className="px-4 py-2">ชื่อสมาชิก</th>
                 <th className="px-4 py-2">เลขบัตรประชาชน</th>
                 <th className="px-4 py-2">เบอร์โทร</th>
+                <th className="px-4 py-2">เชื่อมต่อ LINE</th>
                 <th className="px-4 py-2"></th>
               </tr>
             </thead>
@@ -167,6 +191,23 @@ export default function MemberContactPanel() {
                       />
                     ) : (
                       member.phone ?? "—"
+                    )}
+                  </td>
+                  <td className="px-4 py-2 whitespace-nowrap">
+                    {member.lineUserId ? (
+                      <span className="inline-flex items-center gap-2">
+                        <span className="inline-block px-2 py-0.5 rounded-full text-xs border bg-green-50 text-green-700 border-green-200">
+                          เชื่อมแล้ว
+                        </span>
+                        <button
+                          onClick={() => setPendingUnlink(member)}
+                          className="text-red-600 hover:underline text-xs py-1"
+                        >
+                          ปลด
+                        </button>
+                      </span>
+                    ) : (
+                      <span className="text-slate-400 text-xs">ยังไม่เชื่อม</span>
                     )}
                   </td>
                   <td className="px-4 py-2 whitespace-nowrap text-right space-x-3">
@@ -226,6 +267,21 @@ export default function MemberContactPanel() {
           </button>
         </div>
       )}
+
+      <ConfirmDialog
+        open={pendingUnlink !== null}
+        title="ปลดการเชื่อมต่อ LINE ของสมาชิกนี้?"
+        description={
+          pendingUnlink
+            ? `${pendingUnlink.memberName} (เลขสมาชิก ${pendingUnlink.memberNumber}) จะไม่ผูกกับบัญชี LINE เดิมอีก — ` +
+              `ครั้งต่อไปที่สมาชิกแจ้งชื่อและเลขสมาชิกกับบอท ระบบจะผูกกับบัญชี LINE ที่ทักเข้ามาให้เองอัตโนมัติ ` +
+              `ไม่กระทบธุรกรรมที่บันทึกไปแล้ว`
+            : undefined
+        }
+        confirmLabel="ปลดการเชื่อมต่อ"
+        onConfirm={confirmUnlink}
+        onCancel={() => setPendingUnlink(null)}
+      />
     </div>
   );
 }

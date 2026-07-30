@@ -1,0 +1,21 @@
+-- One-time unblock after the LINE Official Account migration.
+--
+-- A LINE userId is scoped to the OA channel that issued it. When the
+-- cooperative moved to a new LINE OA, every member's userId changed, but
+-- MemberRoster.lineUserId still held the OLD channel's value (imported
+-- from column D of the "สมาชิก_LINE_OA" sheet by import-org-data.ts, and
+-- auto-linked by submit_member_info while the old OA was live).
+--
+-- That stale value actively broke transaction recording: the
+-- impersonation guard in submitMemberInfo (lib/agent/handlers.ts) blocks
+-- when a roster row's lineUserId differs from the LINE account currently
+-- messaging. Post-migration that is true for EVERY member, so a real
+-- member giving their own correct name and member number was refused
+-- with "this member number is already linked to a different LINE
+-- account" and their slip could never be recorded.
+--
+-- Every stored value refers to a decommissioned channel and can no
+-- longer match anyone, so clearing them loses nothing: each member
+-- re-links automatically the next time they identify themselves
+-- (submitMemberInfo fills lineUserId back in when it is NULL).
+UPDATE "MemberRoster" SET "lineUserId" = NULL WHERE "lineUserId" IS NOT NULL;

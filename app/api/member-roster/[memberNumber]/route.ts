@@ -7,12 +7,22 @@ import { parseNationalId, parsePhone } from "@/lib/identityFormat";
 // themselves can reach, since these are exactly the fields the bot checks
 // before revealing a member's เลขสมาชิก. A member reporting a phone change
 // must go through staff here, never a self-service bot flow.
+//
+// Also handles clearing lineUserId — the only accepted value is "" so
+// staff can unlink, never hand-point a member at some arbitrary LINE
+// account. This is the recovery path for a stale binding:
+// submitMemberInfo refuses to proceed when a roster row is bound to a
+// different LINE account than the one messaging, which is right against
+// impersonation but becomes a dead end once the stored id is merely
+// obsolete — which was true of every row after the LINE OA migration
+// (see the 20260728120000_clear_stale_line_links migration). Clearing it
+// lets the member re-link themselves on their next message.
 export async function PUT(
   request: NextRequest,
   { params }: { params: { memberNumber: string } }
 ) {
   const body = await request.json();
-  const { nationalId, phone } = body;
+  const { nationalId, phone, lineUserId } = body;
 
   if (nationalId !== undefined && typeof nationalId !== "string") {
     return NextResponse.json({ error: "nationalId must be a string" }, { status: 400 });
@@ -20,8 +30,22 @@ export async function PUT(
   if (phone !== undefined && typeof phone !== "string") {
     return NextResponse.json({ error: "phone must be a string" }, { status: 400 });
   }
+  if (lineUserId !== undefined && lineUserId !== "") {
+    return NextResponse.json(
+      { error: "ปลดการเชื่อมต่อ LINE ได้อย่างเดียว ตั้งเป็นบัญชีอื่นเองไม่ได้" },
+      { status: 400 }
+    );
+  }
 
-  const data: { nationalId?: string | null; phone?: string | null } = {};
+  const data: {
+    nationalId?: string | null;
+    phone?: string | null;
+    lineUserId?: string | null;
+  } = {};
+
+  if (lineUserId !== undefined) {
+    data.lineUserId = null;
+  }
 
   if (nationalId !== undefined) {
     const trimmed = nationalId.trim();
@@ -66,6 +90,7 @@ export async function PUT(
         unitName: true,
         nationalId: true,
         phone: true,
+        lineUserId: true,
       },
     });
     return NextResponse.json(member);
