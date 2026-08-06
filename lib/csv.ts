@@ -14,9 +14,16 @@ export function downloadExpensesCsv(expenses: Expense[]) {
     "เลขที่บัญชีที่ฝาก",
     "ชื่อในสลิป",
     "ชื่อในสลิปไม่ตรงกับสมาชิก",
+    "แจ้งเจ้าหน้าที่",
     "รายละเอียด",
     "จำนวนเงิน",
   ];
+  const forwardStatusLabel: Record<Expense["forwardStatus"], string> = {
+    forwarded: "ส่งแล้ว",
+    failed: "ส่งไม่สำเร็จ",
+    unconfigured: "ยังไม่ตั้งค่าผู้รับ",
+    muted: "ปิดแจ้งเตือนไว้",
+  };
   const rows = expenses.map((e) => [
     e.date.slice(0, 10),
     e.category,
@@ -27,6 +34,7 @@ export function downloadExpensesCsv(expenses: Expense[]) {
     e.depositAccountNumber ?? "",
     e.slipSenderName ?? "",
     e.senderNameMismatch ? "ไม่ตรง (สมาชิกยืนยันแล้ว)" : "",
+    forwardStatusLabel[e.forwardStatus] ?? "",
     e.description ?? "",
     e.amount.toFixed(2),
   ]);

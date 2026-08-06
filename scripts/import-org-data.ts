@@ -88,6 +88,18 @@ async function importMemberRoster(workbook: ExcelJS.Workbook) {
     if (!unitName) missingUnit++;
     const responsibleCode = cell(row, 8);
     if (!responsibleCode) missingResponsibleCode++;
+    // lineUserId (column D) is deliberately NOT imported. It belongs to the
+    // bot: submitMemberInfo binds a roster row to a LINE account the first
+    // time that member identifies themselves, and that binding is what the
+    // impersonation guard checks afterwards. A spreadsheet can't be trusted
+    // to hold a current value — a LINE userId is scoped to the OA channel
+    // that issued it, so every id in this column became meaningless the
+    // moment the cooperative moved to a new OA. Writing a stale one back
+    // doesn't merely fail to help, it locks the real member out: the guard
+    // sees a binding that doesn't match the account they're messaging from
+    // and refuses their transaction. That is exactly the outage the
+    // 20260728120000_clear_stale_line_links migration had to clean up, and
+    // re-importing this column would recreate it, so it's left alone.
     await prisma.memberRoster.upsert({
       where: { memberNumber },
       create: {
@@ -95,7 +107,6 @@ async function importMemberRoster(workbook: ExcelJS.Workbook) {
         memberName,
         unitName,
         responsibleCode,
-        lineUserId: cell(row, 4),
         nickname: cell(row, 5),
         nationalId: cell(row, 6),
         phone: cell(row, 7),
@@ -104,7 +115,6 @@ async function importMemberRoster(workbook: ExcelJS.Workbook) {
         memberName,
         unitName,
         responsibleCode,
-        lineUserId: cell(row, 4),
         nickname: cell(row, 5),
         nationalId: cell(row, 6),
         phone: cell(row, 7),

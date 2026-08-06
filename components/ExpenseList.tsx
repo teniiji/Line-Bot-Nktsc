@@ -119,6 +119,27 @@ export default function ExpenseList({
                       ⚠️ ชื่อในสลิปไม่ตรง
                     </span>
                   )}
+                  {/* Only the two states staff need to act on. "forwarded" is
+                      the norm and "muted" is staff's own choice, so neither
+                      earns a badge — flagging them would bury the real ones. */}
+                  {expense.forwardStatus === "failed" && (
+                    <span
+                      className="inline-block text-xs px-2 py-0.5 rounded-full bg-red-50 text-red-700 border border-red-200"
+                      title={`ส่งแจ้งเตือนให้เจ้าหน้าที่ไม่สำเร็จ (${
+                        expense.forwardedTo ?? "-"
+                      }) — ธุรกรรมบันทึกเรียบร้อยแล้ว แต่ไม่มีใครได้รับแจ้ง ตรวจ LINE UserID ของเจ้าหน้าที่ในแท็บ "ผู้รับผิดชอบ"`}
+                    >
+                      ⚠️ แจ้งเจ้าหน้าที่ไม่สำเร็จ
+                    </span>
+                  )}
+                  {expense.forwardStatus === "unconfigured" && (
+                    <span
+                      className="inline-block text-xs px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 border border-amber-200"
+                      title='ยังไม่ได้ตั้งค่าเจ้าหน้าที่ผู้รับของแผนกนี้ — ธุรกรรมบันทึกแล้วแต่ไม่ได้ส่งแจ้งใคร ตั้งค่าได้ในแท็บ "ผู้รับผิดชอบ"'
+                    >
+                      ยังไม่ตั้งค่าผู้รับ
+                    </span>
+                  )}
                 </td>
                 <td className="px-4 py-2 text-slate-500">
                   {expense.description || "—"}
