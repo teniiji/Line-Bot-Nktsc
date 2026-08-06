@@ -21,6 +21,12 @@ const EXPENSE_SELECT = {
   depositAccountNumber: true,
   slipSenderName: true,
   senderNameMismatch: true,
+  // Whether this transaction's staff notification actually went out. Stored
+  // since forwarding shipped but never surfaced anywhere, so a department
+  // silently receiving nothing — e.g. every staff LINE userId going stale
+  // after an OA migration — looked exactly like everything working.
+  forwardStatus: true,
+  forwardedTo: true,
 } as const;
 
 export async function GET(request: NextRequest) {

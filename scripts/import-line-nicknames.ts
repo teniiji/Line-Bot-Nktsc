@@ -12,6 +12,15 @@
 // row for someone in this sheet who hasn't messaged the bot; that column
 // is reported separately below so staff know it's expected, not a bug.
 //
+// Rows are matched on เลขสมาชิก (column A), NOT on the sheet's
+// LINE_UserID column. A LINE userId is scoped to the OA channel that
+// issued it, so those values all went stale when the cooperative moved to
+// a new LINE OA — matching on them made this script quietly update
+// nothing at all while still reporting success. A member number survives
+// an OA change, and LineUser.memberNumber is filled in as soon as the
+// member identifies themselves (submit_member_info), which is the same
+// population this script is scoped to anyway.
+//
 // Column note: this sheet's own "Nickname (LINE OA)" is a completely
 // different thing from the per-friend name staff can set inside LINE
 // Official Account Manager (chat.line.biz) — that one has no API and
@@ -30,7 +39,7 @@ import { cellText as cell } from "./excelUtils";
 const prisma = new PrismaClient();
 
 const MEMBER_SHEET_NAME = "สมาชิก_LINE_OA";
-const LINE_USER_ID_COLUMN = 4; // D
+const MEMBER_NUMBER_COLUMN = 1; // A: เลขสมาชิก
 const NICKNAME_COLUMN = 5; // E: "Nickname (LINE OA)"
 
 async function main() {
@@ -50,20 +59,20 @@ async function main() {
 
   const header = sheet.getRow(1);
   console.log(
-    `Header check — Col D: "${header.getCell(LINE_USER_ID_COLUMN).value}", ` +
+    `Header check — Col A: "${header.getCell(MEMBER_NUMBER_COLUMN).value}", ` +
       `Col E: "${header.getCell(NICKNAME_COLUMN).value}"\n`
   );
 
   let updated = 0;
-  let noLineUserId = 0;
+  let noMemberNumber = 0;
   let noNickname = 0;
-  let notMessagedBotYet = 0;
+  let notIdentifiedYet = 0;
 
   for (let rowNumber = 2; rowNumber <= sheet.rowCount; rowNumber++) {
     const row = sheet.getRow(rowNumber);
-    const lineUserId = cell(row, LINE_USER_ID_COLUMN);
-    if (!lineUserId) {
-      noLineUserId++;
+    const memberNumber = cell(row, MEMBER_NUMBER_COLUMN);
+    if (!memberNumber) {
+      noMemberNumber++;
       continue;
     }
 
@@ -73,24 +82,28 @@ async function main() {
       continue;
     }
 
-    try {
-      await prisma.lineUser.update({
-        where: { id: lineUserId },
-        data: { nickname },
-      });
-      updated++;
-    } catch {
-      // P2025: no LineUser row with this id — this person hasn't
-      // messaged the bot yet, so there's nothing to attach a nickname
-      // to. Expected for most of this sheet, not an error.
-      notMessagedBotYet++;
+    // updateMany rather than update: memberNumber isn't unique on LineUser
+    // (it's only set once the member identifies), so there's no unique
+    // where-clause to target — and a member who re-added the bot from a
+    // second LINE account would legitimately have more than one row.
+    const { count } = await prisma.lineUser.updateMany({
+      where: { memberNumber },
+      data: { nickname },
+    });
+    if (count > 0) {
+      updated += count;
+    } else {
+      // No LineUser carries this member number yet: either they've never
+      // messaged the bot, or they have but haven't identified themselves
+      // during a transaction. Expected for most of this sheet, not an error.
+      notIdentifiedYet++;
     }
   }
 
   console.log(`Updated: ${updated}`);
-  console.log(`Skipped — no LINE_UserID in row: ${noLineUserId}`);
+  console.log(`Skipped — no เลขสมาชิก in row: ${noMemberNumber}`);
   console.log(`Skipped — no nickname in row: ${noNickname}`);
-  console.log(`Skipped — hasn't messaged the bot yet (no LineUser row): ${notMessagedBotYet}`);
+  console.log(`Skipped — no LINE account identified with this member number yet: ${notIdentifiedYet}`);
 }
 
 main()

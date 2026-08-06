@@ -12,6 +12,11 @@ export interface Expense {
   depositAccountNumber: string | null;
   slipSenderName: string | null;
   senderNameMismatch: boolean;
+  // Outcome of the staff notification push for this transaction. "muted"
+  // means staff deliberately turned that department's notifications off
+  // (dept_notify_* flag), so it isn't a problem to flag.
+  forwardStatus: "forwarded" | "failed" | "unconfigured" | "muted";
+  forwardedTo: string | null;
   user: { displayName: string | null; nickname: string | null } | null;
 }
 
