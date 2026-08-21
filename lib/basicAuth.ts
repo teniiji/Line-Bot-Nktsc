@@ -10,8 +10,41 @@
 // TextDecoder are available in the Edge runtime (Buffer is not), so this runs
 // inside Next.js middleware.
 //
+// The final comparison is constant-time (constantTimeEqual below), not
+// `===`. A plain `===` on strings short-circuits at the first mismatched
+// character, so a wrong guess that happens to share a longer correct
+// prefix takes measurably longer to reject than one that's wrong from
+// character 1 — enough of a timing side channel, over enough attempts,
+// to let an attacker recover the password one character at a time.
+// crypto.timingSafeEqual is Node's normal fix for this, but it isn't
+// available here — this file has to run in the Edge runtime (see the
+// atob/Buffer note above), which has no Node crypto module.
+// constantTimeEqual reimplements the same guarantee — always inspects
+// every byte of the longer input, never returns early on a mismatch —
+// using only Uint8Array/TextEncoder, which the Edge runtime does have.
+//
 // Kept in its own module (no next/server imports) so it can be unit-tested
 // without the Edge-runtime request/response machinery.
+
+// Compares two byte strings without ever branching on *where* they first
+// differ. The XOR-and-accumulate pattern means every call touches exactly
+// max(a.length, b.length) bytes regardless of how much of a/b matches —
+// there is no early return, and no code path whose timing depends on the
+// comparison's outcome partway through.
+function constantTimeEqual(a: Uint8Array, b: Uint8Array): boolean {
+  const len = Math.max(a.length, b.length);
+  // XOR the lengths in too, so two different-length inputs can never
+  // compare equal — this still doesn't leak *where* they differ, only
+  // that they do, same as a normal failed comparison would.
+  let diff = a.length ^ b.length;
+  for (let i = 0; i < len; i++) {
+    const x = i < a.length ? a[i] : 0;
+    const y = i < b.length ? b[i] : 0;
+    diff |= x ^ y;
+  }
+  return diff === 0;
+}
+
 export function checkBasicAuth(
   header: string,
   user: string,
@@ -32,5 +65,18 @@ export function checkBasicAuth(
   // Split on the first colon only — a password may itself contain colons.
   const sep = decoded.indexOf(":");
   if (sep === -1) return false;
-  return decoded.slice(0, sep) === user && decoded.slice(sep + 1) === password;
+  const suppliedUser = decoded.slice(0, sep);
+  const suppliedPassword = decoded.slice(sep + 1);
+
+  // Both comparisons always run in full before the result is combined —
+  // `&&` here branches on two already-fully-computed booleans, not on
+  // secret byte content, so it doesn't reopen the timing hole the
+  // constant-time comparisons above just closed.
+  const encoder = new TextEncoder();
+  const userOk = constantTimeEqual(encoder.encode(suppliedUser), encoder.encode(user));
+  const passwordOk = constantTimeEqual(
+    encoder.encode(suppliedPassword),
+    encoder.encode(password)
+  );
+  return userOk && passwordOk;
 }
