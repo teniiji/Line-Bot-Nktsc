@@ -55,4 +55,26 @@ describe("checkBasicAuth", () => {
       false
     );
   });
+
+  // Exercises constantTimeEqual's length-mismatch branch specifically —
+  // it folds a.length ^ b.length into the result instead of relying on
+  // the max-length loop alone, so a strict prefix or a too-long guess
+  // must still be rejected rather than accidentally short-circuiting true.
+  it("rejects a password that's a strict prefix of the real one", () => {
+    expect(checkBasicAuth(basicHeader("staff", "s3cr"), "staff", "s3cret")).toBe(
+      false
+    );
+  });
+
+  it("rejects a password that's the real one plus extra characters", () => {
+    expect(
+      checkBasicAuth(basicHeader("staff", "s3cretx"), "staff", "s3cret")
+    ).toBe(false);
+  });
+
+  it("rejects an empty password against a non-empty one", () => {
+    expect(checkBasicAuth(basicHeader("staff", ""), "staff", "s3cret")).toBe(
+      false
+    );
+  });
 });
