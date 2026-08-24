@@ -178,21 +178,34 @@ model PendingMemberLookup {
 // predates this table and can reference ids with no row here yet (or ever,
 // for pre-existing data).
 model LineUser {
-  id           String   @id
-  displayName  String?
-  nickname     String?
-  fullName     String?
-  memberNumber String?
-  phone        String?
+  id                String    @id
+  displayName       String?
+  nickname          String?
+  fullName          String?
+  memberNumber      String?
+  phone             String?
   // Staff-set per-member pause (dashboard > สมาชิก LINE) — when true, the
   // webhook skips replying to this LINE user entirely (no automated reply
   // of any kind, not even a maintenance-mode apology), for when staff are
   // handling that specific member's conversation manually in chat.line.biz
   // and don't want the bot talking over them. Independent of
   // FeatureFlag.messaging_enabled, which pauses everyone at once.
-  botPaused    Boolean  @default(false)
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  botPaused         Boolean   @default(false)
+  // Consecutive failed identity checks via submit_lookup_info (see
+  // lib/agent/identityHandlers.ts) — incremented on every no-match result,
+  // reset to 0 the moment a lookup succeeds. matchesIdentity already
+  // requires name + national ID + phone to all match a roster row at once,
+  // so a blind guess is unlikely, but nothing previously stopped unlimited
+  // retries through chat by someone who already knows a few of another
+  // member's details. Paired with lookupLockedUntil below.
+  lookupFailCount   Int       @default(0)
+  // Set once lookupFailCount reaches the lockout threshold; submit_lookup_info
+  // refuses to run any roster check while this is in the future. Naturally
+  // stops mattering once it's in the past — nothing needs to clear it back
+  // to null on expiry, only on the next successful lookup.
+  lookupLockedUntil DateTime?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
 }
 
 // Reference directory of cooperative-affiliated organizations (schools,

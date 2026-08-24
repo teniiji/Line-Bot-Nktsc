@@ -151,6 +151,20 @@ export type SubmitLookupInfoInput = {
   phone?: unknown;
 };
 
+// How many consecutive failed submit_lookup_info attempts a single LINE
+// account gets before it's locked out. matchesIdentity (lib/memberLookup.ts)
+// already requires name + national ID + phone to all match a roster row at
+// once, so a blind guess is unlikely to land — this is a second layer, for
+// someone who already knows a few of another member's details (a relative,
+// a leaked partial record) and is trying to brute-force the rest by
+// repeatedly retyping through chat.
+const LOOKUP_FAIL_LIMIT = 5;
+// Lockout length once LOOKUP_FAIL_LIMIT is hit. Long enough to make
+// repeated guessing impractical; short enough that a member who genuinely
+// mistyped their own info several times isn't shut out for good — the
+// lockout message tells them to contact the office in the meantime.
+const LOOKUP_LOCKOUT_MS = 30 * 60 * 1000;
+
 
 export async function submitLookupInfo(
   input: SubmitLookupInfoInput,
@@ -160,6 +174,18 @@ export async function submitLookupInfo(
   // pending state so this never half-collects identity info while paused.
   if (!(await isFeatureEnabled(MEMBER_LOOKUP_ENABLED))) {
     return "Error: member-number lookup is temporarily paused by staff. Apologize to the user, in Thai, and tell them to try again later or contact the cooperative office directly — do not ask for or store any identity info for this.";
+  }
+
+  // Checked before touching any pending-lookup state, so a locked-out
+  // account can't even start collecting a new guess. Keyed by LINE userId
+  // rather than anything typed in chat, since that's the one part of this
+  // flow an attacker can't forge.
+  const existingUser = await prisma.lineUser.findUnique({
+    where: { id: ctx.lineUserId },
+    select: { lookupFailCount: true, lookupLockedUntil: true },
+  });
+  if (existingUser?.lookupLockedUntil && existingUser.lookupLockedUntil.getTime() > Date.now()) {
+    return "Error: this LINE account is temporarily locked out of member-number lookup after too many failed identity checks in a row. Apologize to the user, in Thai, and tell them to contact the cooperative office directly if they need their member number now — do not ask for or store any identity info for this, and do not tell them exactly when the lockout ends.";
   }
 
   const fullName =
@@ -218,7 +244,41 @@ export async function submitLookupInfo(
   await prisma.pendingMemberLookup.delete({ where: { lineUserId: ctx.lineUserId } }).catch(() => {});
 
   if (!match) {
-    return "No roster record matched the identity info provided. Apologize to the user, in Thai, and tell them to contact the cooperative office directly to verify their identity and get their member number. Do not reveal which specific field (name/ID/phone) didn't match, and never guess or make up a member number.";
+    // Atomic increment (rather than read-then-write off existingUser) so
+    // two near-simultaneous failed attempts can't both read the same
+    // starting count and silently undercount each other.
+    const updated = await prisma.lineUser.upsert({
+      where: { id: ctx.lineUserId },
+      create: { id: ctx.lineUserId, lookupFailCount: 1 },
+      update: { lookupFailCount: { increment: 1 } },
+    });
+    const justLockedOut = updated.lookupFailCount >= LOOKUP_FAIL_LIMIT;
+    if (justLockedOut) {
+      await prisma.lineUser
+        .update({
+          where: { id: ctx.lineUserId },
+          data: { lookupFailCount: 0, lookupLockedUntil: new Date(Date.now() + LOOKUP_LOCKOUT_MS) },
+        })
+        .catch(() => {});
+    }
+    const lockoutNote = justLockedOut
+      ? " This was also their last attempt before a temporary lockout — tell them, in Thai, that member-number lookup is now paused for this account for a while after too many failed tries, and to contact the cooperative office directly if they need their member number now."
+      : "";
+    return (
+      "No roster record matched the identity info provided. Apologize to the user, in Thai, and tell them to contact the cooperative office directly to verify their identity and get their member number. Do not reveal which specific field (name/ID/phone) didn't match, and never guess or make up a member number." +
+      lockoutNote
+    );
+  }
+
+  // Reset the counter on a successful match so an earlier mistyped attempt
+  // (by this same legitimate member) doesn't count against them later.
+  if (existingUser?.lookupFailCount) {
+    await prisma.lineUser
+      .update({
+        where: { id: ctx.lineUserId },
+        data: { lookupFailCount: 0, lookupLockedUntil: null },
+      })
+      .catch(() => {});
   }
 
   return `Verified: this member's เลขสมาชิก is ${match.memberNumber}. Tell them clearly, in Thai.`;
