@@ -81,3 +81,39 @@ export interface FeatureFlagEntry {
   enabled: boolean;
   updatedAt: string;
 }
+
+// A month's round of รายการหัก plus how far along it is, for the round
+// switcher in DeductionRoundsPanel.
+export interface DeductionRoundSummary {
+  id: string;
+  period: string;
+  label: string;
+  note: string | null;
+  closedAt: string | null;
+  createdAt: string;
+  totalUnits: number;
+  readyUnits: number;
+  sentUnits: number;
+  failedUnits: number;
+}
+
+// One unit's row within a round. Contact details are joined in from
+// OrganizationUnit by the API — hasLineId rather than the id itself, since
+// the table only needs to know whether LINE delivery is possible.
+export interface DeductionUnitRow {
+  id: string;
+  unitName: string;
+  groupName: string | null;
+  contactName: string | null;
+  email: string | null;
+  hasLineId: boolean;
+  contactMethod: string | null;
+  fileName: string | null;
+  fileUrl: string | null;
+  amount: number | null;
+  memberCount: number | null;
+  sendStatus: string;
+  sentAt: string | null;
+  sentVia: string | null;
+  sendError: string | null;
+}

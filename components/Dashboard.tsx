@@ -22,6 +22,7 @@ import TrendChart from "@/components/TrendChart";
 import ConfirmDialog from "@/components/ConfirmDialog";
 import Tabs from "@/components/Tabs";
 import TestDataCleanupPanel from "@/components/TestDataCleanupPanel";
+import DeductionRoundsPanel from "@/components/DeductionRoundsPanel";
 
 const PAGE_SIZE = 10;
 const EXPORT_PAGE_SIZE = 100;
@@ -220,6 +221,11 @@ export default function Dashboard() {
                 />
               </div>
             ),
+          },
+          {
+            id: "deductions",
+            label: "รายการหัก",
+            content: <DeductionRoundsPanel />,
           },
           {
             id: "service-requests",

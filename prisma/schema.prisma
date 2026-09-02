@@ -8,42 +8,42 @@ datasource db {
 }
 
 model Expense {
-  id              String   @id @default(cuid())
-  amount          Float
-  category        String
-  description     String?
-  date            DateTime
-  createdAt       DateTime @default(now())
-  lineUserId      String?
+  id                   String   @id @default(cuid())
+  amount               Float
+  category             String
+  description          String?
+  date                 DateTime
+  createdAt            DateTime @default(now())
+  lineUserId           String?
   // Bank/wallet-issued transaction reference number read off a slip, if
   // visible. Globally unique in the real world, so it doubles as a
   // duplicate-slip guard — resubmitting the same slip hits this constraint
   // instead of creating a second row. Not fully reliable on its own since
   // it depends on the vision model reading the exact same text on every
   // submission — slipImageHash below is the more robust guard.
-  referenceNumber String?  @unique
+  referenceNumber      String?  @unique
   // SHA-256 of the raw slip image bytes. Unlike referenceNumber, this is
   // deterministic — resending the literal same photo always hashes
   // identically regardless of what the model manages to read off it — so
   // it's the primary duplicate-slip guard; referenceNumber is a secondary
   // one for cases where the same transaction is photographed twice.
-  slipImageHash   String?  @unique
-  slipImageUrl    String?
+  slipImageHash        String?  @unique
+  slipImageUrl         String?
   // True when slipImageUrl points at a PDF instead of a photo — members can
   // send either. Staff forwarding (notifyTransactionForward) needs this to
   // know whether it can push the slip as a LINE image message (photos only)
   // or must fall back to a plain text link (LINE can't push file messages).
-  slipIsPdf       Boolean  @default(false)
+  slipIsPdf            Boolean  @default(false)
   // Snapshot of the member's identity and (for ชำระหนี้) the loan type at
   // the moment this transaction was logged — copied from LineUser rather
   // than joined live, so the record stays accurate even if the member's
   // saved name changes later.
-  memberFullName  String?
-  memberNumber    String?
+  memberFullName       String?
+  memberNumber         String?
   // Whether the member's number matched the imported roster at log time —
   // false means it was self-asserted and unverified, so staff should check.
-  memberVerified  Boolean  @default(false)
-  loanType        String?
+  memberVerified       Boolean  @default(false)
+  loanType             String?
   // Which cooperative savings account (เลขที่บัญชี) a ฝากเงิน deposit is
   // going into — asked directly the same way loanType is for ชำระหนี้,
   // since it's the member's own account number and won't reliably appear
@@ -55,8 +55,8 @@ model Expense {
   // about this transaction, and whether it succeeded. Never blocks logging
   // the transaction itself — null forwardStatus means the push was never
   // attempted (e.g. an older row from before this feature existed).
-  forwardedTo     String?
-  forwardStatus   String?
+  forwardedTo          String?
+  forwardStatus        String?
   // The name shown in the slip's "จาก" (sender) field, if the model could
   // read one — and whether it looked like it belonged to someone other
   // than the member who claimed this transaction (lib/nameMatch.ts,
@@ -64,8 +64,8 @@ model Expense {
   // difference). true means the member was asked to confirm before this
   // got logged (see PendingTransaction.senderNameConfirmed) — staff should
   // still spot-check these.
-  slipSenderName     String?
-  senderNameMismatch Boolean @default(false)
+  slipSenderName       String?
+  senderNameMismatch   Boolean  @default(false)
 
   @@index([date])
   @@index([category])
@@ -94,22 +94,22 @@ model ProcessedLineEvent {
 // is met (at which point it's converted into an Expense and deleted), or it
 // expires unanswered.
 model PendingTransaction {
-  id              String    @id @default(cuid())
-  lineUserId      String    @unique
-  category        String?
-  amount          Float?
-  description     String?
-  date            DateTime?
+  id                   String    @id @default(cuid())
+  lineUserId           String    @unique
+  category             String?
+  amount               Float?
+  description          String?
+  date                 DateTime?
   // Whether a slip image has been seen for this transaction — tracked
   // separately from slipImageUrl because the Blob upload it depends on is
   // best-effort (skipped entirely if BLOB_READ_WRITE_TOKEN isn't set) and
   // must never gate whether the flow can proceed.
-  hasSlip         Boolean   @default(false)
-  slipImageHash   String?
-  slipImageUrl    String?
-  slipIsPdf       Boolean   @default(false)
-  referenceNumber String?
-  loanType        String?
+  hasSlip              Boolean   @default(false)
+  slipImageHash        String?
+  slipImageUrl         String?
+  slipIsPdf            Boolean   @default(false)
+  referenceNumber      String?
+  loanType             String?
   depositAccountNumber String?
   // The name read off the slip's "จาก" (sender) field, and whether the
   // member has confirmed (once asked) that a slip whose name didn't match
@@ -119,9 +119,9 @@ model PendingTransaction {
   // one, regardless of whether member identity is known yet: the mismatch
   // comparison itself only runs once both are available, so this can't be
   // done at submit time.
-  slipSenderName      String?
-  senderNameConfirmed Boolean @default(false)
-  createdAt       DateTime  @default(now())
+  slipSenderName       String?
+  senderNameConfirmed  Boolean   @default(false)
+  createdAt            DateTime  @default(now())
 }
 
 // A supporting document (payslip, ID card copy, house registration copy,
@@ -235,10 +235,10 @@ model OrganizationUnit {
 // richer source than LineUser, which this bot only populates from what
 // members type in via submit_member_info.
 model MemberRoster {
-  id           String   @id @default(cuid())
-  memberNumber String   @unique
-  memberName   String
-  unitName     String?
+  id              String   @id @default(cuid())
+  memberNumber    String   @unique
+  memberName      String
+  unitName        String?
   // Short per-member "รหัสผู้รับผิดชอบ" code (e.g. a single digit),
   // imported from column H of the "สมาชิก_LINE_OA" sheet — looked up in
   // ResponsibleContact to find the loan officer for this member directly.
@@ -247,18 +247,18 @@ model MemberRoster {
   // typos than the free-text unitName match against LoanDistrictContact,
   // which remains as a secondary fallback for members without a code.
   responsibleCode String?
-  lineUserId   String?
-  nickname     String?
+  lineUserId      String?
+  nickname        String?
   // 13-digit เลขประจำตัวประชาชน and registered phone number, imported from
   // columns F/G of the "สมาชิก_LINE_OA" sheet — used only to verify a
   // member's identity when they ask the bot for their own เลขสมาชิก (see
   // lib/memberLookup.ts), never shown or matched against for anything
   // else. Not unique/required at the DB level since import data quality
   // varies; a record missing either simply can't be used for lookup.
-  nationalId   String?
-  phone        String?
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  nationalId      String?
+  phone           String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
 
   @@index([lineUserId])
   @@index([nationalId])
@@ -399,4 +399,59 @@ model DepartmentContact {
 
   @@unique([department, lineUserId])
   @@index([department])
+}
+
+// One month's round of รายการหัก — the deduction lists sent to every
+// employing unit so they can withhold members' payments from payroll.
+// `period` uses the MMYY folder convention staff already work in (e.g.
+// "0969" = กันยายน 2569), so a round on screen matches the folder on their
+// machine without translation.
+//
+// The files themselves are still produced locally by the raikar-hak
+// workflow (it reads the previous month's Excel from D:\1รายการหัก\, which
+// nothing hosted can reach). What this table adds is the part that was
+// previously tracked by memory and eyeballing folders: which of the 60+
+// units have a file ready, which have actually been sent, when, and how.
+model DeductionRound {
+  id        String    @id @default(cuid())
+  period    String    @unique
+  label     String
+  note      String?
+  // Set once staff consider the round finished; kept rather than deleted so
+  // previous months stay auditable.
+  closedAt  DateTime?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+}
+
+// One unit's file within a round, plus how its delivery went.
+//
+// unitName matches OrganizationUnit.name as a plain string rather than a
+// foreign key — same convention as every other cross-reference in this
+// schema (see the LineUser comment) — so a unit renamed or dropped from the
+// org sheet never destroys the send history of a round already completed.
+model DeductionUnitFile {
+  id          String    @id @default(cuid())
+  roundId     String
+  unitName    String
+  // Blob pathname + original filename. Null until staff upload the file.
+  fileName    String?
+  filePath    String?
+  // Totals read off the sheet at upload time, shown so staff can sanity-check
+  // a round against the cooperative's own figures before sending anything.
+  amount      Float?
+  memberCount Int?
+  // pending  — no file yet, or file ready but not sent
+  // sent     — delivered (see sentVia for the channel)
+  // failed   — a send was attempted and the channel rejected it
+  // skipped  — deliberately not sending this unit this round
+  sendStatus  String    @default("pending")
+  sentAt      DateTime?
+  sentVia     String?
+  sendError   String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@unique([roundId, unitName])
+  @@index([roundId])
 }
