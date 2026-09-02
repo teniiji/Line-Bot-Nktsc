@@ -23,6 +23,7 @@ import ConfirmDialog from "@/components/ConfirmDialog";
 import Tabs from "@/components/Tabs";
 import TestDataCleanupPanel from "@/components/TestDataCleanupPanel";
 import DeductionRoundsPanel from "@/components/DeductionRoundsPanel";
+import OrganizationUnitsPanel from "@/components/OrganizationUnitsPanel";
 
 const PAGE_SIZE = 10;
 const EXPORT_PAGE_SIZE = 100;
@@ -225,7 +226,12 @@ export default function Dashboard() {
           {
             id: "deductions",
             label: "รายการหัก",
-            content: <DeductionRoundsPanel />,
+            content: (
+              <div className="space-y-6">
+                <DeductionRoundsPanel />
+                <OrganizationUnitsPanel />
+              </div>
+            ),
           },
           {
             id: "service-requests",

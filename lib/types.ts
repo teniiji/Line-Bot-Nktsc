@@ -117,3 +117,17 @@ export interface DeductionUnitRow {
   sentVia: string | null;
   sendError: string | null;
 }
+
+// A unit that receives รายการหัก each month, with the contact details the
+// send step uses. Editable from the dashboard (OrganizationUnitsPanel) as
+// well as by scripts/import-org-data.ts.
+export interface OrganizationUnitEntry {
+  id: string;
+  name: string;
+  groupName: string | null;
+  contactName: string | null;
+  email: string | null;
+  lineUserId: string | null;
+  contactMethod: string | null;
+  note: string | null;
+}
