@@ -19,6 +19,7 @@ export default function LineUsersPanel() {
   const [saving, setSaving] = useState(false);
   const [togglingId, setTogglingId] = useState<string | null>(null);
   const [pendingDelete, setPendingDelete] = useState<LineUser | null>(null);
+  const [bulkAction, setBulkAction] = useState<"pause" | "resume" | null>(null);
 
   // Debounce the search box so every keystroke doesn't fire a request —
   // commits to `search` (which actually triggers the fetch) 300ms after
@@ -111,24 +112,61 @@ export default function LineUsersPanel() {
     await fetchUsers();
   };
 
+  // Bulk-pauses/resumes everyone matching the current search — not just the
+  // page on screen, so this stays correct on page 2+ of a long list. `total`
+  // already tracks exactly that count (it's the same `where` the GET route
+  // used), so the confirm dialog can tell staff how many people are affected
+  // before they commit.
+  const handleConfirmBulk = async () => {
+    if (!bulkAction) return;
+    setBulkAction(null);
+    await fetch("/api/line-users", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ botPaused: bulkAction === "pause", search }),
+    });
+    await fetchUsers();
+  };
+
   return (
     <div className="bg-white rounded-lg shadow">
-      <div className="flex items-center justify-between gap-3 px-4 py-3 border-b border-slate-100">
+      <div className="flex items-start justify-between gap-3 px-4 py-3 border-b border-slate-100 flex-wrap">
         <div>
           <h2 className="font-semibold">สมาชิกที่เคยทักบอท (LINE)</h2>
           <p className="text-xs text-slate-500 mt-1">
             ปิด "บอทตอบอัตโนมัติ" ของคนใดคนหนึ่งได้ เวลาเจ้าหน้าที่กำลังคุยกับสมาชิกคนนั้นเองใน
             chat.line.biz — บอทจะไม่ตอบข้อความจากคนนี้เลย (ไม่กระทบสมาชิกคนอื่น) — "เลขสมาชิก"/"สังกัด"
-            จะขึ้นก็ต่อเมื่อคนนั้นเคยยืนยันตัวตนตอนบันทึกธุรกรรมแล้วเท่านั้น
+            จะขึ้นก็ต่อเมื่อคนนั้นเคยยืนยันตัวตนตอนบันทึกธุรกรรมแล้วเท่านั้น หรือปิด/เปิดพร้อมกันทั้งหมด
+            (เฉพาะที่ตรงกับคำค้นหาถ้ามี) ด้วยปุ่มด้านขวา
           </p>
         </div>
-        <input
-          type="text"
-          value={searchInput}
-          onChange={(e) => setSearchInput(e.target.value)}
-          placeholder="ค้นหาชื่อ, ชื่อเล่น, เลขสมาชิก, หรือ LINE UserId"
-          className="text-sm border border-slate-300 rounded px-3 py-1.5 w-64"
-        />
+        <div className="flex flex-col items-end gap-2">
+          <input
+            type="text"
+            value={searchInput}
+            onChange={(e) => setSearchInput(e.target.value)}
+            placeholder="ค้นหาชื่อ, ชื่อเล่น, เลขสมาชิก, หรือ LINE UserId"
+            className="text-sm border border-slate-300 rounded px-3 py-1.5 w-64"
+          />
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={() => setBulkAction("pause")}
+              disabled={loading || total === 0}
+              className="text-xs px-2.5 py-1.5 border border-red-200 text-red-700 rounded hover:bg-red-50 disabled:opacity-40 disabled:cursor-not-allowed whitespace-nowrap"
+            >
+              ปิดทั้งหมด
+            </button>
+            <button
+              type="button"
+              onClick={() => setBulkAction("resume")}
+              disabled={loading || total === 0}
+              className="text-xs px-2.5 py-1.5 border border-slate-300 text-slate-600 rounded hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed whitespace-nowrap"
+            >
+              เปิดทั้งหมด
+            </button>
+          </div>
+        </div>
       </div>
 
       {loading ? (
@@ -278,6 +316,25 @@ export default function LineUsersPanel() {
         confirmLabel="ลบ"
         onConfirm={handleConfirmDelete}
         onCancel={() => setPendingDelete(null)}
+      />
+
+      <ConfirmDialog
+        open={bulkAction !== null}
+        title={bulkAction === "pause" ? "ปิดบอทตอบอัตโนมัติทั้งหมด?" : "เปิดบอทตอบอัตโนมัติทั้งหมด?"}
+        description={
+          bulkAction
+            ? `จะ${bulkAction === "pause" ? "ปิด" : "เปิด"}บอทตอบอัตโนมัติของสมาชิก ${total} คน${
+                search ? ` ที่ตรงกับคำค้นหา "${search}"` : ""
+              }${
+                bulkAction === "pause"
+                  ? " — บอทจะไม่ตอบข้อความจากคนเหล่านี้เลยจนกว่าจะเปิดกลับทีละคนหรือกด \"เปิดทั้งหมด\" อีกครั้ง (ไม่กระทบสวิตช์ระบบใน \"ตั้งค่าระบบ\")"
+                  : " — บอทจะกลับมาตอบข้อความของคนเหล่านี้ตามปกติ"
+              }`
+            : undefined
+        }
+        confirmLabel={bulkAction === "pause" ? "ปิดทั้งหมด" : "เปิดทั้งหมด"}
+        onConfirm={handleConfirmBulk}
+        onCancel={() => setBulkAction(null)}
       />
     </div>
   );
