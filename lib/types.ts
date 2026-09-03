@@ -131,3 +131,40 @@ export interface OrganizationUnitEntry {
   contactMethod: string | null;
   note: string | null;
 }
+
+export interface StatementRoundSummary {
+  id: string;
+  period: string;
+  label: string;
+  createdAt: string;
+  totalMembers: number;
+  paidMembers: number;
+  overpaidMembers: number;
+  unpaidMembers: number;
+}
+
+export interface StatementMemberRow {
+  id: string;
+  memberNumber: string;
+  name: string;
+  unitName: string | null;
+  hCode: string | null;
+  note: string | null;
+  accountNumber: string | null;
+  amountDue: number;
+  amountPaid: number;
+  paidAt: string | null;
+  paidBranch: string | null;
+  status: string;
+}
+
+// A transfer that matched nobody on the round's list — money that arrived
+// under an account number the หักไม่ได้ sheet doesn't carry.
+export interface StatementUnmatchedRow {
+  id: string;
+  accountNumber: string;
+  amount: number;
+  transferredAt: string | null;
+  branch: string | null;
+  description: string | null;
+}
