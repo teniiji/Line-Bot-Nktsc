@@ -5,6 +5,18 @@ import { formatAmount } from "@/lib/format";
 import { DeductionRoundSummary, DeductionUnitRow } from "@/lib/types";
 import ConfirmDialog from "@/components/ConfirmDialog";
 import { describeDeductionPeriod } from "@/lib/deductionPeriod";
+import { matchFileNameToUnit } from "@/lib/deductionFileMatch";
+
+interface BulkRow {
+  file: File;
+  unitName: string | null;
+}
+
+// Uploads run with limited concurrency instead of all at once — Vercel Blob
+// and the round's units table both cope fine with a handful in flight, but
+// firing 60 requests simultaneously from the browser has no benefit and
+// makes the progress count jump unreadably.
+const BULK_UPLOAD_CONCURRENCY = 4;
 
 const STATUS_LABEL: Record<string, string> = {
   pending: "ยังไม่ส่ง",
@@ -52,6 +64,17 @@ export default function DeductionRoundsPanel() {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const uploadTargetRef = useRef<string | null>(null);
 
+  // Bulk upload: pick every unit's file at once instead of the per-row
+  // click → find file → confirm cycle, matching each file to a unit by name
+  // (lib/deductionFileMatch.ts) and letting staff fix any file the matcher
+  // wasn't confident about before anything is actually sent.
+  const bulkFileInputRef = useRef<HTMLInputElement | null>(null);
+  const [showBulk, setShowBulk] = useState(false);
+  const [bulkRows, setBulkRows] = useState<BulkRow[]>([]);
+  const [bulkUploading, setBulkUploading] = useState(false);
+  const [bulkProgress, setBulkProgress] = useState({ done: 0, total: 0 });
+  const [bulkSummary, setBulkSummary] = useState<{ ok: number; failed: string[] } | null>(null);
+
   const fetchRounds = useCallback(async () => {
     setLoadingRounds(true);
     const res = await fetch("/api/deduction-rounds");
@@ -78,6 +101,12 @@ export default function DeductionRoundsPanel() {
   useEffect(() => {
     if (selectedId) fetchUnits(selectedId);
     else setUnits([]);
+    // Switching rounds mid-review would otherwise leave bulk rows matched
+    // against the previous round's unit list, silently uploading into the
+    // wrong round if confirmed.
+    setShowBulk(false);
+    setBulkRows([]);
+    setBulkSummary(null);
   }, [selectedId, fetchUnits]);
 
   const createRound = async () => {
@@ -136,6 +165,93 @@ export default function DeductionRoundsPanel() {
     } finally {
       setBusyUnit(null);
     }
+  };
+
+  const openBulkPicker = () => {
+    setBulkSummary(null);
+    bulkFileInputRef.current?.click();
+  };
+
+  const handleBulkFilesChosen = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files ?? []);
+    e.target.value = "";
+    if (files.length === 0) return;
+
+    const unitNames = units.map((u) => u.unitName);
+    setBulkRows(files.map((file) => ({ file, unitName: matchFileNameToUnit(file.name, unitNames) })));
+    setBulkSummary(null);
+    setShowBulk(true);
+  };
+
+  const updateBulkRowUnit = (index: number, unitName: string | null) => {
+    setBulkRows((prev) => prev.map((r, i) => (i === index ? { ...r, unitName } : r)));
+  };
+
+  const removeBulkRow = (index: number) => {
+    setBulkRows((prev) => prev.filter((_, i) => i !== index));
+  };
+
+  const cancelBulk = () => {
+    setShowBulk(false);
+    setBulkRows([]);
+    setBulkSummary(null);
+  };
+
+  // Units assigned to more than one selected file — uploading would just let
+  // the last one silently win, which is worse than making staff resolve it
+  // up front while every file is still on screen together.
+  const duplicateUnitNames = (() => {
+    const seen = new Set<string>();
+    const dupes = new Set<string>();
+    for (const row of bulkRows) {
+      if (!row.unitName) continue;
+      if (seen.has(row.unitName)) dupes.add(row.unitName);
+      seen.add(row.unitName);
+    }
+    return dupes;
+  })();
+
+  const runBulkUpload = async () => {
+    if (!selectedId) return;
+    const toUpload = bulkRows.filter((r) => r.unitName && !duplicateUnitNames.has(r.unitName));
+    if (toUpload.length === 0) return;
+
+    setBulkUploading(true);
+    setBulkProgress({ done: 0, total: toUpload.length });
+    const failed: string[] = [];
+
+    let cursor = 0;
+    const worker = async () => {
+      while (cursor < toUpload.length) {
+        const row = toUpload[cursor];
+        cursor += 1;
+        const form = new FormData();
+        form.append("unitName", row.unitName as string);
+        form.append("file", row.file);
+        try {
+          const res = await fetch(`/api/deduction-rounds/${selectedId}/upload`, {
+            method: "POST",
+            body: form,
+          });
+          if (!res.ok) {
+            const body = await res.json().catch(() => ({}));
+            failed.push(`${row.unitName}: ${body.error || "อัปโหลดไม่สำเร็จ"}`);
+          }
+        } catch {
+          failed.push(`${row.unitName}: เชื่อมต่อไม่สำเร็จ`);
+        }
+        setBulkProgress((prev) => ({ ...prev, done: prev.done + 1 }));
+      }
+    };
+
+    await Promise.all(
+      Array.from({ length: Math.min(BULK_UPLOAD_CONCURRENCY, toUpload.length) }, worker)
+    );
+
+    setBulkUploading(false);
+    setBulkSummary({ ok: toUpload.length - failed.length, failed });
+    setBulkRows([]);
+    await Promise.all([fetchUnits(selectedId), fetchRounds()]);
   };
 
   const send = async (unitName: string, channel: "line" | "manual") => {
@@ -296,12 +412,144 @@ export default function DeductionRoundsPanel() {
                 <span className="text-red-600">ส่งไม่สำเร็จ {selected.failedUnits}</span>
               )}
               {totalAmount > 0 && <span>ยอดรวมที่อัปโหลด {formatAmount(totalAmount)}</span>}
+              <button onClick={openBulkPicker} className="text-slate-900 hover:underline">
+                อัปโหลดหลายไฟล์พร้อมกัน
+              </button>
               <button
                 onClick={() => setPendingDelete(selected)}
                 className="ml-auto text-red-600 hover:underline"
               >
                 ลบรอบนี้
               </button>
+            </div>
+          )}
+
+          {bulkSummary && (
+            <div
+              className={`mx-4 mt-3 rounded px-3 py-2 text-sm ${
+                bulkSummary.failed.length > 0
+                  ? "bg-amber-50 text-amber-800"
+                  : "bg-green-50 text-green-700"
+              }`}
+            >
+              อัปโหลดสำเร็จ {bulkSummary.ok} ไฟล์
+              {bulkSummary.failed.length > 0 && (
+                <>
+                  , ไม่สำเร็จ {bulkSummary.failed.length} ไฟล์:
+                  <ul className="list-disc pl-5 mt-1">
+                    {bulkSummary.failed.map((f, i) => (
+                      <li key={i}>{f}</li>
+                    ))}
+                  </ul>
+                </>
+              )}
+            </div>
+          )}
+
+          {showBulk && (
+            <div className="mx-4 mt-3 border border-slate-200 rounded-lg p-3 bg-slate-50">
+              <div className="flex items-center justify-between gap-3 mb-2">
+                <div>
+                  <p className="text-sm font-medium">
+                    เลือกไฟล์ทั้งหมด {bulkRows.length} ไฟล์แล้ว จับคู่กับหน่วยงานให้อัตโนมัติจากชื่อไฟล์
+                  </p>
+                  <p className="text-xs text-slate-500">
+                    ไฟล์ไหนจับคู่ไม่ได้หรือผิด แก้ที่ช่องเลือกหน่วยงานของแถวนั้นได้เลยก่อนกดอัปโหลด
+                  </p>
+                </div>
+                <button
+                  onClick={openBulkPicker}
+                  disabled={bulkUploading}
+                  className="text-sm px-3 py-1.5 border border-slate-300 rounded whitespace-nowrap disabled:opacity-50"
+                >
+                  เลือกไฟล์ใหม่
+                </button>
+              </div>
+
+              {bulkRows.length === 0 ? (
+                <p className="text-sm text-slate-500 py-4 text-center">
+                  ยังไม่ได้เลือกไฟล์ — กด "เลือกไฟล์ใหม่" แล้วเลือกได้หลายไฟล์พร้อมกัน (Ctrl/Shift คลิก)
+                </p>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm min-w-[700px]">
+                    <thead className="text-slate-500 text-left">
+                      <tr>
+                        <th className="px-2 py-1">ไฟล์</th>
+                        <th className="px-2 py-1">หน่วยงาน</th>
+                        <th className="px-2 py-1"></th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {bulkRows.map((row, i) => (
+                        <tr key={i} className="border-t border-slate-200">
+                          <td className="px-2 py-1 break-all">{row.file.name}</td>
+                          <td className="px-2 py-1">
+                            <select
+                              value={row.unitName ?? ""}
+                              onChange={(e) => updateBulkRowUnit(i, e.target.value || null)}
+                              className={`border rounded px-2 py-1 text-sm w-64 ${
+                                !row.unitName
+                                  ? "border-amber-300 bg-amber-50"
+                                  : duplicateUnitNames.has(row.unitName)
+                                    ? "border-red-300 bg-red-50"
+                                    : "border-slate-300"
+                              }`}
+                            >
+                              <option value="">— ไม่จับคู่ (จะไม่อัปโหลด) —</option>
+                              {units.map((u) => (
+                                <option key={u.id} value={u.unitName}>
+                                  {u.unitName}
+                                </option>
+                              ))}
+                            </select>
+                            {row.unitName && duplicateUnitNames.has(row.unitName) && (
+                              <p className="text-xs text-red-600 mt-0.5">
+                                มีไฟล์อื่นจับคู่หน่วยงานนี้ซ้ำ — เลือกให้เหลือไฟล์เดียว
+                              </p>
+                            )}
+                          </td>
+                          <td className="px-2 py-1 text-right">
+                            <button
+                              onClick={() => removeBulkRow(i)}
+                              disabled={bulkUploading}
+                              className="text-slate-400 hover:underline disabled:opacity-40"
+                            >
+                              ลบ
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+
+              <div className="flex items-center gap-3 mt-3">
+                <button
+                  onClick={runBulkUpload}
+                  disabled={
+                    bulkUploading ||
+                    bulkRows.filter((r) => r.unitName && !duplicateUnitNames.has(r.unitName))
+                      .length === 0
+                  }
+                  className="text-sm px-3 py-1.5 bg-slate-900 text-white rounded disabled:opacity-50"
+                >
+                  {bulkUploading
+                    ? `กำลังอัปโหลด… (${bulkProgress.done}/${bulkProgress.total})`
+                    : `อัปโหลดทั้งหมด (${
+                        bulkRows.filter((r) => r.unitName && !duplicateUnitNames.has(r.unitName))
+                          .length
+                      } ไฟล์)`}
+                </button>
+                <button
+                  onClick={cancelBulk}
+                  disabled={bulkUploading}
+                  className="text-sm text-slate-500 hover:underline disabled:opacity-50"
+                >
+                  ยกเลิก
+                </button>
+              </div>
             </div>
           )}
 
@@ -431,6 +679,15 @@ export default function DeductionRoundsPanel() {
         type="file"
         accept=".xlsx,.xls"
         onChange={handleFileChosen}
+        className="hidden"
+      />
+
+      <input
+        ref={bulkFileInputRef}
+        type="file"
+        accept=".xlsx,.xls"
+        multiple
+        onChange={handleBulkFilesChosen}
         className="hidden"
       />
 
