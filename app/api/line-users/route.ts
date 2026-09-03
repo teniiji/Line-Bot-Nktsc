@@ -10,11 +10,11 @@ export const dynamic = "force-dynamic";
 const DEFAULT_PAGE_SIZE = 20;
 const MAX_PAGE_SIZE = 100;
 
-export async function GET(request: NextRequest) {
-  const { searchParams } = new URL(request.url);
-
-  const search = searchParams.get("search")?.trim();
-  const where: Record<string, unknown> = search
+// Shared with PATCH below so "ปิดทั้งหมด" bulk-pauses exactly the set of
+// people the search box is currently showing (every matching page, not just
+// the one on screen) instead of drifting from what GET actually returns.
+function buildLineUserWhere(search: string | undefined): Record<string, unknown> {
+  return search
     ? {
         OR: [
           { displayName: { contains: search, mode: "insensitive" } },
@@ -24,6 +24,13 @@ export async function GET(request: NextRequest) {
         ],
       }
     : {};
+}
+
+export async function GET(request: NextRequest) {
+  const { searchParams } = new URL(request.url);
+
+  const search = searchParams.get("search")?.trim();
+  const where = buildLineUserWhere(search);
 
   const page = Math.max(1, Number(searchParams.get("page")) || 1);
   const pageSize = Math.min(
@@ -72,4 +79,34 @@ export async function GET(request: NextRequest) {
   }));
 
   return NextResponse.json({ data, total, page, pageSize });
+}
+
+// Bulk-set botPaused for everyone matching the current search (or literally
+// everyone, with no search box text) — "ปิดทั้งหมด"/"เปิดทั้งหมด" in the
+// dashboard, for when staff need to silence the bot for a whole list at once
+// instead of clicking every row. A single updateMany instead of looping the
+// client's one loaded page: LineUsersPanel only ever holds PAGE_SIZE rows,
+// far fewer than the real table.
+//
+// Deliberately a different lever from `messaging_enabled` (ตั้งค่าระบบ):
+// that flag silences every reply system-wide, including to people who
+// message for the first time after it's flipped. This only touches
+// existing LineUser rows, so someone who messages for the first time after
+// a bulk pause still gets a normal reply — matching what the button says
+// ("ปิดทั้งหมด" for the people listed here, not a maintenance-mode switch).
+export async function PATCH(request: NextRequest) {
+  const body = await request.json();
+  const { botPaused, search } = body;
+
+  if (typeof botPaused !== "boolean") {
+    return NextResponse.json({ error: "botPaused must be a boolean" }, { status: 400 });
+  }
+  if (search !== undefined && typeof search !== "string") {
+    return NextResponse.json({ error: "search must be a string" }, { status: 400 });
+  }
+
+  const where = buildLineUserWhere(search?.trim());
+  const result = await prisma.lineUser.updateMany({ where, data: { botPaused } });
+
+  return NextResponse.json({ count: result.count });
 }
