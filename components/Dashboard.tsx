@@ -24,6 +24,7 @@ import Tabs from "@/components/Tabs";
 import TestDataCleanupPanel from "@/components/TestDataCleanupPanel";
 import DeductionRoundsPanel from "@/components/DeductionRoundsPanel";
 import OrganizationUnitsPanel from "@/components/OrganizationUnitsPanel";
+import StatementReconcilePanel from "@/components/StatementReconcilePanel";
 
 const PAGE_SIZE = 10;
 const EXPORT_PAGE_SIZE = 100;
@@ -232,6 +233,11 @@ export default function Dashboard() {
                 <OrganizationUnitsPanel />
               </div>
             ),
+          },
+          {
+            id: "statement",
+            label: "เทียบ Statement",
+            content: <StatementReconcilePanel />,
           },
           {
             id: "service-requests",

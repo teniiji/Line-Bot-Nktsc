@@ -1,0 +1,219 @@
+// Pure logic behind the "เทียบ Statement" tab: reading the two kinds of
+// sheet staff upload, and deciding what a member's payment status is.
+//
+// Kept free of Prisma and ExcelJS so the rules that decide whether someone
+// has paid can be tested directly — these are the numbers staff chase people
+// over, so getting them wrong is expensive.
+
+export interface MaiDaiRow {
+  memberNumber: string;
+  name: string;
+  unitName: string | null;
+  note: string | null;
+  accountNumber: string | null;
+  hCode: string | null;
+  amountDue: number;
+}
+
+export interface TransferRow {
+  accountNumber: string;
+  amount: number;
+  transferredAt: Date | null;
+  description: string;
+}
+
+export type PaymentStatus = "paid" | "overpaid" | "unpaid";
+
+// A bank account number reaches us in whatever shape Excel felt like storing
+// it: as a number (so "0431234567" arrives as 431234567), as a float with a
+// trailing ".0", or with spaces and dashes staff typed in. The statement
+// side always gives plain digits, so both sides are reduced to digits before
+// they are compared.
+export function normalizeAccountNumber(value: unknown): string | null {
+  if (value === null || value === undefined) return null;
+  const digits = String(value)
+    .trim()
+    .replace(/\.0+$/, "")
+    .replace(/\D/g, "");
+  return digits === "" ? null : digits;
+}
+
+export function parseAmount(value: unknown): number | null {
+  if (value === null || value === undefined) return null;
+  if (typeof value === "number") return Number.isFinite(value) ? value : null;
+  const cleaned = String(value).trim().replace(/,/g, "");
+  if (cleaned === "") return null;
+  const num = Number(cleaned);
+  return Number.isFinite(num) ? num : null;
+}
+
+// Statement dates come out of the bank's export in Buddhist-era years, and
+// sometimes with the separator missing between day and year ("25/062569"
+// instead of "25/06/2569"). Both are normalised here rather than at the call
+// site, so every date on screen is a real Gregorian date.
+export function parseStatementDate(value: unknown): Date | null {
+  if (value === null || value === undefined || value === "") return null;
+  if (value instanceof Date) return Number.isNaN(value.getTime()) ? null : value;
+
+  const raw = String(value).trim();
+  if (!raw) return null;
+
+  // "25/062569" → "25/06/2569"
+  const repaired = raw.replace(/^(\d{1,2})[/-](\d{2})(25\d{2})\b/, "$1/$2/$3");
+
+  const match = repaired.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{4})/);
+  if (match) {
+    const day = Number(match[1]);
+    const month = Number(match[2]);
+    let year = Number(match[3]);
+    if (year >= 2500) year -= 543;
+    if (month < 1 || month > 12 || day < 1 || day > 31) return null;
+    const date = new Date(Date.UTC(year, month - 1, day));
+    return Number.isNaN(date.getTime()) ? null : date;
+  }
+
+  const parsed = new Date(repaired);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+// The cooperative's own accounts: which branch a transfer landed at is not
+// in the statement rows themselves, it is which statement the row came from.
+export const STATEMENT_ACCOUNTS: Record<string, string> = {
+  "413": "หนองคาย",
+  "447": "บึงกาฬ",
+};
+
+// "TR fr 0431234567" is how a member's own transfer appears in the
+// statement. Anything else on the statement (BSD14 unit transfers, SDTRC
+// pension postings, interest, opening balances) is not a member paying off a
+// failed deduction and is deliberately ignored here.
+export function extractTransferAccount(description: unknown): string | null {
+  const text = String(description ?? "");
+  const match = text.match(/TR\s+fr\s+(\d+)/i);
+  return match ? match[1] : null;
+}
+
+// Reads the "รวม_ไม่ได้" sheet, which has no header row — column positions
+// are the contract (see the mai-dai workflow's sheet layout):
+//   A เลขสมาชิก · B ชื่อ-สกุล · C ยอดแจ้งหัก · D ยอดหักได้ · E ยอดหักไม่ได้
+//   F รหัสองค์กร · G หมายเหตุ · H เลขประชาชน · I เลขบัญชี · J H-code
+//
+// Only rows with a positive ยอดหักไม่ได้ are members this round is about;
+// the sheet also carries rows that were deducted in full, and importing
+// those would make every summary count meaningless. เลขประชาชน (H) is
+// deliberately not read: it is not needed to match a transfer, and there is
+// no reason to copy national ID numbers into this database.
+export function parseMaiDaiRows(rows: unknown[][]): MaiDaiRow[] {
+  const parsed: MaiDaiRow[] = [];
+
+  for (const row of rows) {
+    const memberNumber = String(row[0] ?? "").trim();
+    const amountDue = parseAmount(row[4]);
+    if (!memberNumber || amountDue === null || amountDue <= 0) continue;
+
+    const text = (index: number): string | null => {
+      const value = String(row[index] ?? "").trim();
+      return value === "" ? null : value;
+    };
+
+    parsed.push({
+      memberNumber,
+      name: text(1) ?? "",
+      unitName: text(5),
+      note: text(6),
+      accountNumber: normalizeAccountNumber(row[8]),
+      hCode: text(9),
+      amountDue,
+    });
+  }
+
+  return parsed;
+}
+
+// Reads a bank statement sheet. The bank's export puts its own headers a
+// dozen rows down, so rather than trusting a fixed start row, every row is
+// examined and only those carrying a "TR fr" description are kept —
+// header rows and the export's preamble have none.
+//   A Date · B Teller Id · C Txn Code · D Description · E Cheque No. · F Amount
+export function parseStatementRows(rows: unknown[][]): TransferRow[] {
+  const transfers: TransferRow[] = [];
+
+  for (const row of rows) {
+    const description = String(row[3] ?? "");
+    const accountNumber = extractTransferAccount(description);
+    if (!accountNumber) continue;
+
+    const amount = parseAmount(row[5]);
+    if (amount === null || amount <= 0) continue;
+
+    transfers.push({
+      accountNumber,
+      amount,
+      transferredAt: parseStatementDate(row[0]),
+      description: description.trim(),
+    });
+  }
+
+  return transfers;
+}
+
+// The status rule staff already work to: compare what arrived against what
+// was owed. A member who paid nothing lands in the same "ยังค้าง" bucket as
+// one who paid too little, which is the point — both still owe money.
+export function calcPaymentStatus(
+  amountPaid: number,
+  amountDue: number
+): { status: PaymentStatus; diff: number } {
+  const diff = Math.round((amountPaid - amountDue) * 100) / 100;
+  if (diff === 0) return { status: "paid", diff };
+  if (diff > 0) return { status: "overpaid", diff };
+  return { status: "unpaid", diff };
+}
+
+export interface MatchResult {
+  matchedByMember: Map<string, { amountPaid: number; paidAt: Date | null }>;
+  unmatched: TransferRow[];
+}
+
+// Matches a statement's transfers against the round's members by account
+// number. Several transfers can belong to one member (paying in
+// instalments), so amounts accumulate and the latest transfer date wins —
+// that is the date staff would quote when asked "when did they pay".
+export function matchTransfers(
+  transfers: TransferRow[],
+  members: { memberNumber: string; accountNumber: string | null }[]
+): MatchResult {
+  const memberByAccount = new Map<string, string>();
+  for (const member of members) {
+    if (member.accountNumber) memberByAccount.set(member.accountNumber, member.memberNumber);
+  }
+
+  const matchedByMember = new Map<string, { amountPaid: number; paidAt: Date | null }>();
+  const unmatched: TransferRow[] = [];
+
+  for (const transfer of transfers) {
+    const memberNumber = memberByAccount.get(transfer.accountNumber);
+    if (!memberNumber) {
+      unmatched.push(transfer);
+      continue;
+    }
+
+    const existing = matchedByMember.get(memberNumber);
+    if (existing) {
+      existing.amountPaid += transfer.amount;
+      if (
+        transfer.transferredAt &&
+        (!existing.paidAt || transfer.transferredAt > existing.paidAt)
+      ) {
+        existing.paidAt = transfer.transferredAt;
+      }
+    } else {
+      matchedByMember.set(memberNumber, {
+        amountPaid: transfer.amount,
+        paidAt: transfer.transferredAt,
+      });
+    }
+  }
+
+  return { matchedByMember, unmatched };
+}

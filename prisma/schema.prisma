@@ -455,3 +455,90 @@ model DeductionUnitFile {
   @@unique([roundId, unitName])
   @@index([roundId])
 }
+
+// One month's Statement reconciliation — the step after รายการหัก where
+// staff work out which of the members payroll could NOT deduct from have
+// since transferred the money to the cooperative's bank accounts
+// themselves.
+//
+// Two inputs, both uploaded here: the list of members who couldn't be
+// deducted this round (produced locally, one row per member with their bank
+// account number), and the bank statements for the cooperative's two
+// accounts — 413 (หนองคาย) and 447 (บึงกาฬ). Matching is by bank account
+// number, which is what the "TR fr <account>" line in a statement gives us.
+//
+// `period` uses the same MMYY code as DeductionRound so a Statement round
+// lines up with the deduction round it follows, without being coupled to it
+// (a round can be reconciled even if the deduction side was tracked
+// elsewhere that month).
+model StatementRound {
+  id        String   @id @default(cuid())
+  period    String   @unique
+  label     String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// One member who could not be deducted this round, plus whatever the bank
+// statements say they have since paid.
+//
+// amountPaid accumulates every matching TR fr line rather than taking the
+// last one: a member who pays in two transfers has genuinely paid the sum,
+// and treating the second transfer as the whole payment would understate
+// what they owe.
+model StatementMember {
+  id            String    @id @default(cuid())
+  roundId       String
+  memberNumber  String
+  name          String
+  // สังกัด/รหัสองค์กร and H-code as they appear in the source sheet — kept
+  // as plain strings for the same reason as everywhere else in this schema.
+  unitName      String?
+  hCode         String?
+  note          String?
+  // The matching key. Nullable because the source sheet does leave it blank,
+  // and a member with no account number simply can never match a transfer.
+  accountNumber String?
+  amountDue     Float
+  amountPaid    Float     @default(0)
+  paidAt        DateTime?
+  paidBranch    String?
+  // paid     — amountPaid == amountDue (✅ ชำระครบ)
+  // overpaid — amountPaid > amountDue  (⚠️ ชำระเกิน)
+  // unpaid   — amountPaid < amountDue, including no payment at all (❌ ยังค้าง)
+  status        String    @default("unpaid")
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  @@unique([roundId, memberNumber])
+  @@index([roundId])
+}
+
+// Every "TR fr <account>" line read out of an uploaded statement, matched
+// to a member or not.
+//
+// Transfers are kept individually rather than summed onto the member row so
+// that re-uploading a statement can simply replace that account's rows and
+// recompute — with a single total per member, a member who paid into both
+// accounts would have one payment silently overwritten by the other. It also
+// means an unmatched transfer (money that arrived under an account number
+// nobody on the list has, usually a wrong or missing account on the source
+// sheet) is visible next to the matched ones instead of being dropped.
+model StatementTransfer {
+  id            String    @id @default(cuid())
+  roundId       String
+  // Null when the account number matched no member on this round's list.
+  memberNumber  String?
+  accountNumber String
+  amount        Float
+  transferredAt DateTime?
+  // Which of the cooperative's accounts this statement was for: 413
+  // (หนองคาย) or 447 (บึงกาฬ).
+  account       String
+  branch        String
+  description   String?
+  createdAt     DateTime  @default(now())
+
+  @@index([roundId])
+  @@index([roundId, account])
+}
