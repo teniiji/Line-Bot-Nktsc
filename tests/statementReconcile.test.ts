@@ -5,7 +5,8 @@ import {
   matchTransfers,
   normalizeAccountNumber,
   parseAmount,
-  parseMaiDaiRows,
+  parseMaiDaiSheet,
+  pickUnitNameColumn,
   parseStatementDate,
   parseStatementRows,
   transferFingerprint,
@@ -65,7 +66,7 @@ describe("extractTransferAccount", () => {
   });
 });
 
-describe("parseMaiDaiRows", () => {
+describe("parseMaiDaiSheet", () => {
   const rows: unknown[][] = [
     ["12345", "สมชาย ใจดี", 5000, 5000, 0, "สพป.นค เขต 1", null, "1234567890123", "0431234567", "7"],
     ["12346", "สมหญิง มีสุข", 5000, 2000, 3000, "สพป.นค เขต 1", "ขอผ่อน", "1234567890124", "0431234568", "7"],
@@ -74,12 +75,12 @@ describe("parseMaiDaiRows", () => {
   ];
 
   it("keeps only members who actually have an outstanding amount", () => {
-    const parsed = parseMaiDaiRows(rows);
+    const { rows: parsed } = parseMaiDaiSheet(rows);
     expect(parsed.map((r) => r.memberNumber)).toEqual(["12346", "12347"]);
   });
 
   it("reads the fields matching is built on", () => {
-    const [first, second] = parseMaiDaiRows(rows);
+    const [first, second] = parseMaiDaiSheet(rows).rows;
     expect(first).toMatchObject({
       memberNumber: "12346",
       name: "สมหญิง มีสุข",
@@ -93,8 +94,74 @@ describe("parseMaiDaiRows", () => {
   });
 
   it("does not copy national ID numbers out of the sheet", () => {
-    const serialized = JSON.stringify(parseMaiDaiRows(rows));
+    const serialized = JSON.stringify(parseMaiDaiSheet(rows).rows);
     expect(serialized).not.toContain("1234567890124");
+  });
+
+  // The 0869 sheet puts a numeric หน่วยงาน code in F — the same value as the
+  // H-code in J — and the real name in G. Reading a fixed column showed a
+  // bare "1" as สังกัด and pushed the school name into หมายเหตุ.
+  it("takes สังกัด from whichever column holds names, not a fixed position", () => {
+    const codeInF: unknown[][] = [
+      ["28590", "นายเสกสิน ศรีปากดี", 30700, 26440, 4260, "75", "ร.ร.บ้านหนองเดิ่น", "2461400016234", null, "75"],
+    ];
+    const [member] = parseMaiDaiSheet(codeInF).rows;
+    expect(member.unitName).toBe("ร.ร.บ้านหนองเดิ่น");
+    expect(member.hCode).toBe("75");
+    // Nothing is left to be a หมายเหตุ once G is the unit name — repeating
+    // the code there would just be noise beside the member's name.
+    expect(member.note).toBeNull();
+  });
+
+  it("separates units awaiting a result from members who paid in full", () => {
+    const mixed: unknown[][] = [
+      // Reported and collected everything: not outstanding, not awaited.
+      ["001", "หักได้ครบ", 5000, 5000, 0, "1", "ร.ร. ก", null, null, "1"],
+      // Reported, still short.
+      ["002", "ยังค้าง", 5000, 2000, 3000, "1", "ร.ร. ก", null, null, "1"],
+      // No result at all — the unit has not reported back.
+      ["003", "รอผล", 4000, null, null, "2", "ร.ร.จ่ายตรง ข", null, null, "2"],
+      ["004", "รอผล", 6000, null, null, "2", "ร.ร.จ่ายตรง ข", null, null, "2"],
+      ["005", "รอผล", 1000, null, null, "3", "บำนาญ ค", null, null, "3"],
+    ];
+    const sheet = parseMaiDaiSheet(mixed);
+
+    expect(sheet.rows.map((r) => r.memberNumber)).toEqual(["002"]);
+    expect(sheet.awaitingMembers).toBe(3);
+    expect(sheet.awaitingAmount).toBe(11000);
+    // Counted by หน่วยคุม (H-code 2 and 3), matching how the cooperative’s own
+    // summary sheet groups units.
+    expect(sheet.awaitingUnits).toEqual(["2", "3"]);
+  });
+
+  it("treats a zero result as collected, not as awaiting", () => {
+    const zero: unknown[][] = [["001", "หักได้ครบ", 5000, 5000, 0, "1", "ร.ร. ก", null, null, "1"]];
+    const sheet = parseMaiDaiSheet(zero);
+    expect(sheet.rows).toHaveLength(0);
+    expect(sheet.awaitingMembers).toBe(0);
+  });
+});
+
+describe("pickUnitNameColumn", () => {
+  it("prefers the column of names over a column of codes", () => {
+    const rows: unknown[][] = [
+      ["1", "ชื่อ", 0, 0, 0, "75", "ร.ร.บ้านหนองเดิ่น"],
+      ["2", "ชื่อ", 0, 0, 0, "76", "ร.ร.บ้านโนนสวรรค์"],
+    ];
+    expect(pickUnitNameColumn(rows)).toBe(6);
+  });
+
+  it("still finds สังกัด in F when that is where the names are", () => {
+    const rows: unknown[][] = [
+      ["1", "ชื่อ", 0, 0, 0, "สพป.นค เขต 1", "ขอผ่อน"],
+      ["2", "ชื่อ", 0, 0, 0, "สพป.นค เขต 1", null],
+    ];
+    expect(pickUnitNameColumn(rows)).toBe(5);
+  });
+
+  it("gives up rather than guessing when neither column holds names", () => {
+    const rows: unknown[][] = [["1", "ชื่อ", 0, 0, 0, "75", "75"]];
+    expect(pickUnitNameColumn(rows)).toBeNull();
   });
 });
 
