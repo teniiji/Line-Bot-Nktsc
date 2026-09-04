@@ -28,10 +28,10 @@ export const dynamic = "force-dynamic";
 //
 // Statements accumulate. One account's transfers for a month routinely
 // arrive as several exports covering different date ranges, so each upload
-// adds the lines this round does not already have. Duplicate protection is
-// per statement line (see transferFingerprint) rather than per file, which
-// means an unchanged file re-uploaded adds nothing, and two exports whose
-// date ranges overlap count the shared days once.
+// adds the lines this round does not already have and refreshes the ones it
+// does. Identity is per statement line (see transferFingerprint) rather than
+// per file, which means an unchanged file re-uploaded adds no money, and two
+// exports whose date ranges overlap count the shared days once.
 //
 // This used to replace the account's whole set on every upload, which meant
 // a second file for the same account silently reverted everyone the first
@@ -86,28 +86,62 @@ export async function POST(
     );
   }
 
-  // skipDuplicates leans on the unique (roundId, fingerprint) index: lines
-  // this round already holds — from this same file uploaded again, or from an
-  // overlapping date range — are left alone rather than added a second time.
+  // Every line this file supplies, keyed by the identity that survives across
+  // uploads. The fingerprint is deliberately day-resolution (see
+  // transferFingerprint), so a line keeps the same identity even as the
+  // details we read out of it improve.
+  const incoming = transfers.map((transfer) => ({
+    fingerprint: transferFingerprint(account, transfer),
+    transfer,
+  }));
+  const fingerprints = incoming.map((row) => row.fingerprint);
+
+  // A re-upload refreshes the lines the file carries rather than skipping
+  // them. It used to skip: correct for not double-counting money, but it also
+  // meant a round could never pick up anything we learned to read later — when
+  // the time of day started being read, the rounds already loaded were stuck
+  // showing a date and no clock, with no way forward except clearing the whole
+  // account and losing the "เป็นเงินอะไร" reasons staff had set.
   //
+  // Only the fingerprints in this file are touched, so a second export
+  // covering different dates leaves the first one's lines alone — the same
+  // guarantee the per-line duplicate check gave.
+  const existing = await prisma.statementTransfer.findMany({
+    where: { roundId: round.id, fingerprint: { in: fingerprints } },
+    select: { fingerprint: true, excludedReason: true },
+  });
+  // Carried across the refresh: this is staff's own work, not something the
+  // statement can tell us again.
+  const reasons = new Map(
+    existing
+      .filter((row) => row.excludedReason)
+      .map((row) => [row.fingerprint, row.excludedReason])
+  );
+
   // Rows go in unmatched and are resolved by rematchRoundTransfers below
   // rather than being matched here: that keeps one implementation of "which
   // member does this account belong to", which now has to consider both the
   // round's sheet and the MemberBankAccount directory.
-  const created = await prisma.statementTransfer.createMany({
-    data: transfers.map((transfer) => ({
-      roundId: round.id,
-      accountNumber: transfer.accountNumber,
-      amount: transfer.amount,
-      transferredAt: transfer.transferredAt,
-      account,
-      branch,
-      description: transfer.description,
-      fingerprint: transferFingerprint(account, transfer),
-      sourceFile: checked.file.name,
-    })),
-    skipDuplicates: true,
-  });
+  await prisma.$transaction([
+    prisma.statementTransfer.deleteMany({
+      where: { roundId: round.id, fingerprint: { in: fingerprints } },
+    }),
+    prisma.statementTransfer.createMany({
+      data: incoming.map(({ fingerprint, transfer }) => ({
+        roundId: round.id,
+        accountNumber: transfer.accountNumber,
+        amount: transfer.amount,
+        transferredAt: transfer.transferredAt,
+        account,
+        branch,
+        description: transfer.description,
+        fingerprint,
+        sourceFile: checked.file.name,
+        excludedReason: reasons.get(fingerprint) ?? null,
+      })),
+    }),
+  ]);
+  const refreshed = existing.length;
 
   await applyDirectoryAccounts(round.id);
   await rematchRoundTransfers(round.id);
@@ -131,8 +165,11 @@ export async function POST(
     account,
     branch,
     transfers: transfers.length,
-    added: created.count,
-    duplicates: transfers.length - created.count,
+    added: transfers.length - refreshed,
+    // Lines the round already held, now re-read from this file. Reported
+    // separately from "added" so an upload that adds nothing new still says
+    // plainly that it did something.
+    refreshed,
     matched: matched.size,
     unmatched: unmatched.size,
   });
