@@ -6,7 +6,11 @@ import {
   UNREADABLE_FILE_ERROR,
 } from "@/lib/excelUpload";
 import { parseMaiDaiRows } from "@/lib/statementReconcile";
-import { recomputeRoundPayments, rematchRoundTransfers } from "@/lib/statementRecompute";
+import {
+  applyDirectoryAccounts,
+  recomputeRoundPayments,
+  rematchRoundTransfers,
+} from "@/lib/statementRecompute";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -70,6 +74,11 @@ export async function POST(
     }),
   ]);
 
+  // Members the sheet left without an account number may already be known to
+  // the directory from an earlier round, so filling those in first means the
+  // work of binding accounts is not repeated every month.
+  const filledFromDirectory = await applyDirectoryAccounts(round.id);
+
   // Statements already uploaded for this round keep their transfers, so a
   // corrected member list re-reconciles against them instead of making staff
   // upload every statement again.
@@ -77,10 +86,16 @@ export async function POST(
   await recomputeRoundPayments(round.id);
 
   const imported = await prisma.statementMember.count({ where: { roundId: round.id } });
+  // Counted after the directory has had its say, so this is the members
+  // genuinely left unmatchable rather than everyone the sheet left blank.
+  const missingAccount = await prisma.statementMember.count({
+    where: { roundId: round.id, accountNumber: null },
+  });
   return NextResponse.json({
     imported,
     // Members with no account number can never be matched to a transfer, so
     // staff need to know up front rather than wondering why they stay ❌.
-    missingAccount: parsed.filter((r) => !r.accountNumber).length,
+    missingAccount,
+    filledFromDirectory,
   });
 }

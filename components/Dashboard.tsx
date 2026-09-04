@@ -25,6 +25,7 @@ import TestDataCleanupPanel from "@/components/TestDataCleanupPanel";
 import DeductionRoundsPanel from "@/components/DeductionRoundsPanel";
 import OrganizationUnitsPanel from "@/components/OrganizationUnitsPanel";
 import StatementReconcilePanel from "@/components/StatementReconcilePanel";
+import MemberBankAccountsPanel from "@/components/MemberBankAccountsPanel";
 
 const PAGE_SIZE = 10;
 const EXPORT_PAGE_SIZE = 100;
@@ -237,7 +238,12 @@ export default function Dashboard() {
           {
             id: "statement",
             label: "เทียบ Statement",
-            content: <StatementReconcilePanel />,
+            content: (
+              <div className="space-y-6">
+                <StatementReconcilePanel />
+                <MemberBankAccountsPanel />
+              </div>
+            ),
           },
           {
             id: "service-requests",

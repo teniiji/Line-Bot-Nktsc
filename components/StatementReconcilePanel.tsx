@@ -81,6 +81,8 @@ export default function StatementReconcilePanel() {
   const [search, setSearch] = useState("");
   const [unitFilter, setUnitFilter] = useState("");
   const [hCodeFilter, setHCodeFilter] = useState("");
+  const [assigningAccount, setAssigningAccount] = useState<string | null>(null);
+  const [assignMemberNumber, setAssignMemberNumber] = useState("");
   const [sort, setSort] = useState<StatementSort>("default");
 
   const [showNew, setShowNew] = useState(false);
@@ -229,6 +231,34 @@ export default function StatementReconcilePanel() {
           `, จับคู่สมาชิกได้ ${body.matched} คน` +
           (body.unmatched > 0 ? `, ไม่พบเจ้าของ ${body.unmatched} รายการ` : "")
       );
+      await Promise.all([fetchRound(selectedId), fetchRounds()]);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const assignAccount = async (accountNumber: string) => {
+    if (!selectedId || !assignMemberNumber.trim()) return;
+    setBusy(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const res = await fetch(`/api/statement-rounds/${selectedId}/assign`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ accountNumber, memberNumber: assignMemberNumber.trim() }),
+      });
+      const body = await res.json();
+      if (!res.ok) {
+        setError(body.error || "ระบุเจ้าของไม่สำเร็จ");
+        return;
+      }
+      setNotice(
+        `ผูกบัญชี ${body.accountNumber} เข้ากับ ${body.memberNumber} ${body.memberName} แล้ว ` +
+          `(${body.transfers} รายการ ${formatAmount(body.amount)}) — จำไว้ใช้รอบต่อไปให้แล้ว`
+      );
+      setAssigningAccount(null);
+      setAssignMemberNumber("");
       await Promise.all([fetchRound(selectedId), fetchRounds()]);
     } finally {
       setBusy(false);
@@ -699,8 +729,9 @@ export default function StatementReconcilePanel() {
               </h3>
               <p className="text-xs text-slate-500 mt-1">
                 เลขบัญชีที่โอนเข้ามาไม่ตรงกับใครในรายชื่อหักไม่ได้รอบนี้ —
-                ส่วนใหญ่คือเลขบัญชีในไฟล์รายชื่อผิดหรือว่าง แก้ในไฟล์แล้วอัปโหลดรายชื่อใหม่
-                ระบบจะจับคู่ให้เองโดยไม่ต้องอัปโหลด Statement ซ้ำ
+                กด <strong>"ระบุเจ้าของ"</strong> แล้วใส่เลขสมาชิก ระบบจะจับคู่ให้ทันที
+                และ<strong>จำเลขบัญชีนี้ไว้ใช้รอบต่อๆ ไป</strong>ด้วย ไม่ต้องมาระบุซ้ำทุกเดือน
+                (หรือจะแก้เลขบัญชีในไฟล์รายชื่อแล้วอัปโหลดใหม่ก็ได้เหมือนเดิม)
               </p>
               <table className="w-full text-sm mt-2">
                 <thead className="text-slate-500 text-left">
@@ -709,6 +740,7 @@ export default function StatementReconcilePanel() {
                     <th className="px-2 py-1 text-right">ยอด</th>
                     <th className="px-2 py-1">วันที่</th>
                     <th className="px-2 py-1">บัญชีที่รับ</th>
+                    <th className="px-2 py-1">เจ้าของ</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -722,10 +754,62 @@ export default function StatementReconcilePanel() {
                         {formatDate(t.transferredAt)}
                       </td>
                       <td className="px-2 py-1 text-slate-500">{t.branch ?? "—"}</td>
+                      <td className="px-2 py-1 whitespace-nowrap">
+                        {assigningAccount === t.accountNumber ? (
+                          <span className="inline-flex items-center gap-2">
+                            <input
+                              value={assignMemberNumber}
+                              onChange={(e) => setAssignMemberNumber(e.target.value)}
+                              onKeyDown={(e) => {
+                                if (e.key === "Enter") assignAccount(t.accountNumber);
+                                if (e.key === "Escape") setAssigningAccount(null);
+                              }}
+                              list="statement-member-numbers"
+                              placeholder="เลขสมาชิก"
+                              autoFocus
+                              className="border border-slate-300 rounded px-2 py-1 text-sm w-44"
+                            />
+                            <button
+                              onClick={() => assignAccount(t.accountNumber)}
+                              disabled={busy || !assignMemberNumber.trim()}
+                              className="text-slate-900 hover:underline disabled:opacity-40"
+                            >
+                              บันทึก
+                            </button>
+                            <button
+                              onClick={() => setAssigningAccount(null)}
+                              className="text-slate-500 hover:underline"
+                            >
+                              ยกเลิก
+                            </button>
+                          </span>
+                        ) : (
+                          <button
+                            onClick={() => {
+                              setAssigningAccount(t.accountNumber);
+                              setAssignMemberNumber("");
+                            }}
+                            className="text-slate-900 hover:underline"
+                          >
+                            ระบุเจ้าของ
+                          </button>
+                        )}
+                      </td>
                     </tr>
                   ))}
                 </tbody>
               </table>
+
+              {/* Native autocomplete over this round's members, so staff can
+                  type either the number or the name to find it. */}
+              <datalist id="statement-member-numbers">
+                {members.map((m) => (
+                  <option key={m.id} value={m.memberNumber}>
+                    {m.name}
+                    {m.unitName ? ` · ${m.unitName}` : ""}
+                  </option>
+                ))}
+              </datalist>
             </div>
           )}
         </>

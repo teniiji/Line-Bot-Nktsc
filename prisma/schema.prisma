@@ -486,6 +486,31 @@ model StatementRound {
 // last one: a member who pays in two transfers has genuinely paid the sum,
 // and treating the second transfer as the whole payment would understate
 // what they owe.
+// The bank accounts members transfer from, and who each one belongs to.
+//
+// Built up by hand as staff work through "โอนเข้ามาแต่ไม่พบเจ้าของ" in the
+// เทียบ Statement tab. Before this existed, an account number missing or wrong
+// in the หักไม่ได้ sheet could only be fixed by editing that spreadsheet and
+// re-uploading — and since the sheet is regenerated every month, the same
+// account went unmatched again the next round. Recording it here once makes
+// the answer outlive the round.
+model MemberBankAccount {
+  id            String   @id @default(cuid())
+  // Digits only, normalised by normalizeAccountNumber the same way both sides
+  // of a statement match, so a lookup can never miss on formatting alone.
+  accountNumber String   @unique
+  memberNumber  String
+  // The member's name as it was when the binding was made. MemberRoster is
+  // the canonical source and is preferred for display, but a member the
+  // roster does not carry still needs something to show.
+  memberName    String?
+  note          String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([memberNumber])
+}
+
 model StatementMember {
   id            String    @id @default(cuid())
   roundId       String
@@ -499,6 +524,12 @@ model StatementMember {
   // The matching key. Nullable because the source sheet does leave it blank,
   // and a member with no account number simply can never match a transfer.
   accountNumber String?
+  // Where accountNumber came from: null/"sheet" for the uploaded หักไม่ได้
+  // file, "directory" when it was filled in from MemberBankAccount. Recorded
+  // so a binding that is later corrected or deleted can take back the value
+  // it supplied — without this the two are indistinguishable and a deleted
+  // binding would leave its account number behind, still matching.
+  accountSource String?
   amountDue     Float
   amountPaid    Float     @default(0)
   paidAt        DateTime?
