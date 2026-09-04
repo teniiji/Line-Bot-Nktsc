@@ -307,7 +307,9 @@ export default function StatementReconcilePanel() {
       setNotice(
         `บัญชี ${body.account} ${body.branch}: อ่านได้ ${body.transfers} รายการ ` +
           `เพิ่มใหม่ ${body.added} รายการ` +
-          (body.duplicates > 0 ? ` (ซ้ำกับที่มีอยู่แล้ว ${body.duplicates} รายการ ไม่นับซ้ำ)` : "") +
+          (body.refreshed > 0
+            ? ` (มีอยู่แล้ว ${body.refreshed} รายการ — อ่านทับให้ใหม่ ไม่นับซ้ำ)`
+            : "") +
           `, จับคู่สมาชิกได้ ${body.matched} คน` +
           (body.unmatched > 0 ? `, ไม่พบเจ้าของ ${body.unmatched} รายการ` : "")
       );
