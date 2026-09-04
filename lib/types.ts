@@ -186,6 +186,23 @@ export interface StatementFileSummary {
   amount: number;
 }
 
+// One line read out of a bank statement, with everything the tab needs to
+// decide whether it was really paying off a failed deduction.
+export interface StatementTransferRow {
+  id: string;
+  memberNumber: string | null;
+  accountNumber: string;
+  amount: number;
+  transferredAt: string | null;
+  branch: string | null;
+  description: string | null;
+  // Set once staff say this money was for ซื้อหุ้น, ชำระหนี้, ฝากเงิน …
+  excludedReason: string | null;
+  // A slip the member filed through the bot under some other purpose that
+  // lines up with this transfer — a prompt to check, never a decision.
+  slipHint: { category: string; amount: number; date: string } | null;
+}
+
 // A transfer that matched nobody on the round's list — money that arrived
 // under an account number the หักไม่ได้ sheet doesn't carry.
 export interface StatementUnmatchedRow {

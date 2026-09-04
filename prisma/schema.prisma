@@ -587,6 +587,14 @@ model StatementTransfer {
   // Filename of the upload that first brought this line in, so staff can see
   // which statements a round was built from.
   sourceFile    String?
+  // Set when staff decide this money was not paying off a failed deduction —
+  // ซื้อหุ้น, ชำระหนี้, ฝากเงิน and so on. A statement line only says an
+  // account transferred an amount, never what for, so without this a member
+  // who bought shares in the same month reads as having settled their
+  // deduction and staff stop chasing a debt that is still owed. Excluded
+  // transfers stop counting toward payment and leave the follow-up list, but
+  // are kept and totalled: the money did arrive.
+  excludedReason String?
   createdAt     DateTime  @default(now())
 
   @@unique([roundId, fingerprint])
