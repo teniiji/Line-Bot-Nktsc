@@ -146,6 +146,61 @@ describe("sortStatementMembers", () => {
     expect(sorted.map((m) => m.memberNumber)).toEqual(["001", "002", "003", "004"]);
     expect(rows[0].memberNumber).toBe("001");
   });
+
+  it("sorts by หน่วยคุม as a number, then สังกัด, then member number", () => {
+    const mixed = [
+      member({ memberNumber: "b", hCode: "10", unitName: "ก" }),
+      member({ memberNumber: "a", hCode: "10", unitName: "ก" }),
+      member({ memberNumber: "c", hCode: "2", unitName: "ข" }),
+      member({ memberNumber: "d", hCode: "10", unitName: "ก ก" }),
+    ];
+    // หน่วยคุม 2 before 10 (numeric, not "10" < "2"), then สังกัด, then member.
+    expect(sortStatementMembers(mixed, "hCode").map((m) => m.memberNumber)).toEqual([
+      "c",
+      "a",
+      "b",
+      "d",
+    ]);
+  });
+
+  it("puts members with no หน่วยคุม last rather than treating them as zero", () => {
+    const mixed = [
+      member({ memberNumber: "none", hCode: null }),
+      member({ memberNumber: "has", hCode: "9" }),
+    ];
+    expect(sortStatementMembers(mixed, "hCode").map((m) => m.memberNumber)).toEqual([
+      "has",
+      "none",
+    ]);
+  });
+
+  it("sorts by สังกัด in Thai order, blank ones last", () => {
+    const mixed = [
+      member({ memberNumber: "x", unitName: null }),
+      member({ memberNumber: "y", unitName: "โรงเรียนบ้านหนองบัว" }),
+      member({ memberNumber: "z", unitName: "โรงเรียนบ้านโนนสวรรค์" }),
+    ];
+    expect(sortStatementMembers(mixed, "unitName").map((m) => m.memberNumber)).toEqual([
+      "z",
+      "y",
+      "x",
+    ]);
+  });
+
+  it("sorts by วันที่โอน newest first, with people who never paid last", () => {
+    const mixed = [
+      member({ memberNumber: "old", paidAt: "2026-06-05T00:00:00.000Z" }),
+      member({ memberNumber: "never", paidAt: null }),
+      member({ memberNumber: "new", paidAt: "2026-06-28T00:00:00.000Z" }),
+      member({ memberNumber: "mid", paidAt: "2026-06-14T00:00:00.000Z" }),
+    ];
+    expect(sortStatementMembers(mixed, "paidAt").map((m) => m.memberNumber)).toEqual([
+      "new",
+      "mid",
+      "old",
+      "never",
+    ]);
+  });
 });
 
 describe("summarizeStatementMembers", () => {

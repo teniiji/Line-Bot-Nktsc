@@ -25,6 +25,9 @@ const SEARCH_DEBOUNCE_MS = 300;
 const SORT_OPTIONS: { value: StatementSort; label: string }[] = [
   { value: "default", label: "ยังค้างขึ้นก่อน (ค่าเริ่มต้น)" },
   { value: "outstanding", label: "ยอดค้างมาก → น้อย" },
+  { value: "hCode", label: "หน่วยคุม" },
+  { value: "unitName", label: "สังกัด" },
+  { value: "paidAt", label: "วันที่โอน (ล่าสุดก่อน)" },
   { value: "name", label: "ชื่อ ก-ฮ" },
   { value: "memberNumber", label: "เลขสมาชิก" },
 ];

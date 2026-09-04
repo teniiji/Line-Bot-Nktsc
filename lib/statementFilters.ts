@@ -15,9 +15,54 @@ export interface StatementFilter {
   status: string; // "all" | "paid" | "overpaid" | "unpaid" | "no_account"
 }
 
-export type StatementSort = "default" | "outstanding" | "name" | "memberNumber";
+export type StatementSort =
+  | "default"
+  | "outstanding"
+  | "name"
+  | "memberNumber"
+  | "hCode"
+  | "unitName"
+  | "paidAt";
 
 const digitsOnly = (value: string) => value.replace(/\D/g, "");
+
+// H-codes are 1-2 digit numbers, so they compare as numbers — as text,
+// หน่วยคุม 10 would sort between 1 and 2. Members carrying no code at all sort
+// last: they are a gap in the sheet, not หน่วยคุม zero.
+function compareHCode(a: string | null, b: string | null): number {
+  if (a === b) return 0;
+  if (!a) return 1;
+  if (!b) return -1;
+  const na = Number(a);
+  const nb = Number(b);
+  if (Number.isFinite(na) && Number.isFinite(nb) && na !== nb) return na - nb;
+  return a.localeCompare(b, "th");
+}
+
+// Blank สังกัด sorts last for the same reason as a blank หน่วยคุม.
+function compareUnitName(a: string | null, b: string | null): number {
+  if (a === b) return 0;
+  if (!a) return 1;
+  if (!b) return -1;
+  return a.localeCompare(b, "th");
+}
+
+// Latest transfer first. Someone who never paid has no date, and belongs at
+// the end rather than at the top where an epoch-zero fallback would put them.
+function comparePaidAt(a: string | null, b: string | null): number {
+  if (!a && !b) return 0;
+  if (!a) return 1;
+  if (!b) return -1;
+  const ta = Date.parse(a);
+  const tb = Date.parse(b);
+  if (Number.isNaN(ta) && Number.isNaN(tb)) return 0;
+  if (Number.isNaN(ta)) return 1;
+  if (Number.isNaN(tb)) return -1;
+  return tb - ta;
+}
+
+const byMemberNumber = (a: StatementMemberRow, b: StatementMemberRow) =>
+  a.memberNumber.localeCompare(b.memberNumber, "th", { numeric: true });
 
 // A member's outstanding balance. Negative would mean they overpaid, which is
 // not "owing", so anything at or below zero is zero for ranking purposes.
@@ -80,7 +125,20 @@ export function sortStatementMembers(
   } else if (sort === "name") {
     copy.sort((a, b) => a.name.localeCompare(b.name, "th"));
   } else if (sort === "memberNumber") {
-    copy.sort((a, b) => a.memberNumber.localeCompare(b.memberNumber, "th", { numeric: true }));
+    copy.sort(byMemberNumber);
+  } else if (sort === "hCode") {
+    // Grouping sorts get a second and third key so the rows inside a group
+    // are in a readable order rather than whatever order they arrived in.
+    copy.sort(
+      (a, b) =>
+        compareHCode(a.hCode, b.hCode) ||
+        compareUnitName(a.unitName, b.unitName) ||
+        byMemberNumber(a, b)
+    );
+  } else if (sort === "unitName") {
+    copy.sort((a, b) => compareUnitName(a.unitName, b.unitName) || byMemberNumber(a, b));
+  } else if (sort === "paidAt") {
+    copy.sort((a, b) => comparePaidAt(a.paidAt, b.paidAt) || byMemberNumber(a, b));
   }
   return copy;
 }
@@ -105,15 +163,10 @@ export function unitNamesOf(rows: StatementMemberRow[]): string[] {
   return [...names].sort((a, b) => a.localeCompare(b, "th"));
 }
 
-// H-codes are 1-2 digit numbers, so they have to sort numerically — as text,
-// หน่วยคุม 10 would come between 1 and 2.
+// Same numeric ordering the หน่วยคุม sort uses, so the dropdown and the sorted
+// table agree on what comes after what.
 export function hCodesOf(rows: StatementMemberRow[]): string[] {
   const codes = new Set<string>();
   for (const m of rows) if (m.hCode) codes.add(m.hCode);
-  return [...codes].sort((a, b) => {
-    const na = Number(a);
-    const nb = Number(b);
-    if (Number.isFinite(na) && Number.isFinite(nb)) return na - nb;
-    return a.localeCompare(b, "th");
-  });
+  return [...codes].sort(compareHCode);
 }
