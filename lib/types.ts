@@ -158,6 +158,16 @@ export interface StatementMemberRow {
   status: string;
 }
 
+// One statement file a round has been built from. Uploads accumulate, so
+// this is how staff see what is already loaded before adding the next export.
+export interface StatementFileSummary {
+  account: string;
+  branch: string;
+  sourceFile: string | null;
+  transfers: number;
+  amount: number;
+}
+
 // A transfer that matched nobody on the round's list — money that arrived
 // under an account number the หักไม่ได้ sheet doesn't carry.
 export interface StatementUnmatchedRow {

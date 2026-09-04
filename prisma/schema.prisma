@@ -537,8 +537,18 @@ model StatementTransfer {
   account       String
   branch        String
   description   String?
+  // Identity of the statement line itself (transferFingerprint in
+  // lib/statementReconcile.ts). Statements are exported per date range and
+  // those ranges overlap, so the same line legitimately arrives more than
+  // once and has to be recognised rather than counted twice — which is what
+  // the unique index below enforces.
+  fingerprint   String
+  // Filename of the upload that first brought this line in, so staff can see
+  // which statements a round was built from.
+  sourceFile    String?
   createdAt     DateTime  @default(now())
 
+  @@unique([roundId, fingerprint])
   @@index([roundId])
   @@index([roundId, account])
 }

@@ -8,6 +8,7 @@ import {
   parseMaiDaiRows,
   parseStatementDate,
   parseStatementRows,
+  transferFingerprint,
 } from "../lib/statementReconcile";
 
 describe("normalizeAccountNumber", () => {
@@ -112,6 +113,83 @@ describe("parseStatementRows", () => {
     expect(parsed[0]).toMatchObject({ accountNumber: "0431234568", amount: 3000 });
     expect(parsed[0].transferredAt?.toISOString().slice(0, 10)).toBe("2026-06-25");
     expect(parsed[1]).toMatchObject({ accountNumber: "4470001111", amount: 2000 });
+  });
+
+  it("numbers otherwise identical lines so they stay separate transfers", () => {
+    // Same payer, same amount, same day, and no balance column to tell them
+    // apart — two real payments, not one line read twice.
+    const rows: unknown[][] = [
+      ["25/06/2569", "T1", "TR", "TR fr 0431234568", null, 500],
+      ["25/06/2569", "T2", "TR", "TR fr 0431234568", null, 500],
+    ];
+    const parsed = parseStatementRows(rows);
+    expect(parsed.map((t) => t.occurrence)).toEqual([0, 1]);
+    expect(transferFingerprint("413", parsed[0])).not.toBe(
+      transferFingerprint("413", parsed[1])
+    );
+  });
+
+  it("reads the running balance, which separates same-day repeat payments", () => {
+    const rows: unknown[][] = [
+      ["25/06/2569", "T1", "TR", "TR fr 0431234568", null, 500, null, 10500],
+      ["25/06/2569", "T2", "TR", "TR fr 0431234568", null, 500, null, 11000],
+    ];
+    const parsed = parseStatementRows(rows);
+    expect(parsed.map((t) => t.balance)).toEqual([10500, 11000]);
+    expect(parsed.map((t) => t.occurrence)).toEqual([0, 0]);
+    expect(transferFingerprint("413", parsed[0])).not.toBe(
+      transferFingerprint("413", parsed[1])
+    );
+  });
+});
+
+describe("transferFingerprint", () => {
+  const statement = (rows: unknown[][]) => parseStatementRows(rows);
+  const line = (date: string, acct: string, amount: number, balance?: number) =>
+    [date, "T", "TR", `TR fr ${acct}`, null, amount, null, balance] as unknown[];
+
+  it("gives a statement line the same identity every time it is uploaded", () => {
+    const first = statement([line("25/06/2569", "0431234568", 3000, 10000)]);
+    const again = statement([line("25/06/2569", "0431234568", 3000, 10000)]);
+    expect(transferFingerprint("413", first[0])).toBe(transferFingerprint("413", again[0]));
+  });
+
+  it("recognises the shared days between two overlapping date ranges", () => {
+    // 1-15 uploaded, then 1-30: the first half must be recognised, so only
+    // the later lines are new.
+    const firstHalf = statement([
+      line("05/06/2569", "0431234568", 1000, 5000),
+      line("10/06/2569", "4470001111", 2000, 7000),
+    ]);
+    const wholeMonth = statement([
+      line("05/06/2569", "0431234568", 1000, 5000),
+      line("10/06/2569", "4470001111", 2000, 7000),
+      line("25/06/2569", "0431234569", 1500, 8500),
+    ]);
+
+    const known = new Set(firstHalf.map((t) => transferFingerprint("413", t)));
+    const incoming = wholeMonth.map((t) => transferFingerprint("413", t));
+    expect(incoming.filter((f) => known.has(f))).toHaveLength(2);
+    expect(incoming.filter((f) => !known.has(f))).toHaveLength(1);
+  });
+
+  it("keeps the same line distinct between the two bank accounts", () => {
+    const parsed = statement([line("25/06/2569", "0431234568", 3000, 10000)]);
+    expect(transferFingerprint("413", parsed[0])).not.toBe(
+      transferFingerprint("447", parsed[0])
+    );
+  });
+
+  it("separates two transfers that differ only by date, amount or payer", () => {
+    const base = statement([line("25/06/2569", "0431234568", 3000, 10000)])[0];
+    const otherDay = statement([line("26/06/2569", "0431234568", 3000, 10000)])[0];
+    const otherAmount = statement([line("25/06/2569", "0431234568", 3500, 10000)])[0];
+    const otherPayer = statement([line("25/06/2569", "4470001111", 3000, 10000)])[0];
+
+    const prints = [base, otherDay, otherAmount, otherPayer].map((t) =>
+      transferFingerprint("413", t)
+    );
+    expect(new Set(prints).size).toBe(4);
   });
 });
 
