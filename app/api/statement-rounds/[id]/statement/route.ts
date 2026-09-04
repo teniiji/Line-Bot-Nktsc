@@ -6,12 +6,15 @@ import {
   UNREADABLE_FILE_ERROR,
 } from "@/lib/excelUpload";
 import {
-  matchTransfers,
   parseStatementRows,
   transferFingerprint,
   STATEMENT_ACCOUNTS,
 } from "@/lib/statementReconcile";
-import { recomputeRoundPayments } from "@/lib/statementRecompute";
+import {
+  applyDirectoryAccounts,
+  recomputeRoundPayments,
+  rematchRoundTransfers,
+} from "@/lib/statementRecompute";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -83,20 +86,17 @@ export async function POST(
     );
   }
 
-  const { matchedByMember, unmatched } = matchTransfers(transfers, members);
-  const memberByAccount = new Map(
-    members
-      .filter((m) => m.accountNumber)
-      .map((m) => [m.accountNumber as string, m.memberNumber])
-  );
-
   // skipDuplicates leans on the unique (roundId, fingerprint) index: lines
   // this round already holds — from this same file uploaded again, or from an
   // overlapping date range — are left alone rather than added a second time.
+  //
+  // Rows go in unmatched and are resolved by rematchRoundTransfers below
+  // rather than being matched here: that keeps one implementation of "which
+  // member does this account belong to", which now has to consider both the
+  // round's sheet and the MemberBankAccount directory.
   const created = await prisma.statementTransfer.createMany({
     data: transfers.map((transfer) => ({
       roundId: round.id,
-      memberNumber: memberByAccount.get(transfer.accountNumber) ?? null,
       accountNumber: transfer.accountNumber,
       amount: transfer.amount,
       transferredAt: transfer.transferredAt,
@@ -109,7 +109,23 @@ export async function POST(
     skipDuplicates: true,
   });
 
+  await applyDirectoryAccounts(round.id);
+  await rematchRoundTransfers(round.id);
   await recomputeRoundPayments(round.id);
+
+  // Counted from what was actually stored, so the numbers describe the round
+  // rather than just this file.
+  const accountNumbers = [...new Set(transfers.map((t) => t.accountNumber))];
+  const stored = await prisma.statementTransfer.findMany({
+    where: { roundId: round.id, accountNumber: { in: accountNumbers } },
+    select: { memberNumber: true, accountNumber: true },
+  });
+  const matched = new Set(
+    stored.filter((t) => t.memberNumber).map((t) => t.memberNumber as string)
+  );
+  const unmatched = new Set(
+    stored.filter((t) => !t.memberNumber).map((t) => t.accountNumber)
+  );
 
   return NextResponse.json({
     account,
@@ -117,8 +133,8 @@ export async function POST(
     transfers: transfers.length,
     added: created.count,
     duplicates: transfers.length - created.count,
-    matched: matchedByMember.size,
-    unmatched: unmatched.length,
+    matched: matched.size,
+    unmatched: unmatched.size,
   });
 }
 

@@ -158,6 +158,18 @@ export interface StatementMemberRow {
   status: string;
 }
 
+// One entry in the directory of "this bank account belongs to this member".
+export interface MemberBankAccountEntry {
+  id: string;
+  accountNumber: string;
+  memberNumber: string;
+  memberName: string | null;
+  unitName: string | null;
+  inRoster: boolean;
+  note: string | null;
+  updatedAt: string;
+}
+
 // One statement file a round has been built from. Uploads accumulate, so
 // this is how staff see what is already loaded before adding the next export.
 export interface StatementFileSummary {

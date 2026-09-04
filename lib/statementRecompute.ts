@@ -74,15 +74,32 @@ export async function rematchRoundTransfers(roundId: string): Promise<void> {
     }),
   ]);
 
+  // Only the accounts this round's transfers actually used need looking up,
+  // so the directory can grow without this query growing with it.
+  const directory = await prisma.memberBankAccount.findMany({
+    where: { accountNumber: { in: [...new Set(transfers.map((t) => t.accountNumber))] } },
+    select: { accountNumber: true, memberNumber: true },
+  });
+
+  // The directory is a fallback, not an override: it fills in accounts this
+  // round's sheet says nothing about. Where the sheet does carry an account,
+  // it is that round's own statement about who it belongs to and wins.
   const memberByAccount = new Map<string, string>();
+  for (const entry of directory) memberByAccount.set(entry.accountNumber, entry.memberNumber);
   for (const member of members) {
     if (member.accountNumber) memberByAccount.set(member.accountNumber, member.memberNumber);
   }
 
+  // A binding pointing at somebody who is not on this round's list would
+  // credit a member with no row here — the money is real but belongs to
+  // another round's reconciliation, so it stays unmatched and visible.
+  const inRound = new Set(members.map((m) => m.memberNumber));
+
   await Promise.all(
     transfers
       .map((transfer) => {
-        const matched = memberByAccount.get(transfer.accountNumber) ?? null;
+        const found = memberByAccount.get(transfer.accountNumber) ?? null;
+        const matched = found && inRound.has(found) ? found : null;
         if (matched === transfer.memberNumber) return null;
         return prisma.statementTransfer.update({
           where: { id: transfer.id },
@@ -91,4 +108,73 @@ export async function rematchRoundTransfers(roundId: string): Promise<void> {
       })
       .filter((p): p is NonNullable<typeof p> => p !== null)
   );
+}
+
+// Re-reconciles every round whose statements contain this account, after its
+// entry in the directory changed. Editing a binding to point at someone else,
+// or deleting one, has to move the money on screen too — otherwise the change
+// looks like it did nothing until some unrelated upload happens to trigger a
+// rematch. Scoped to rounds that actually saw the account so this stays cheap
+// however large the directory grows.
+export async function rematchRoundsForAccount(accountNumber: string): Promise<number> {
+  const affected = await prisma.statementTransfer.findMany({
+    where: { accountNumber },
+    select: { roundId: true },
+    distinct: ["roundId"],
+  });
+
+  for (const { roundId } of affected) {
+    await applyDirectoryAccounts(roundId);
+    await rematchRoundTransfers(roundId);
+    await recomputeRoundPayments(roundId);
+  }
+  return affected.length;
+}
+
+// Fills in the account number for members whose sheet left it blank, from the
+// directory, when the directory knows exactly one account for them. With more
+// than one there is nothing to choose between, so the column stays blank —
+// their transfers still match through rematchRoundTransfers, this only keeps
+// the "⛔ ไม่มีเลขบัญชี" bucket honest about who really cannot be matched.
+export async function applyDirectoryAccounts(roundId: string): Promise<number> {
+  // Values this function supplied earlier are handed back before it decides
+  // again, so a binding that has since been corrected or deleted does not
+  // leave its account number behind still matching. Sheet-supplied values are
+  // never touched.
+  await prisma.statementMember.updateMany({
+    where: { roundId, accountSource: "directory" },
+    data: { accountNumber: null, accountSource: null },
+  });
+
+  const blanks = await prisma.statementMember.findMany({
+    where: { roundId, accountNumber: null },
+    select: { id: true, memberNumber: true },
+  });
+  if (blanks.length === 0) return 0;
+
+  const known = await prisma.memberBankAccount.findMany({
+    where: { memberNumber: { in: blanks.map((m) => m.memberNumber) } },
+    select: { memberNumber: true, accountNumber: true },
+  });
+
+  const accountsByMember = new Map<string, string[]>();
+  for (const entry of known) {
+    const list = accountsByMember.get(entry.memberNumber) ?? [];
+    list.push(entry.accountNumber);
+    accountsByMember.set(entry.memberNumber, list);
+  }
+
+  const updates = blanks
+    .map((member) => {
+      const accounts = accountsByMember.get(member.memberNumber);
+      if (!accounts || accounts.length !== 1) return null;
+      return prisma.statementMember.update({
+        where: { id: member.id },
+        data: { accountNumber: accounts[0], accountSource: "directory" },
+      });
+    })
+    .filter((p): p is NonNullable<typeof p> => p !== null);
+
+  await Promise.all(updates);
+  return updates.length;
 }
