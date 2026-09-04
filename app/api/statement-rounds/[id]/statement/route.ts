@@ -5,7 +5,12 @@ import {
   readFirstSheetRows,
   UNREADABLE_FILE_ERROR,
 } from "@/lib/excelUpload";
-import { matchTransfers, parseStatementRows, STATEMENT_ACCOUNTS } from "@/lib/statementReconcile";
+import {
+  matchTransfers,
+  parseStatementRows,
+  transferFingerprint,
+  STATEMENT_ACCOUNTS,
+} from "@/lib/statementReconcile";
 import { recomputeRoundPayments } from "@/lib/statementRecompute";
 
 export const runtime = "nodejs";
@@ -16,10 +21,18 @@ export const dynamic = "force-dynamic";
 // Which branch a transfer arrived at is not in the statement rows — it is
 // which of the cooperative's two accounts the statement belongs to — so the
 // account is chosen on upload and recorded against every transfer from this
-// file. Re-uploading the same account's statement replaces that account's
-// transfers rather than adding to them, so a corrected or extended export
-// can be dropped in as many times as needed without inflating anyone's
-// total; the other account's transfers are left untouched.
+// file.
+//
+// Statements accumulate. One account's transfers for a month routinely
+// arrive as several exports covering different date ranges, so each upload
+// adds the lines this round does not already have. Duplicate protection is
+// per statement line (see transferFingerprint) rather than per file, which
+// means an unchanged file re-uploaded adds nothing, and two exports whose
+// date ranges overlap count the shared days once.
+//
+// This used to replace the account's whole set on every upload, which meant
+// a second file for the same account silently reverted everyone the first
+// one had marked as paid back to "ยังค้าง".
 export async function POST(
   request: NextRequest,
   { params }: { params: { id: string } }
@@ -77,21 +90,24 @@ export async function POST(
       .map((m) => [m.accountNumber as string, m.memberNumber])
   );
 
-  await prisma.$transaction([
-    prisma.statementTransfer.deleteMany({ where: { roundId: round.id, account } }),
-    prisma.statementTransfer.createMany({
-      data: transfers.map((transfer) => ({
-        roundId: round.id,
-        memberNumber: memberByAccount.get(transfer.accountNumber) ?? null,
-        accountNumber: transfer.accountNumber,
-        amount: transfer.amount,
-        transferredAt: transfer.transferredAt,
-        account,
-        branch,
-        description: transfer.description,
-      })),
-    }),
-  ]);
+  // skipDuplicates leans on the unique (roundId, fingerprint) index: lines
+  // this round already holds — from this same file uploaded again, or from an
+  // overlapping date range — are left alone rather than added a second time.
+  const created = await prisma.statementTransfer.createMany({
+    data: transfers.map((transfer) => ({
+      roundId: round.id,
+      memberNumber: memberByAccount.get(transfer.accountNumber) ?? null,
+      accountNumber: transfer.accountNumber,
+      amount: transfer.amount,
+      transferredAt: transfer.transferredAt,
+      account,
+      branch,
+      description: transfer.description,
+      fingerprint: transferFingerprint(account, transfer),
+      sourceFile: checked.file.name,
+    })),
+    skipDuplicates: true,
+  });
 
   await recomputeRoundPayments(round.id);
 
@@ -99,7 +115,31 @@ export async function POST(
     account,
     branch,
     transfers: transfers.length,
+    added: created.count,
+    duplicates: transfers.length - created.count,
     matched: matchedByMember.size,
     unmatched: unmatched.length,
   });
+}
+
+// Drops every transfer read from one of the two accounts, leaving the other
+// account and the member list alone. The way out of a statement uploaded
+// against the wrong account — without it, since uploads now accumulate, those
+// rows would have no way out short of deleting the whole round.
+export async function DELETE(
+  request: NextRequest,
+  { params }: { params: { id: string } }
+) {
+  const { searchParams } = new URL(request.url);
+  const account = String(searchParams.get("account") ?? "").trim();
+  if (!STATEMENT_ACCOUNTS[account]) {
+    return NextResponse.json({ error: "ต้องระบุบัญชี (413 หรือ 447)" }, { status: 400 });
+  }
+
+  const removed = await prisma.statementTransfer.deleteMany({
+    where: { roundId: params.id, account },
+  });
+  await recomputeRoundPayments(params.id);
+
+  return NextResponse.json({ removed: removed.count });
 }

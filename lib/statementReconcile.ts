@@ -20,6 +20,14 @@ export interface TransferRow {
   amount: number;
   transferredAt: Date | null;
   description: string;
+  // The account's running balance after this line. Not displayed anywhere —
+  // it is carried because it is what lets two otherwise identical transfers
+  // (same payer, same amount, same day) tell themselves apart.
+  balance: number | null;
+  // Distinguishes rows identical in every field above, within one file.
+  // Assigned in sheet order, so the same rows appearing again in an
+  // overlapping export get the same numbers and recognise each other.
+  occurrence: number;
 }
 
 export type PaymentStatus = "paid" | "overpaid" | "unpaid";
@@ -137,6 +145,7 @@ export function parseMaiDaiRows(rows: unknown[][]): MaiDaiRow[] {
 //   A Date · B Teller Id · C Txn Code · D Description · E Cheque No. · F Amount
 export function parseStatementRows(rows: unknown[][]): TransferRow[] {
   const transfers: TransferRow[] = [];
+  const seen = new Map<string, number>();
 
   for (const row of rows) {
     const description = String(row[3] ?? "");
@@ -146,15 +155,56 @@ export function parseStatementRows(rows: unknown[][]): TransferRow[] {
     const amount = parseAmount(row[5]);
     if (amount === null || amount <= 0) continue;
 
+    const transferredAt = parseStatementDate(row[0]);
+    const balance = parseAmount(row[7]);
+
+    // Count identical rows as we go, so the second "same payer, same amount,
+    // same day, same balance" line in a file is a different transfer rather
+    // than a duplicate of the first.
+    const key = identityKey(accountNumber, amount, transferredAt, balance);
+    const occurrence = seen.get(key) ?? 0;
+    seen.set(key, occurrence + 1);
+
     transfers.push({
       accountNumber,
       amount,
-      transferredAt: parseStatementDate(row[0]),
+      transferredAt,
       description: description.trim(),
+      balance,
+      occurrence,
     });
   }
 
   return transfers;
+}
+
+function identityKey(
+  accountNumber: string,
+  amount: number,
+  transferredAt: Date | null,
+  balance: number | null
+): string {
+  return [
+    accountNumber,
+    amount.toFixed(2),
+    transferredAt ? transferredAt.toISOString().slice(0, 10) : "",
+    balance === null ? "" : balance.toFixed(2),
+  ].join("|");
+}
+
+// What makes one transfer *this* transfer, stable across uploads.
+//
+// Statements are exported per date range and the ranges overlap as often as
+// not (1-15, then 1-30), so the same line legitimately arrives more than
+// once and must be recognised rather than counted twice. Everything the bank
+// gives us about the line goes into the key, including the running balance,
+// which differs even between two payments of the same amount on the same day.
+export function transferFingerprint(account: string, transfer: TransferRow): string {
+  return [
+    account,
+    identityKey(transfer.accountNumber, transfer.amount, transfer.transferredAt, transfer.balance),
+    transfer.occurrence,
+  ].join("|");
 }
 
 // The status rule staff already work to: compare what arrived against what
@@ -170,26 +220,33 @@ export function calcPaymentStatus(
   return { status: "unpaid", diff };
 }
 
-export interface MatchResult {
+// Only the three fields matching actually reads, so callers (and tests) need
+// not build a whole statement line to ask who a payment belongs to.
+export type MatchableTransfer = Pick<
+  TransferRow,
+  "accountNumber" | "amount" | "transferredAt"
+>;
+
+export interface MatchResult<T extends MatchableTransfer = TransferRow> {
   matchedByMember: Map<string, { amountPaid: number; paidAt: Date | null }>;
-  unmatched: TransferRow[];
+  unmatched: T[];
 }
 
 // Matches a statement's transfers against the round's members by account
 // number. Several transfers can belong to one member (paying in
 // instalments), so amounts accumulate and the latest transfer date wins —
 // that is the date staff would quote when asked "when did they pay".
-export function matchTransfers(
-  transfers: TransferRow[],
+export function matchTransfers<T extends MatchableTransfer>(
+  transfers: T[],
   members: { memberNumber: string; accountNumber: string | null }[]
-): MatchResult {
+): MatchResult<T> {
   const memberByAccount = new Map<string, string>();
   for (const member of members) {
     if (member.accountNumber) memberByAccount.set(member.accountNumber, member.memberNumber);
   }
 
   const matchedByMember = new Map<string, { amountPaid: number; paidAt: Date | null }>();
-  const unmatched: TransferRow[] = [];
+  const unmatched: T[] = [];
 
   for (const transfer of transfers) {
     const memberNumber = memberByAccount.get(transfer.accountNumber);

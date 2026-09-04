@@ -42,10 +42,34 @@ export async function GET(
     { due: 0, paid: 0 }
   );
 
+  // Which statements this round was built from. Uploads accumulate, so
+  // without this the only sign a file had been loaded was the totals moving,
+  // and staff had no way to tell whether they had already dropped in the
+  // second half of the month.
+  const loaded = await prisma.statementTransfer.groupBy({
+    by: ["account", "branch", "sourceFile"],
+    where: { roundId: round.id },
+    _count: { _all: true },
+    _sum: { amount: true },
+  });
+
   return NextResponse.json({
     round,
     data: members,
     unmatched,
+    statements: loaded
+      .map((row) => ({
+        account: row.account,
+        branch: row.branch,
+        sourceFile: row.sourceFile,
+        transfers: row._count._all,
+        amount: Math.round((row._sum.amount ?? 0) * 100) / 100,
+      }))
+      .sort(
+        (a, b) =>
+          a.account.localeCompare(b.account) ||
+          (a.sourceFile ?? "").localeCompare(b.sourceFile ?? "", "th")
+      ),
     totals: {
       ...totals,
       outstanding: Math.round((totals.due - totals.paid) * 100) / 100,

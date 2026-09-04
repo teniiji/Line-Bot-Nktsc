@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { formatAmount } from "@/lib/format";
 import {
+  StatementFileSummary,
   StatementMemberRow,
   StatementRoundSummary,
   StatementUnmatchedRow,
@@ -44,6 +45,8 @@ const ACCOUNTS = [
   { value: "447", label: "447 บึงกาฬ" },
 ];
 
+const STATEMENT_BRANCH: Record<string, string> = { "413": "หนองคาย", "447": "บึงกาฬ" };
+
 const formatDate = (iso: string | null) =>
   iso
     ? new Date(iso).toLocaleDateString("th-TH", {
@@ -58,6 +61,10 @@ export default function StatementReconcilePanel() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [members, setMembers] = useState<StatementMemberRow[]>([]);
   const [unmatched, setUnmatched] = useState<StatementUnmatchedRow[]>([]);
+  const [statements, setStatements] = useState<StatementFileSummary[]>([]);
+  const [pendingClear, setPendingClear] = useState<{ account: string; branch: string } | null>(
+    null
+  );
   const [totals, setTotals] = useState({ due: 0, paid: 0, outstanding: 0 });
   const [loadingRounds, setLoadingRounds] = useState(true);
   const [loadingRound, setLoadingRound] = useState(false);
@@ -95,6 +102,7 @@ export default function StatementReconcilePanel() {
     const body = await res.json();
     setMembers(body.data ?? []);
     setUnmatched(body.unmatched ?? []);
+    setStatements(body.statements ?? []);
     setTotals(body.totals ?? { due: 0, paid: 0, outstanding: 0 });
     setLoadingRound(false);
   }, []);
@@ -117,6 +125,7 @@ export default function StatementReconcilePanel() {
     else {
       setMembers([]);
       setUnmatched([]);
+      setStatements([]);
     }
     setNotice(null);
     setError(null);
@@ -208,10 +217,36 @@ export default function StatementReconcilePanel() {
         return;
       }
       setNotice(
-        `บัญชี ${body.account} ${body.branch}: พบรายการโอน ${body.transfers} รายการ ` +
-          `จับคู่สมาชิกได้ ${body.matched} คน` +
+        `บัญชี ${body.account} ${body.branch}: อ่านได้ ${body.transfers} รายการ ` +
+          `เพิ่มใหม่ ${body.added} รายการ` +
+          (body.duplicates > 0 ? ` (ซ้ำกับที่มีอยู่แล้ว ${body.duplicates} รายการ ไม่นับซ้ำ)` : "") +
+          `, จับคู่สมาชิกได้ ${body.matched} คน` +
           (body.unmatched > 0 ? `, ไม่พบเจ้าของ ${body.unmatched} รายการ` : "")
       );
+      await Promise.all([fetchRound(selectedId), fetchRounds()]);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const confirmClearAccount = async () => {
+    if (!pendingClear || !selectedId) return;
+    const { account: acct, branch } = pendingClear;
+    setPendingClear(null);
+    setBusy(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const res = await fetch(
+        `/api/statement-rounds/${selectedId}/statement?account=${encodeURIComponent(acct)}`,
+        { method: "DELETE" }
+      );
+      const body = await res.json();
+      if (!res.ok) {
+        setError(body.error || "ล้างรายการไม่สำเร็จ");
+        return;
+      }
+      setNotice(`ล้างรายการโอนของบัญชี ${acct} ${branch} แล้ว ${body.removed} รายการ`);
       await Promise.all([fetchRound(selectedId), fetchRounds()]);
     } finally {
       setBusy(false);
@@ -253,7 +288,9 @@ export default function StatementReconcilePanel() {
             อัปโหลด 2 อย่างต่อรอบ: <strong>รายชื่อหักไม่ได้</strong> (ไฟล์ "รวม_ไม่ได้" — คอลัมน์ E
             ยอดหักไม่ได้, คอลัมน์ I เลขบัญชี) และ <strong>Statement ธนาคาร</strong> ของบัญชี 413
             หนองคาย / 447 บึงกาฬ — ระบบจับคู่รายการ "TR fr เลขบัญชี" กับสมาชิกให้เอง
-            แล้วสรุปว่าใครชำระครบ/เกิน/ยังค้าง (โอนมาหลายครั้งรวมยอดให้ อัปโหลดไฟล์เดิมซ้ำได้ไม่นับซ้ำ)
+            แล้วสรุปว่าใครชำระครบ/เกิน/ยังค้าง — <strong>Statement อัปโหลดได้หลายไฟล์ต่อบัญชี</strong>{" "}
+            (คนละช่วงวันที่) ระบบจะรวมกันให้ ไม่ทับของเดิม และรายการที่โหลดไว้แล้วจะไม่ถูกนับซ้ำ
+            ต่อให้อัปโหลดไฟล์เดิมหรือช่วงวันที่คาบเกี่ยวกัน
           </p>
         </div>
         <button
@@ -374,6 +411,43 @@ export default function StatementReconcilePanel() {
                   ลบรอบนี้
                 </button>
               </div>
+
+              {statements.length > 0 && (
+                <div className="px-4 py-2 border-b border-slate-100 text-xs text-slate-600">
+                  <span className="text-slate-500">Statement ที่โหลดไว้แล้ว:</span>{" "}
+                  {statements.map((s, i) => (
+                    <span key={`${s.account}-${s.sourceFile ?? i}`}>
+                      {i > 0 && <span className="text-slate-300"> · </span>}
+                      <span className="font-mono">{s.account}</span> {s.sourceFile ?? "(ไม่ทราบชื่อไฟล์)"}{" "}
+                      <span className="text-slate-400">
+                        ({s.transfers} รายการ {formatAmount(s.amount)})
+                      </span>
+                    </span>
+                  ))}
+                  <span className="text-slate-400">
+                    {" "}
+                    — อัปโหลดเพิ่มได้เรื่อยๆ รายการที่มีอยู่แล้วจะไม่ถูกนับซ้ำ
+                  </span>
+                  <span className="ml-2">
+                    {ACCOUNTS.filter((a) => statements.some((s) => s.account === a.value)).map(
+                      (a) => (
+                        <button
+                          key={a.value}
+                          onClick={() =>
+                            setPendingClear({
+                              account: a.value,
+                              branch: STATEMENT_BRANCH[a.value] ?? "",
+                            })
+                          }
+                          className="text-red-600 hover:underline ml-2"
+                        >
+                          ล้าง {a.value}
+                        </button>
+                      )
+                    )}
+                  </span>
+                </div>
+              )}
 
               <div className="flex flex-wrap items-center gap-4 px-4 py-3 border-b border-slate-100 text-sm">
                 <button
@@ -638,6 +712,21 @@ export default function StatementReconcilePanel() {
         confirmLabel="ลบรอบ"
         onConfirm={confirmDeleteRound}
         onCancel={() => setPendingDelete(null)}
+      />
+
+      <ConfirmDialog
+        open={pendingClear !== null}
+        title={`ล้างรายการโอนของบัญชี ${pendingClear?.account ?? ""}?`}
+        description={
+          pendingClear
+            ? `จะลบรายการโอนทุกรายการที่อ่านมาจาก Statement ของบัญชี ${pendingClear.account} ` +
+              `${pendingClear.branch} ในรอบนี้ (ทุกไฟล์) — อีกบัญชีและรายชื่อหักไม่ได้ไม่ถูกแตะต้อง ` +
+              `ใช้เมื่ออัปโหลดผิดบัญชีหรืออยากเริ่มอ่านใหม่ อัปโหลดไฟล์เดิมกลับเข้าไปได้เสมอ`
+            : undefined
+        }
+        confirmLabel="ล้างรายการ"
+        onConfirm={confirmClearAccount}
+        onCancel={() => setPendingClear(null)}
       />
     </div>
   );
