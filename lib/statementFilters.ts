@@ -8,6 +8,10 @@ import { StatementMemberRow } from "./types";
 export interface StatementFilter {
   search: string;
   unitName: string; // "" = ทุกสังกัด
+  // รหัสหน่วยคุม — the H-code from column J of the หักไม่ได้ sheet. "" = ทุกหน่วยคุม.
+  // A coarser grouping than สังกัด, and the one the cooperative's own summaries
+  // ("สรุปหน่วยคุม") are organised by, so it is how staff divide the chasing up.
+  hCode: string;
   status: string; // "all" | "paid" | "overpaid" | "unpaid" | "no_account"
 }
 
@@ -56,6 +60,7 @@ export function filterStatementMembers(
   return rows.filter(
     (m) =>
       matchesStatus(m, filter.status) &&
+      (!filter.hCode || m.hCode === filter.hCode) &&
       (!filter.unitName || m.unitName === filter.unitName) &&
       matchesSearch(m, filter.search)
   );
@@ -98,4 +103,17 @@ export function unitNamesOf(rows: StatementMemberRow[]): string[] {
   const names = new Set<string>();
   for (const m of rows) if (m.unitName) names.add(m.unitName);
   return [...names].sort((a, b) => a.localeCompare(b, "th"));
+}
+
+// H-codes are 1-2 digit numbers, so they have to sort numerically — as text,
+// หน่วยคุม 10 would come between 1 and 2.
+export function hCodesOf(rows: StatementMemberRow[]): string[] {
+  const codes = new Set<string>();
+  for (const m of rows) if (m.hCode) codes.add(m.hCode);
+  return [...codes].sort((a, b) => {
+    const na = Number(a);
+    const nb = Number(b);
+    if (Number.isFinite(na) && Number.isFinite(nb)) return na - nb;
+    return a.localeCompare(b, "th");
+  });
 }
