@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   calcPaymentStatus,
   extractTransferAccount,
+  hasTimeOfDay,
   matchTransfers,
   normalizeAccountNumber,
   parseAmount,
@@ -49,6 +50,35 @@ describe("parseStatementDate", () => {
     expect(parseStatementDate("32/13/2569")).toBeNull();
     expect(parseStatementDate("")).toBeNull();
     expect(parseStatementDate(null)).toBeNull();
+  });
+
+  it("keeps the time of day when the export carries one", () => {
+    expect(parseStatementDate("31/08/2569 14:32")?.toISOString()).toBe("2026-08-31T14:32:00.000Z");
+    expect(parseStatementDate("31/08/2569 14:32:07")?.toISOString()).toBe(
+      "2026-08-31T14:32:07.000Z"
+    );
+    expect(parseStatementDate("31/08/2569T09:05")?.toISOString()).toBe("2026-08-31T09:05:00.000Z");
+  });
+
+  it("keeps the date when there is no time to read", () => {
+    expect(parseStatementDate("31/08/2569")?.toISOString()).toBe("2026-08-31T00:00:00.000Z");
+  });
+
+  it("ignores a trailing number that is not a clock reading", () => {
+    // The bank puts a teller id and a running balance next to the date; none
+    // of them may be mistaken for a time.
+    expect(parseStatementDate("31/08/2569 44:99")?.toISOString()).toBe("2026-08-31T00:00:00.000Z");
+    expect(parseStatementDate("31/08/2569 1234567")?.toISOString()).toBe(
+      "2026-08-31T00:00:00.000Z"
+    );
+  });
+});
+
+describe("hasTimeOfDay", () => {
+  it("treats exact midnight as a date with no clock reading", () => {
+    expect(hasTimeOfDay(new Date("2026-08-31T00:00:00.000Z"))).toBe(false);
+    expect(hasTimeOfDay(new Date("2026-08-31T14:32:00.000Z"))).toBe(true);
+    expect(hasTimeOfDay(new Date("2026-08-31T00:00:30.000Z"))).toBe(true);
   });
 });
 
@@ -219,6 +249,18 @@ describe("transferFingerprint", () => {
     const first = statement([line("25/06/2569", "0431234568", 3000, 10000)]);
     const again = statement([line("25/06/2569", "0431234568", 3000, 10000)]);
     expect(transferFingerprint("413", first[0])).toBe(transferFingerprint("413", again[0]));
+  });
+
+  it("is unchanged by the time of day, so rounds loaded before times were read still match", () => {
+    // Reading the clock reading out of the export must not re-identify lines
+    // that are already in the database: if it did, re-uploading a statement
+    // would insert every row a second time and double the money.
+    const withoutTime = statement([line("25/06/2569", "0431234568", 3000, 10000)]);
+    const withTime = statement([line("25/06/2569 14:32", "0431234568", 3000, 10000)]);
+    expect(withTime[0].transferredAt?.toISOString()).toBe("2026-06-25T14:32:00.000Z");
+    expect(transferFingerprint("413", withTime[0])).toBe(
+      transferFingerprint("413", withoutTime[0])
+    );
   });
 
   it("recognises the shared days between two overlapping date ranges", () => {

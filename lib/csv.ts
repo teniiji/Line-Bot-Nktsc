@@ -84,6 +84,7 @@ export function downloadStatementMembersCsv(
     "\u0E42\u0E2D\u0E19\u0E21\u0E32\u0E41\u0E25\u0E49\u0E27",
     "\u0E04\u0E07\u0E40\u0E2B\u0E25\u0E37\u0E2D",
     "\u0E27\u0E31\u0E19\u0E17\u0E35\u0E48\u0E42\u0E2D\u0E19",
+    "\u0E40\u0E27\u0E25\u0E32\u0E17\u0E35\u0E48\u0E42\u0E2D\u0E19",
     "\u0E2A\u0E32\u0E02\u0E32\u0E17\u0E35\u0E48\u0E42\u0E2D\u0E19",
     "\u0E2A\u0E16\u0E32\u0E19\u0E30",
   ];
@@ -97,6 +98,11 @@ export function downloadStatementMembersCsv(
     m.amountPaid.toFixed(2),
     (Math.round((m.amountDue - m.amountPaid) * 100) / 100).toFixed(2),
     m.paidAt ? m.paidAt.slice(0, 10) : "",
+    // Date and time in their own columns rather than one string, so Excel
+    // reads both as values and can sort on them. Statement timestamps hold
+    // the bank's wall clock in UTC (lib/format.ts), so the ISO string carries
+    // the clock reading verbatim; "00:00" means the export gave no time.
+    m.paidAt && m.paidAt.slice(11, 16) !== "00:00" ? m.paidAt.slice(11, 16) : "",
     m.paidBranch ?? "",
     statusLabel[m.status] ?? m.status,
   ]);

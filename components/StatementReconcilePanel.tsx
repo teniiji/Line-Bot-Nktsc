@@ -1,7 +1,12 @@
 "use client";
 
 import { Fragment, useCallback, useEffect, useRef, useState } from "react";
-import { formatAmount } from "@/lib/format";
+import {
+  formatAmount,
+  formatStatementDate,
+  formatStatementDateTime,
+  formatStatementTime,
+} from "@/lib/format";
 import {
   StatementFileSummary,
   StatementMemberRow,
@@ -54,14 +59,54 @@ const ACCOUNTS = [
 
 const STATEMENT_BRANCH: Record<string, string> = { "413": "หนองคาย", "447": "บึงกาฬ" };
 
-const formatDate = (iso: string | null) =>
-  iso
-    ? new Date(iso).toLocaleDateString("th-TH", {
-        year: "numeric",
-        month: "short",
-        day: "numeric",
-      })
-    : "—";
+const FilterChip = ({
+  active,
+  onClick,
+  label,
+  count,
+  countClass,
+  suffix,
+  title,
+}: {
+  active: boolean;
+  onClick: () => void;
+  label: string;
+  count: number;
+  countClass?: string;
+  suffix?: string;
+  title?: string;
+}) => (
+  <button
+    onClick={onClick}
+    title={title}
+    className={`px-3 py-1.5 rounded-full border transition-colors ${
+      active
+        ? "border-slate-900 bg-slate-900 text-white"
+        : "border-slate-200 bg-white text-slate-600 hover:border-slate-300 hover:bg-slate-50"
+    }`}
+  >
+    {label}{" "}
+    <strong className={`num font-semibold ${active ? "" : (countClass ?? "text-slate-900")}`}>
+      {count}
+    </strong>
+    {suffix && ` ${suffix}`}
+  </button>
+);
+
+// The date on its own line with the clock reading under it, so the column
+// stays narrow and the dates still line up to be compared down the page.
+// Rounds loaded from an export that carried no time simply have no second
+// line — see formatStatementTime.
+const DateTimeCell = ({ iso, suffix }: { iso: string | null; suffix?: string | null }) => {
+  const time = formatStatementTime(iso);
+  return (
+    <span className="inline-block leading-tight">
+      <span className="num">{formatStatementDate(iso)}</span>
+      {suffix && <span className="text-xs text-slate-400"> · {suffix}</span>}
+      {time && <span className="block num text-xs text-slate-400">{time}</span>}
+    </span>
+  );
+};
 
 export default function StatementReconcilePanel() {
   const [rounds, setRounds] = useState<StatementRoundSummary[]>([]);
@@ -564,45 +609,49 @@ export default function StatementReconcilePanel() {
                 </div>
               )}
 
-              <div className="flex flex-wrap items-center gap-4 px-4 py-3 border-b border-slate-100 text-sm">
-                <button
+              {/* These read as buttons now rather than a row of words: which
+                  one is active was previously only a bold weight, which is
+                  hard to see when every label already carries an emoji. */}
+              <div className="flex flex-wrap items-center gap-2 px-4 py-3 border-b border-slate-100 text-sm">
+                <FilterChip
+                  active={statusFilter === "all"}
                   onClick={() => setStatusFilter("all")}
-                  className={`hover:underline ${statusFilter === "all" ? "font-semibold" : ""}`}
-                >
-                  ทั้งหมด <strong>{selected.totalMembers}</strong> คน
-                </button>
-                <button
+                  label="ทั้งหมด"
+                  count={selected.totalMembers}
+                  suffix="คน"
+                />
+                <FilterChip
+                  active={statusFilter === "paid"}
                   onClick={() => setStatusFilter(statusFilter === "paid" ? "all" : "paid")}
-                  className={`hover:underline ${statusFilter === "paid" ? "font-semibold" : ""}`}
-                >
-                  ✅ ชำระครบ <strong className="text-green-700">{selected.paidMembers}</strong>
-                </button>
-                <button
+                  label="✅ ชำระครบ"
+                  count={selected.paidMembers}
+                  countClass="text-green-700"
+                />
+                <FilterChip
+                  active={statusFilter === "overpaid"}
                   onClick={() => setStatusFilter(statusFilter === "overpaid" ? "all" : "overpaid")}
-                  className={`hover:underline ${statusFilter === "overpaid" ? "font-semibold" : ""}`}
-                >
-                  ⚠️ ชำระเกิน{" "}
-                  <strong className="text-amber-700">{selected.overpaidMembers}</strong>
-                </button>
-                <button
+                  label="⚠️ ชำระเกิน"
+                  count={selected.overpaidMembers}
+                  countClass="text-amber-700"
+                />
+                <FilterChip
+                  active={statusFilter === "unpaid"}
                   onClick={() => setStatusFilter(statusFilter === "unpaid" ? "all" : "unpaid")}
-                  className={`hover:underline ${statusFilter === "unpaid" ? "font-semibold" : ""}`}
-                >
-                  ❌ ยังค้าง <strong className="text-red-600">{selected.unpaidMembers}</strong>
-                </button>
+                  label="❌ ยังค้าง"
+                  count={selected.unpaidMembers}
+                  countClass="text-red-600"
+                />
                 {missingAccountCount > 0 && (
-                  <button
+                  <FilterChip
+                    active={statusFilter === "no_account"}
                     onClick={() =>
                       setStatusFilter(statusFilter === "no_account" ? "all" : "no_account")
                     }
+                    label="⛔ ไม่มีเลขบัญชี"
+                    count={missingAccountCount}
+                    countClass="text-amber-700"
                     title="ไม่มีเลขบัญชีในไฟล์รายชื่อ จับคู่กับ Statement ไม่ได้เลย ต้องหาเลขบัญชีมาเติมก่อน"
-                    className={`hover:underline ${
-                      statusFilter === "no_account" ? "font-semibold" : ""
-                    }`}
-                  >
-                    ⛔ ไม่มีเลขบัญชี{" "}
-                    <strong className="text-amber-700">{missingAccountCount}</strong>
-                  </button>
+                  />
                 )}
               </div>
 
@@ -612,13 +661,13 @@ export default function StatementReconcilePanel() {
                   value={searchInput}
                   onChange={(e) => setSearchInput(e.target.value)}
                   placeholder="ค้นหาชื่อ, เลขสมาชิก, เลขบัญชี"
-                  className="border border-slate-300 rounded px-3 py-1.5 w-64"
+                  className="border border-slate-300 rounded-md px-3 py-1.5 w-64 focus:outline-none focus:ring-2 focus:ring-slate-900/10 focus:border-slate-400"
                 />
                 {hCodes.length > 0 && (
                   <select
                     value={hCodeFilter}
                     onChange={(e) => changeHCode(e.target.value)}
-                    className="border border-slate-300 rounded px-2 py-1.5"
+                    className="border border-slate-300 rounded-md px-2 py-1.5 bg-white"
                     title="รหัสหน่วยคุม (H-code) จากคอลัมน์ J ของไฟล์รายชื่อหักไม่ได้"
                   >
                     <option value="">ทุกหน่วยคุม ({hCodes.length})</option>
@@ -632,7 +681,7 @@ export default function StatementReconcilePanel() {
                 <select
                   value={unitFilter}
                   onChange={(e) => setUnitFilter(e.target.value)}
-                  className="border border-slate-300 rounded px-2 py-1.5 max-w-[16rem]"
+                  className="border border-slate-300 rounded-md px-2 py-1.5 bg-white max-w-[16rem]"
                 >
                   <option value="">ทุกสังกัด ({units.length})</option>
                   {units.map((u) => (
@@ -646,7 +695,7 @@ export default function StatementReconcilePanel() {
                   <select
                     value={sort}
                     onChange={(e) => setSort(e.target.value as StatementSort)}
-                    className="border border-slate-300 rounded px-2 py-1.5 text-slate-900"
+                    className="border border-slate-300 rounded-md px-2 py-1.5 bg-white text-slate-900"
                   >
                     {SORT_OPTIONS.map((o) => (
                       <option key={o.value} value={o.value}>
@@ -663,7 +712,7 @@ export default function StatementReconcilePanel() {
                 <button
                   onClick={() => downloadStatementMembersCsv(shown, selected.label)}
                   disabled={shown.length === 0}
-                  className="ml-auto px-3 py-1.5 border border-slate-300 rounded disabled:opacity-40"
+                  className="ml-auto px-3 py-1.5 border border-slate-300 rounded-md bg-white hover:bg-slate-50 disabled:opacity-40"
                 >
                   ส่งออก CSV ({shown.length})
                 </button>
@@ -673,19 +722,33 @@ export default function StatementReconcilePanel() {
                 {/* Totals follow the filters: with a สังกัด picked, "ยอดค้าง" of
                     that unit is the number staff are about to act on, not the
                     round-wide one. */}
-                <span className="text-slate-500">
+                <span className="num text-slate-500">
                   {filtered ? `แสดง ${shownTotals.count} จาก ${members.length} คน` : `${members.length} คน`}
                 </span>
-                <span>ยอดหักไม่ได้ {formatAmount(shownTotals.due)}</span>
-                <span>โอนมาแล้ว {formatAmount(shownTotals.paid)}</span>
-                <span>
+                <span className="text-slate-500">
+                  ยอดหักไม่ได้{" "}
+                  <strong className="num font-semibold text-slate-900">
+                    {formatAmount(shownTotals.due)}
+                  </strong>
+                </span>
+                <span className="text-slate-500">
+                  โอนมาแล้ว{" "}
+                  <strong className="num font-semibold text-green-700">
+                    {formatAmount(shownTotals.paid)}
+                  </strong>
+                </span>
+                <span className="text-slate-500">
                   คงเหลือ{" "}
-                  <strong className={shownTotals.outstanding > 0 ? "text-red-600" : ""}>
+                  <strong
+                    className={`num font-semibold ${
+                      shownTotals.outstanding > 0 ? "text-red-600" : "text-slate-900"
+                    }`}
+                  >
                     {formatAmount(shownTotals.outstanding)}
                   </strong>
                 </span>
                 {filtered && (
-                  <span className="text-slate-400">
+                  <span className="num text-slate-400">
                     (ทั้งรอบ: คงเหลือ {formatAmount(totals.outstanding)})
                   </span>
                 )}
@@ -708,19 +771,27 @@ export default function StatementReconcilePanel() {
             </p>
           ) : (
             <div className="overflow-x-auto">
-              <table className="w-full text-sm min-w-[1060px]">
-                <thead className="bg-slate-100 text-slate-600 text-left">
+              <table className="w-full text-sm min-w-[1240px]">
+                {/* The header sticks because these rounds run to hundreds of
+                    rows and the columns are otherwise indistinguishable once
+                    it scrolls away — four of them are money.
+
+                    Names and สังกัด carry minimum widths because Thai has no
+                    spaces between words: squeezed into a narrow column the
+                    browser breaks them mid-word, and a member's name split
+                    across three lines is hard to match against a list. */}
+                <thead className="sticky top-0 z-10 bg-slate-100 text-slate-600 text-left text-xs uppercase tracking-wide">
                   <tr>
-                    <th className="px-4 py-2">เลขสมาชิก</th>
-                    <th className="px-4 py-2">ชื่อ-สกุล</th>
-                    <th className="px-4 py-2">หน่วยคุม</th>
-                    <th className="px-4 py-2">สังกัด</th>
-                    <th className="px-4 py-2">เลขบัญชี</th>
-                    <th className="px-4 py-2 text-right">ยอดหักไม่ได้</th>
-                    <th className="px-4 py-2 text-right">โอนมาแล้ว</th>
-                    <th className="px-4 py-2 text-right">ส่วนต่าง</th>
-                    <th className="px-4 py-2">วันที่โอน</th>
-                    <th className="px-4 py-2">สถานะ</th>
+                    <th className="px-4 py-2.5 font-semibold">เลขสมาชิก</th>
+                    <th className="px-4 py-2.5 font-semibold min-w-[13rem]">ชื่อ-สกุล</th>
+                    <th className="px-4 py-2.5 font-semibold">หน่วยคุม</th>
+                    <th className="px-4 py-2.5 font-semibold min-w-[12rem]">สังกัด</th>
+                    <th className="px-4 py-2.5 font-semibold">เลขบัญชี</th>
+                    <th className="px-4 py-2.5 font-semibold text-right">ยอดหักไม่ได้</th>
+                    <th className="px-4 py-2.5 font-semibold text-right">โอนมาแล้ว</th>
+                    <th className="px-4 py-2.5 font-semibold text-right">ส่วนต่าง</th>
+                    <th className="px-4 py-2.5 font-semibold">วันเวลาที่โอน</th>
+                    <th className="px-4 py-2.5 font-semibold">สถานะ</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -728,27 +799,27 @@ export default function StatementReconcilePanel() {
                     const diff = Math.round((m.amountPaid - m.amountDue) * 100) / 100;
                     return (
                       <Fragment key={m.id}>
-                      <tr className="border-t border-slate-100">
-                        <td className="px-4 py-2 whitespace-nowrap">{m.memberNumber}</td>
-                        <td className="px-4 py-2">
+                      <tr className="border-t border-slate-100 hover:bg-slate-50/75">
+                        <td className="px-4 py-2.5 num whitespace-nowrap">{m.memberNumber}</td>
+                        <td className="px-4 py-2.5">
                           {m.name}
                           {m.note && (
                             <span className="text-xs text-slate-400"> · {m.note}</span>
                           )}
                         </td>
-                        <td className="px-4 py-2 whitespace-nowrap text-slate-500">
+                        <td className="px-4 py-2.5 num whitespace-nowrap text-slate-500">
                           {m.hCode ?? "—"}
                         </td>
-                        <td className="px-4 py-2">{m.unitName ?? "—"}</td>
-                        <td className="px-4 py-2 font-mono text-xs">
+                        <td className="px-4 py-2.5">{m.unitName ?? "—"}</td>
+                        <td className="px-4 py-2.5 font-mono text-xs">
                           {m.accountNumber ?? (
-                            <span className="text-amber-700">ไม่มีเลขบัญชี</span>
+                            <span className="font-sans text-amber-700">ไม่มีเลขบัญชี</span>
                           )}
                         </td>
-                        <td className="px-4 py-2 text-right whitespace-nowrap">
+                        <td className="px-4 py-2.5 num text-right whitespace-nowrap">
                           {formatAmount(m.amountDue)}
                         </td>
-                        <td className="px-4 py-2 text-right whitespace-nowrap">
+                        <td className="px-4 py-2.5 num text-right whitespace-nowrap">
                           {m.amountPaid > 0 ? (
                             <button
                               onClick={() =>
@@ -771,21 +842,22 @@ export default function StatementReconcilePanel() {
                           )}
                         </td>
                         <td
-                          className={`px-4 py-2 text-right whitespace-nowrap ${
-                            diff < 0 ? "text-red-600" : diff > 0 ? "text-amber-700" : ""
+                          className={`px-4 py-2.5 num text-right whitespace-nowrap ${
+                            diff < 0
+                              ? "text-red-600 font-medium"
+                              : diff > 0
+                                ? "text-amber-700 font-medium"
+                                : "text-slate-400"
                           }`}
                         >
                           {diff === 0 ? "0" : formatAmount(diff)}
                         </td>
-                        <td className="px-4 py-2 whitespace-nowrap text-slate-500">
-                          {formatDate(m.paidAt)}
-                          {m.paidBranch && (
-                            <span className="text-xs text-slate-400"> · {m.paidBranch}</span>
-                          )}
+                        <td className="px-4 py-2.5 whitespace-nowrap text-slate-500">
+                          {m.paidAt ? <DateTimeCell iso={m.paidAt} suffix={m.paidBranch} /> : "—"}
                         </td>
-                        <td className="px-4 py-2 whitespace-nowrap">
+                        <td className="px-4 py-2.5 whitespace-nowrap">
                           <span
-                            className={`inline-block px-2 py-0.5 rounded-full text-xs border ${
+                            className={`inline-block px-2.5 py-1 rounded-full text-xs font-medium border ${
                               STATUS_CLASS[m.status] ?? STATUS_CLASS.unpaid
                             }`}
                           >
@@ -806,9 +878,11 @@ export default function StatementReconcilePanel() {
                                 key={t.id}
                                 className="flex flex-wrap items-center gap-3 text-sm py-1 border-t border-slate-200"
                               >
-                                <span className="whitespace-nowrap">{formatAmount(t.amount)}</span>
-                                <span className="text-slate-500 whitespace-nowrap">
-                                  {formatDate(t.transferredAt)}
+                                <span className="num whitespace-nowrap font-medium">
+                                  {formatAmount(t.amount)}
+                                </span>
+                                <span className="num text-slate-500 whitespace-nowrap">
+                                  {formatStatementDateTime(t.transferredAt)}
                                 </span>
                                 <span className="font-mono text-xs text-slate-400">
                                   {t.accountNumber}
@@ -817,7 +891,7 @@ export default function StatementReconcilePanel() {
                                   <span className="text-xs text-amber-700">
                                     ⚠️ อาจเป็น <strong>{t.slipHint.category}</strong>{" "}
                                     {formatAmount(t.slipHint.amount)} (สมาชิกส่งสลิป{" "}
-                                    {formatDate(t.slipHint.date)})
+                                    {formatStatementDate(t.slipHint.date)})
                                   </span>
                                 )}
                                 <span className="ml-auto flex items-center gap-2">
@@ -868,26 +942,26 @@ export default function StatementReconcilePanel() {
               <table className="w-full text-sm mt-2">
                 <thead className="text-slate-500 text-left">
                   <tr>
-                    <th className="px-2 py-1">เลขบัญชี</th>
-                    <th className="px-2 py-1 text-right">ยอด</th>
-                    <th className="px-2 py-1">วันที่</th>
-                    <th className="px-2 py-1">บัญชีที่รับ</th>
-                    <th className="px-2 py-1">เป็นเงินอะไร</th>
-                    <th className="px-2 py-1">เจ้าของ</th>
+                    <th className="px-2 py-1.5 font-medium">เลขบัญชี</th>
+                    <th className="px-2 py-1.5 font-medium text-right">ยอด</th>
+                    <th className="px-2 py-1.5 font-medium">วันเวลาที่โอน</th>
+                    <th className="px-2 py-1.5 font-medium">บัญชีที่รับ</th>
+                    <th className="px-2 py-1.5 font-medium">เป็นเงินอะไร</th>
+                    <th className="px-2 py-1.5 font-medium">เจ้าของ</th>
                   </tr>
                 </thead>
                 <tbody>
                   {unmatched.map((t) => (
-                    <tr key={t.id} className="border-t border-slate-100">
-                      <td className="px-2 py-1 font-mono text-xs">{t.accountNumber}</td>
-                      <td className="px-2 py-1 text-right whitespace-nowrap">
+                    <tr key={t.id} className="border-t border-slate-100 hover:bg-slate-50">
+                      <td className="px-2 py-1.5 font-mono text-xs">{t.accountNumber}</td>
+                      <td className="px-2 py-1.5 num text-right whitespace-nowrap font-medium">
                         {formatAmount(t.amount)}
                       </td>
-                      <td className="px-2 py-1 whitespace-nowrap text-slate-500">
-                        {formatDate(t.transferredAt)}
+                      <td className="px-2 py-1.5 whitespace-nowrap text-slate-500">
+                        <DateTimeCell iso={t.transferredAt} />
                       </td>
-                      <td className="px-2 py-1 text-slate-500">{t.branch ?? "—"}</td>
-                      <td className="px-2 py-1">
+                      <td className="px-2 py-1.5 text-slate-500">{t.branch ?? "—"}</td>
+                      <td className="px-2 py-1.5">
                         <select
                           value=""
                           onChange={(e) =>
@@ -978,25 +1052,25 @@ export default function StatementReconcilePanel() {
               <table className="w-full text-sm mt-2">
                 <thead className="text-slate-500 text-left">
                   <tr>
-                    <th className="px-2 py-1">เลขบัญชี</th>
-                    <th className="px-2 py-1 text-right">ยอด</th>
-                    <th className="px-2 py-1">วันที่</th>
-                    <th className="px-2 py-1">เจ้าของ</th>
-                    <th className="px-2 py-1">เป็นเงินอะไร</th>
+                    <th className="px-2 py-1.5 font-medium">เลขบัญชี</th>
+                    <th className="px-2 py-1.5 font-medium text-right">ยอด</th>
+                    <th className="px-2 py-1.5 font-medium">วันเวลาที่โอน</th>
+                    <th className="px-2 py-1.5 font-medium">เจ้าของ</th>
+                    <th className="px-2 py-1.5 font-medium">เป็นเงินอะไร</th>
                   </tr>
                 </thead>
                 <tbody>
                   {excludedTransfers.map((t) => (
-                    <tr key={t.id} className="border-t border-slate-100">
-                      <td className="px-2 py-1 font-mono text-xs">{t.accountNumber}</td>
-                      <td className="px-2 py-1 text-right whitespace-nowrap">
+                    <tr key={t.id} className="border-t border-slate-100 hover:bg-slate-50">
+                      <td className="px-2 py-1.5 font-mono text-xs">{t.accountNumber}</td>
+                      <td className="px-2 py-1.5 num text-right whitespace-nowrap font-medium">
                         {formatAmount(t.amount)}
                       </td>
-                      <td className="px-2 py-1 whitespace-nowrap text-slate-500">
-                        {formatDate(t.transferredAt)}
+                      <td className="px-2 py-1.5 whitespace-nowrap text-slate-500">
+                        <DateTimeCell iso={t.transferredAt} />
                       </td>
-                      <td className="px-2 py-1 text-slate-500">{t.memberNumber ?? "—"}</td>
-                      <td className="px-2 py-1">
+                      <td className="px-2 py-1.5 num text-slate-500">{t.memberNumber ?? "—"}</td>
+                      <td className="px-2 py-1.5">
                         <select
                           value={t.excludedReason ?? ""}
                           onChange={(e) => setTransferReason(t.id, e.target.value || null)}
