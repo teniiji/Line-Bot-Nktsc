@@ -2,8 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import {
   checkUploadedFile,
+  describeReadError,
   readFirstSheetRows,
-  UNREADABLE_FILE_ERROR,
 } from "@/lib/excelUpload";
 import {
   parseStatementRows,
@@ -74,8 +74,8 @@ export async function POST(
   let rows: unknown[][];
   try {
     rows = await readFirstSheetRows(checked.file);
-  } catch {
-    return NextResponse.json({ error: UNREADABLE_FILE_ERROR }, { status: 400 });
+  } catch (err) {
+    return NextResponse.json({ error: describeReadError(err) }, { status: 400 });
   }
 
   const transfers = parseStatementRows(rows);

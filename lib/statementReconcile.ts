@@ -59,6 +59,13 @@ export function parseAmount(value: unknown): number | null {
 // sometimes with the separator missing between day and year ("25/062569"
 // instead of "25/06/2569"). Both are normalised here rather than at the call
 // site, so every date on screen is a real Gregorian date.
+//
+// The time of day is kept when the export carries one ("31/08/2569 14:32"),
+// because two payments from the same account on the same day are told apart
+// by it, and because "โอนตอนไหน" is the first thing staff are asked when a
+// member disputes a payment. Dates are built in UTC and rendered in UTC, so
+// the clock staff read is the clock the bank printed, whatever timezone the
+// viewer's device happens to be set to.
 export function parseStatementDate(value: unknown): Date | null {
   if (value === null || value === undefined || value === "") return null;
   if (value instanceof Date) return Number.isNaN(value.getTime()) ? null : value;
@@ -76,12 +83,39 @@ export function parseStatementDate(value: unknown): Date | null {
     let year = Number(match[3]);
     if (year >= 2500) year -= 543;
     if (month < 1 || month > 12 || day < 1 || day > 31) return null;
-    const date = new Date(Date.UTC(year, month - 1, day));
+
+    const time = parseTimeOfDay(repaired.slice(match[0].length));
+    const date = new Date(
+      Date.UTC(year, month - 1, day, time?.hour ?? 0, time?.minute ?? 0, time?.second ?? 0)
+    );
     return Number.isNaN(date.getTime()) ? null : date;
   }
 
   const parsed = new Date(repaired);
   return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+// The clock reading that may follow a date in the same cell. Anything that
+// isn't a plausible time is ignored rather than guessed at — a wrong time on
+// a payment record is worse than no time at all.
+function parseTimeOfDay(rest: string): { hour: number; minute: number; second: number } | null {
+  const match = rest.match(/^[\sT,]*(\d{1,2}):(\d{2})(?::(\d{2}))?/);
+  if (!match) return null;
+
+  const hour = Number(match[1]);
+  const minute = Number(match[2]);
+  const second = match[3] ? Number(match[3]) : 0;
+  if (hour > 23 || minute > 59 || second > 59) return null;
+
+  return { hour, minute, second };
+}
+
+// Whether a timestamp carries a real time of day. Exact midnight counts as
+// "date only": the bank does not post a transfer at 00:00:00, so nothing real
+// is lost, and rows imported before times were read keep showing just their
+// date instead of a made-up "00:00".
+export function hasTimeOfDay(date: Date): boolean {
+  return date.getUTCHours() !== 0 || date.getUTCMinutes() !== 0 || date.getUTCSeconds() !== 0;
 }
 
 // The cooperative's own accounts: which branch a transfer landed at is not

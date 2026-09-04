@@ -1,4 +1,5 @@
 import ExcelJS from "exceljs";
+import { looksLikeLegacyXls, looksLikeZip, repairZip, toArrayBuffer } from "./xlsxRepair";
 
 export const MAX_UPLOAD_BYTES = 4 * 1024 * 1024;
 
@@ -24,12 +25,34 @@ export function checkUploadedFile(file: unknown): { file: File } | { error: stri
   return { file };
 }
 
+// Some of the bank's exports have no central directory — the zip index that
+// tells a reader where the entries are. Excel silently repairs those on open,
+// so staff never noticed; ExcelJS refuses them outright. Rebuilding the index
+// from the entries that are still in the file is the same repair, and it is
+// what lets the .xls files that used to work keep working.
+async function loadWorkbook(buffer: ArrayBuffer): Promise<ExcelJS.Workbook> {
+  const workbook = new ExcelJS.Workbook();
+  try {
+    await workbook.xlsx.load(buffer);
+    return workbook;
+  } catch (err) {
+    const data = Buffer.from(buffer);
+    if (looksLikeLegacyXls(data)) throw new UnreadableFileError(LEGACY_XLS_ERROR);
+    if (!looksLikeZip(data)) throw err;
+
+    const repaired = new ExcelJS.Workbook();
+    // Errors from here are not worth distinguishing: the file starts like a
+    // zip but neither reads nor rebuilds, so it is damaged beyond a guess.
+    await repaired.xlsx.load(toArrayBuffer(repairZip(data)));
+    return repaired;
+  }
+}
+
 // Reads the first worksheet into plain cell arrays, which is all the
 // statement/มาไม่ได้ parsers need — they address cells by position, not by
 // header name, because neither sheet has a dependable header row.
 export async function readFirstSheetRows(file: File): Promise<unknown[][]> {
-  const workbook = new ExcelJS.Workbook();
-  await workbook.xlsx.load(await file.arrayBuffer());
+  const workbook = await loadWorkbook(await file.arrayBuffer());
 
   const sheet = workbook.worksheets[0];
   if (!sheet) return [];
@@ -57,4 +80,18 @@ export async function readFirstSheetRows(file: File): Promise<unknown[][]> {
 }
 
 export const UNREADABLE_FILE_ERROR =
-  "อ่านไฟล์นี้ไม่ได้ — ถ้าเป็นไฟล์ .xls รุ่นเก่า ให้เปิดใน Excel แล้ว Save As เป็น .xlsx ก่อนอัปโหลด";
+  "อ่านไฟล์นี้ไม่ได้ — ไฟล์อาจเสียหาย ให้เปิดใน Excel แล้ว Save As เป็น .xlsx ก่อนอัปโหลด";
+
+// Kept apart from the message above because the two mean different things to
+// whoever is uploading: this one is a file Excel saved in the format it used
+// before 2007, and re-saving really is the only way out of it.
+export const LEGACY_XLS_ERROR =
+  "ไฟล์นี้เป็น Excel รุ่นเก่า (.xls แบบดั้งเดิม) — ให้เปิดใน Excel แล้ว Save As เป็น .xlsx ก่อนอัปโหลด";
+
+// Carries the message staff should see, so the routes don't have to work out
+// which of the two applies from an ExcelJS stack trace.
+export class UnreadableFileError extends Error {}
+
+export function describeReadError(err: unknown): string {
+  return err instanceof UnreadableFileError ? err.message : UNREADABLE_FILE_ERROR;
+}

@@ -1,3 +1,29 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+@layer base {
+  /* Thai sets taller than Latin — its vowels and tone marks stack above and
+     below the line — so the browser default leading crowds them against the
+     row above. A little more room is the difference between a table that can
+     be skimmed and one that has to be read. */
+  body {
+    line-height: 1.6;
+  }
+
+  /* Money and dates belong in columns. Proportional digits make ฿5,600.00 and
+     ฿15,600.00 different widths, so a column of amounts comes out ragged and
+     the eye cannot compare them down the page. */
+  table {
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+@layer components {
+  /* One place for the money/number treatment, so a figure reads the same
+     wherever it appears — table cell, summary bar or heading. */
+  .num {
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: "tnum";
+  }
+}
