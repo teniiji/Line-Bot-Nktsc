@@ -1,0 +1,101 @@
+import { StatementMemberRow } from "./types";
+
+// Filtering/sorting for the เทียบ Statement table. Kept out of the component
+// because these are the rules staff actually reason about ("who in this unit
+// still owes", "who has no account number to match at all") and they are
+// worth testing directly.
+
+export interface StatementFilter {
+  search: string;
+  unitName: string; // "" = ทุกสังกัด
+  status: string; // "all" | "paid" | "overpaid" | "unpaid" | "no_account"
+}
+
+export type StatementSort = "default" | "outstanding" | "name" | "memberNumber";
+
+const digitsOnly = (value: string) => value.replace(/\D/g, "");
+
+// A member's outstanding balance. Negative would mean they overpaid, which is
+// not "owing", so anything at or below zero is zero for ranking purposes.
+export function outstandingOf(m: StatementMemberRow): number {
+  return Math.max(0, Math.round((m.amountDue - m.amountPaid) * 100) / 100);
+}
+
+function matchesSearch(m: StatementMemberRow, search: string): boolean {
+  const needle = search.trim().toLowerCase();
+  if (!needle) return true;
+
+  const haystack = [m.name, m.memberNumber, m.accountNumber ?? "", m.unitName ?? ""]
+    .join(" ")
+    .toLowerCase();
+  if (haystack.includes(needle)) return true;
+
+  // Account numbers get written with dashes ("413-1-23456-7") as often as
+  // without, and the sheet stores only one of the two forms — compare the
+  // digits alone so either way of typing it finds the same person.
+  const needleDigits = digitsOnly(needle);
+  if (!needleDigits) return false;
+  return [m.accountNumber ?? "", m.memberNumber].some((field) =>
+    digitsOnly(field).includes(needleDigits)
+  );
+}
+
+function matchesStatus(m: StatementMemberRow, status: string): boolean {
+  if (status === "all") return true;
+  // Not a status the reconciliation produces, but the bucket staff most need
+  // to act on: without an account number the transfer can never match, so
+  // these would otherwise sit in "ยังค้าง" looking like people who did not pay.
+  if (status === "no_account") return !m.accountNumber;
+  return m.status === status;
+}
+
+export function filterStatementMembers(
+  rows: StatementMemberRow[],
+  filter: StatementFilter
+): StatementMemberRow[] {
+  return rows.filter(
+    (m) =>
+      matchesStatus(m, filter.status) &&
+      (!filter.unitName || m.unitName === filter.unitName) &&
+      matchesSearch(m, filter.search)
+  );
+}
+
+export function sortStatementMembers(
+  rows: StatementMemberRow[],
+  sort: StatementSort
+): StatementMemberRow[] {
+  // "default" is the order the API already returned (still-owing first, then
+  // by สังกัด/เลขสมาชิก) — re-sorting it here would only undo that.
+  if (sort === "default") return rows;
+
+  const copy = [...rows];
+  if (sort === "outstanding") {
+    copy.sort((a, b) => outstandingOf(b) - outstandingOf(a));
+  } else if (sort === "name") {
+    copy.sort((a, b) => a.name.localeCompare(b.name, "th"));
+  } else if (sort === "memberNumber") {
+    copy.sort((a, b) => a.memberNumber.localeCompare(b.memberNumber, "th", { numeric: true }));
+  }
+  return copy;
+}
+
+// Totals for whatever subset is on screen. The round-wide totals stay useful,
+// but next to a filtered table they answer the wrong question — "ยอดค้างของ
+// สังกัดนี้" is the number staff are about to act on.
+export function summarizeStatementMembers(rows: StatementMemberRow[]) {
+  const due = rows.reduce((sum, m) => sum + m.amountDue, 0);
+  const paid = rows.reduce((sum, m) => sum + m.amountPaid, 0);
+  return {
+    count: rows.length,
+    due: Math.round(due * 100) / 100,
+    paid: Math.round(paid * 100) / 100,
+    outstanding: Math.round((due - paid) * 100) / 100,
+  };
+}
+
+export function unitNamesOf(rows: StatementMemberRow[]): string[] {
+  const names = new Set<string>();
+  for (const m of rows) if (m.unitName) names.add(m.unitName);
+  return [...names].sort((a, b) => a.localeCompare(b, "th"));
+}
