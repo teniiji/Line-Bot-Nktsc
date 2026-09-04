@@ -15,8 +15,11 @@ export async function recomputeRoundPayments(roundId: string): Promise<void> {
       where: { roundId },
       select: { id: true, memberNumber: true, amountDue: true },
     }),
+    // Transfers staff have marked as being for something else (ซื้อหุ้น,
+    // ชำระหนี้ …) are money that arrived but not money that settles a
+    // deduction, so they must not count toward anyone's payment.
     prisma.statementTransfer.findMany({
-      where: { roundId, memberNumber: { not: null } },
+      where: { roundId, memberNumber: { not: null }, excludedReason: null },
       select: { memberNumber: true, amount: true, transferredAt: true, branch: true },
     }),
   ]);

@@ -1,16 +1,19 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 import { formatAmount } from "@/lib/format";
 import {
   StatementFileSummary,
   StatementMemberRow,
   StatementRoundSummary,
+  StatementTransferRow,
   StatementUnmatchedRow,
 } from "@/lib/types";
+
 import ConfirmDialog from "@/components/ConfirmDialog";
 import { describeDeductionPeriod } from "@/lib/deductionPeriod";
 import { downloadStatementMembersCsv } from "@/lib/csv";
+import { EXCLUDE_REASONS } from "@/lib/statementSlipHints";
 import {
   StatementSort,
   filterStatementMembers,
@@ -66,6 +69,9 @@ export default function StatementReconcilePanel() {
   const [members, setMembers] = useState<StatementMemberRow[]>([]);
   const [unmatched, setUnmatched] = useState<StatementUnmatchedRow[]>([]);
   const [statements, setStatements] = useState<StatementFileSummary[]>([]);
+  const [transfers, setTransfers] = useState<StatementTransferRow[]>([]);
+  const [excludedTotal, setExcludedTotal] = useState(0);
+  const [expandedMember, setExpandedMember] = useState<string | null>(null);
   const [pendingClear, setPendingClear] = useState<{ account: string; branch: string } | null>(
     null
   );
@@ -110,9 +116,32 @@ export default function StatementReconcilePanel() {
     setMembers(body.data ?? []);
     setUnmatched(body.unmatched ?? []);
     setStatements(body.statements ?? []);
+    setTransfers(body.transfers ?? []);
+    setExcludedTotal(body.excludedTotal ?? 0);
     setTotals(body.totals ?? { due: 0, paid: 0, outstanding: 0 });
     setLoadingRound(false);
   }, []);
+
+  const setTransferReason = async (transferId: string, excludedReason: string | null) => {
+    if (!selectedId) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/statement-rounds/${selectedId}/transfers`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ transferId, excludedReason }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        setError(body.error || "บันทึกไม่สำเร็จ");
+        return;
+      }
+      await Promise.all([fetchRound(selectedId), fetchRounds()]);
+    } finally {
+      setBusy(false);
+    }
+  };
 
   useEffect(() => {
     fetchRounds().then((data) => {
@@ -324,6 +353,14 @@ export default function StatementReconcilePanel() {
   const filtered =
     statusFilter !== "all" || unitFilter !== "" || hCodeFilter !== "" || search !== "";
   const missingAccountCount = members.filter((m) => !m.accountNumber).length;
+
+  const transfersOf = (memberNumber: string) =>
+    transfers.filter((t) => t.memberNumber === memberNumber);
+  // A member whose money carries an unresolved hint gets a mark in the table,
+  // so the ones worth opening are visible without expanding every row.
+  const memberHasHint = (memberNumber: string) =>
+    transfers.some((t) => t.memberNumber === memberNumber && t.slipHint && !t.excludedReason);
+  const excludedTransfers = transfers.filter((t) => t.excludedReason);
 
   const clearFilters = () => {
     setStatusFilter("all");
@@ -690,7 +727,8 @@ export default function StatementReconcilePanel() {
                   {shown.map((m) => {
                     const diff = Math.round((m.amountPaid - m.amountDue) * 100) / 100;
                     return (
-                      <tr key={m.id} className="border-t border-slate-100">
+                      <Fragment key={m.id}>
+                      <tr className="border-t border-slate-100">
                         <td className="px-4 py-2 whitespace-nowrap">{m.memberNumber}</td>
                         <td className="px-4 py-2">
                           {m.name}
@@ -711,7 +749,26 @@ export default function StatementReconcilePanel() {
                           {formatAmount(m.amountDue)}
                         </td>
                         <td className="px-4 py-2 text-right whitespace-nowrap">
-                          {m.amountPaid > 0 ? formatAmount(m.amountPaid) : "—"}
+                          {m.amountPaid > 0 ? (
+                            <button
+                              onClick={() =>
+                                setExpandedMember(
+                                  expandedMember === m.memberNumber ? null : m.memberNumber
+                                )
+                              }
+                              className="hover:underline"
+                              title="ดูรายการโอนของคนนี้ / ระบุว่าเงินก้อนไหนไม่ใช่ค่าหักไม่ได้"
+                            >
+                              {formatAmount(m.amountPaid)}
+                              {memberHasHint(m.memberNumber) && (
+                                <span className="text-amber-600" title="อาจเป็นเงินที่โอนมาด้วยเหตุผลอื่น">
+                                  {" "}⚠️
+                                </span>
+                              )}
+                            </button>
+                          ) : (
+                            "—"
+                          )}
                         </td>
                         <td
                           className={`px-4 py-2 text-right whitespace-nowrap ${
@@ -736,6 +793,60 @@ export default function StatementReconcilePanel() {
                           </span>
                         </td>
                       </tr>
+
+                      {expandedMember === m.memberNumber && (
+                        <tr className="bg-slate-50">
+                          <td colSpan={10} className="px-4 py-2">
+                            <p className="text-xs text-slate-500 mb-1">
+                              รายการโอนของ {m.name} — ถ้าก้อนไหน<strong>ไม่ใช่</strong>เงินจ่ายค่าหักไม่ได้
+                              (ซื้อหุ้น / ชำระหนี้ / ฝากเงิน ฯลฯ) เลือกเหตุผลไว้ ระบบจะไม่นับเป็นการชำระ
+                            </p>
+                            {transfersOf(m.memberNumber).map((t) => (
+                              <div
+                                key={t.id}
+                                className="flex flex-wrap items-center gap-3 text-sm py-1 border-t border-slate-200"
+                              >
+                                <span className="whitespace-nowrap">{formatAmount(t.amount)}</span>
+                                <span className="text-slate-500 whitespace-nowrap">
+                                  {formatDate(t.transferredAt)}
+                                </span>
+                                <span className="font-mono text-xs text-slate-400">
+                                  {t.accountNumber}
+                                </span>
+                                {t.slipHint && !t.excludedReason && (
+                                  <span className="text-xs text-amber-700">
+                                    ⚠️ อาจเป็น <strong>{t.slipHint.category}</strong>{" "}
+                                    {formatAmount(t.slipHint.amount)} (สมาชิกส่งสลิป{" "}
+                                    {formatDate(t.slipHint.date)})
+                                  </span>
+                                )}
+                                <span className="ml-auto flex items-center gap-2">
+                                  <select
+                                    value={t.excludedReason ?? ""}
+                                    onChange={(e) =>
+                                      setTransferReason(t.id, e.target.value || null)
+                                    }
+                                    disabled={busy}
+                                    className={`border rounded px-2 py-1 text-xs ${
+                                      t.excludedReason
+                                        ? "border-amber-300 bg-amber-50"
+                                        : "border-slate-300"
+                                    }`}
+                                  >
+                                    <option value="">นับเป็นจ่ายค่าหักไม่ได้</option>
+                                    {EXCLUDE_REASONS.map((r) => (
+                                      <option key={r} value={r}>
+                                        ไม่เกี่ยวกับรอบนี้ — {r}
+                                      </option>
+                                    ))}
+                                  </select>
+                                </span>
+                              </div>
+                            ))}
+                          </td>
+                        </tr>
+                      )}
+                      </Fragment>
                     );
                   })}
                 </tbody>
@@ -761,6 +872,7 @@ export default function StatementReconcilePanel() {
                     <th className="px-2 py-1 text-right">ยอด</th>
                     <th className="px-2 py-1">วันที่</th>
                     <th className="px-2 py-1">บัญชีที่รับ</th>
+                    <th className="px-2 py-1">เป็นเงินอะไร</th>
                     <th className="px-2 py-1">เจ้าของ</th>
                   </tr>
                 </thead>
@@ -775,6 +887,24 @@ export default function StatementReconcilePanel() {
                         {formatDate(t.transferredAt)}
                       </td>
                       <td className="px-2 py-1 text-slate-500">{t.branch ?? "—"}</td>
+                      <td className="px-2 py-1">
+                        <select
+                          value=""
+                          onChange={(e) =>
+                            e.target.value && setTransferReason(t.id, e.target.value)
+                          }
+                          disabled={busy}
+                          className="border border-slate-300 rounded px-2 py-1 text-xs"
+                          title="เงินก้อนนี้ไม่ใช่ค่าหักไม่ได้ — เอาออกจากรายการที่ต้องตาม"
+                        >
+                          <option value="">ยังไม่ระบุ</option>
+                          {EXCLUDE_REASONS.map((r) => (
+                            <option key={r} value={r}>
+                              ไม่เกี่ยวกับรอบนี้ — {r}
+                            </option>
+                          ))}
+                        </select>
+                      </td>
                       <td className="px-2 py-1 whitespace-nowrap">
                         {assigningAccount === t.accountNumber ? (
                           <span className="inline-flex items-center gap-2">
@@ -831,6 +961,60 @@ export default function StatementReconcilePanel() {
                   </option>
                 ))}
               </datalist>
+            </div>
+          )}
+
+          {excludedTransfers.length > 0 && (
+            <div className="px-4 py-3 border-t border-slate-100">
+              <h3 className="text-sm font-semibold text-slate-700">
+                เงินเข้าที่ไม่เกี่ยวกับรอบนี้ ({excludedTransfers.length} รายการ ·{" "}
+                {formatAmount(excludedTotal)})
+              </h3>
+              <p className="text-xs text-slate-500 mt-1">
+                เงินที่โอนเข้ามาจริงแต่เป็นเรื่องอื่น (ซื้อหุ้น ชำระหนี้ ฝากเงิน ฯลฯ)
+                ไม่ถูกนับเป็นการจ่ายค่าหักไม่ได้ — เก็บไว้ให้เห็นเพราะเป็นเงินที่เข้ามาจริง
+                ถ้าระบุผิดเลือก "นับเป็นจ่ายค่าหักไม่ได้" เพื่อเอากลับเข้ารอบได้
+              </p>
+              <table className="w-full text-sm mt-2">
+                <thead className="text-slate-500 text-left">
+                  <tr>
+                    <th className="px-2 py-1">เลขบัญชี</th>
+                    <th className="px-2 py-1 text-right">ยอด</th>
+                    <th className="px-2 py-1">วันที่</th>
+                    <th className="px-2 py-1">เจ้าของ</th>
+                    <th className="px-2 py-1">เป็นเงินอะไร</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {excludedTransfers.map((t) => (
+                    <tr key={t.id} className="border-t border-slate-100">
+                      <td className="px-2 py-1 font-mono text-xs">{t.accountNumber}</td>
+                      <td className="px-2 py-1 text-right whitespace-nowrap">
+                        {formatAmount(t.amount)}
+                      </td>
+                      <td className="px-2 py-1 whitespace-nowrap text-slate-500">
+                        {formatDate(t.transferredAt)}
+                      </td>
+                      <td className="px-2 py-1 text-slate-500">{t.memberNumber ?? "—"}</td>
+                      <td className="px-2 py-1">
+                        <select
+                          value={t.excludedReason ?? ""}
+                          onChange={(e) => setTransferReason(t.id, e.target.value || null)}
+                          disabled={busy}
+                          className="border border-amber-300 bg-amber-50 rounded px-2 py-1 text-xs"
+                        >
+                          <option value="">นับเป็นจ่ายค่าหักไม่ได้</option>
+                          {EXCLUDE_REASONS.map((r) => (
+                            <option key={r} value={r}>
+                              {r}
+                            </option>
+                          ))}
+                        </select>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
           )}
         </>
