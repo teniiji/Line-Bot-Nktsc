@@ -101,41 +101,119 @@ export function extractTransferAccount(description: unknown): string | null {
   return match ? match[1] : null;
 }
 
-// Reads the "รวม_ไม่ได้" sheet, which has no header row — column positions
-// are the contract (see the mai-dai workflow's sheet layout):
-//   A เลขสมาชิก · B ชื่อ-สกุล · C ยอดแจ้งหัก · D ยอดหักได้ · E ยอดหักไม่ได้
-//   F รหัสองค์กร · G หมายเหตุ · H เลขประชาชน · I เลขบัญชี · J H-code
+const cell = (row: unknown[], index: number): string | null => {
+  const value = String(row[index] ?? "").trim();
+  return value === "" ? null : value;
+};
+
+// Which column carries สังกัด is not the same in every sheet staff generate.
+// The 0869 file puts a numeric หน่วยงาน code in F (identical to the H-code in
+// J on every row) and the actual name in G, so reading a fixed column put a
+// bare "1" in the สังกัด column and pushed the school name into หมายเหตุ.
 //
-// Only rows with a positive ยอดหักไม่ได้ are members this round is about;
-// the sheet also carries rows that were deducted in full, and importing
-// those would make every summary count meaningless. เลขประชาชน (H) is
-// deliberately not read: it is not needed to match a transfer, and there is
-// no reason to copy national ID numbers into this database.
-export function parseMaiDaiRows(rows: unknown[][]): MaiDaiRow[] {
+// Rather than trusting a position, take the candidate that actually reads as
+// a name: the one where most non-empty values are not just digits.
+export function pickUnitNameColumn(
+  rows: unknown[][],
+  candidates: number[] = [6, 5]
+): number | null {
+  let best: { index: number; text: number } | null = null;
+
+  for (const index of candidates) {
+    let filled = 0;
+    let text = 0;
+    for (const row of rows) {
+      const value = cell(row, index);
+      if (!value) continue;
+      filled += 1;
+      if (!/^[\d.,\s-]+$/.test(value)) text += 1;
+    }
+    // Half is a deliberately loose bar: a column of names with a few numeric
+    // oddities still reads as names, a column of codes never will.
+    if (filled > 0 && text > filled / 2 && (!best || text > best.text)) {
+      best = { index, text };
+    }
+  }
+
+  return best?.index ?? null;
+}
+
+export interface MaiDaiSheet {
+  // Members with something still outstanding — the round's actual list.
+  rows: MaiDaiRow[];
+  // Rows the sheet has no result for at all: neither ยอดหักได้ nor
+  // ยอดหักไม่ได้. Their unit has not reported back yet ("รอผล (ยังไม่มีข้อมูล)"
+  // in the sheet's own summary), so they are not people who failed to pay and
+  // must not be imported as though they were — but they are money this round
+  // does not yet cover, and staff cannot see that anywhere else.
+  awaitingMembers: number;
+  awaitingAmount: number;
+  // Counted by หน่วยคุม (H-code), which is the unit the cooperative's own
+  // "สรุปทุกหน่วยงาน" sheet is organised by — counting the school names in
+  // these rows instead gives a much larger number that matches nothing staff
+  // can check this against.
+  awaitingUnits: string[];
+}
+
+// Reads the "รวม_ไม่ได้" sheet, which has no header row, so column positions
+// are the contract for everything except สังกัด (see pickUnitNameColumn):
+//   A เลขสมาชิก · B ชื่อ-สกุล · C ยอดแจ้งหัก · D ยอดหักได้ · E ยอดหักไม่ได้
+//   H เลขประชาชน · I เลขบัญชี · J H-code (รหัสหน่วยคุม)
+//
+// Only rows with a positive ยอดหักไม่ได้ become the round's list; the sheet
+// also carries everyone who was deducted in full, and importing those would
+// make every summary count meaningless. เลขประชาชน (H) is deliberately not
+// read: it is not needed to match a transfer, and there is no reason to copy
+// national ID numbers into this database.
+export function parseMaiDaiSheet(rows: unknown[][]): MaiDaiSheet {
   const parsed: MaiDaiRow[] = [];
+  const unitColumn = pickUnitNameColumn(rows);
+  // Whatever is left of the two candidates is a หมายเหตุ column only if it
+  // reads as text too — otherwise it is the หน่วยงาน code, which is already
+  // in hCode and is noise next to a member's name.
+  const noteColumn = unitColumn === 6 ? null : 6;
+
+  const awaitingUnits = new Set<string>();
+  let awaitingMembers = 0;
+  let awaitingAmount = 0;
 
   for (const row of rows) {
     const memberNumber = String(row[0] ?? "").trim();
-    const amountDue = parseAmount(row[4]);
-    if (!memberNumber || amountDue === null || amountDue <= 0) continue;
+    if (!memberNumber) continue;
 
-    const text = (index: number): string | null => {
-      const value = String(row[index] ?? "").trim();
-      return value === "" ? null : value;
-    };
+    const collected = parseAmount(row[3]);
+    const amountDue = parseAmount(row[4]);
+    const unitName = unitColumn === null ? null : cell(row, unitColumn);
+
+    // Blank in both result columns is "no result yet" — distinct from a
+    // ยอดหักไม่ได้ of 0, which is a unit that reported and collected in full.
+    if (collected === null && amountDue === null) {
+      awaitingMembers += 1;
+      awaitingAmount += parseAmount(row[2]) ?? 0;
+      const unitKey = cell(row, 9) ?? unitName;
+      if (unitKey) awaitingUnits.add(unitKey);
+      continue;
+    }
+
+    if (amountDue === null || amountDue <= 0) continue;
 
     parsed.push({
       memberNumber,
-      name: text(1) ?? "",
-      unitName: text(5),
-      note: text(6),
+      name: cell(row, 1) ?? "",
+      unitName,
+      note: noteColumn === null ? null : cell(row, noteColumn),
       accountNumber: normalizeAccountNumber(row[8]),
-      hCode: text(9),
+      hCode: cell(row, 9),
       amountDue,
     });
   }
 
-  return parsed;
+  return {
+    rows: parsed,
+    awaitingMembers,
+    awaitingAmount: Math.round(awaitingAmount * 100) / 100,
+    awaitingUnits: [...awaitingUnits].sort((a, b) => a.localeCompare(b, "th")),
+  };
 }
 
 // Reads a bank statement sheet. The bank's export puts its own headers a

@@ -193,6 +193,12 @@ export default function StatementReconcilePanel() {
       }
       setNotice(
         `นำเข้ารายชื่อหักไม่ได้ ${body.imported} คน` +
+          (body.awaitingMembers > 0
+            ? ` (อีก ${body.awaitingMembers} คนใน ${body.awaitingUnits} หน่วยงานยังไม่ส่งผลการหักมา จึงยังไม่นับ)`
+            : "") +
+          (body.filledFromDirectory > 0
+            ? ` — เติมเลขบัญชีจากทะเบียนให้ ${body.filledFromDirectory} คน`
+            : "") +
           (body.missingAccount > 0
             ? ` — มี ${body.missingAccount} คนไม่มีเลขบัญชีในไฟล์ จับคู่กับ Statement ไม่ได้`
             : "")
@@ -468,6 +474,21 @@ export default function StatementReconcilePanel() {
                   ลบรอบนี้
                 </button>
               </div>
+
+              {selected.awaitingMembers > 0 && (
+                <div className="px-4 py-2 border-b border-slate-100">
+                  <p className="text-sm text-amber-800 bg-amber-50 rounded px-3 py-2">
+                    ⏳ รอบนี้ยัง<strong>ไม่ครบทั้งสหกรณ์</strong> — มี{" "}
+                    <strong>{selected.awaitingUnits}</strong> หน่วยงาน (
+                    <strong>{selected.awaitingMembers}</strong> คน ยอดแจ้งหัก{" "}
+                    {formatAmount(selected.awaitingAmount)}) ที่ยัง
+                    <strong>ไม่ส่งผลการหักกลับมา</strong> ในไฟล์รายชื่อ
+                    คนกลุ่มนี้จึงยังไม่อยู่ในตารางข้างล่าง (ยังไม่รู้ว่าหักได้หรือไม่ได้
+                    ถ้านับเป็น "ยังค้าง" ไปเลยจะกลายเป็นทวงเงินคนที่อาจจะหักได้แล้ว) —
+                    พอหน่วยงานส่งผลมาครบแล้วให้อัปโหลดไฟล์รายชื่อใหม่ ตัวเลขจะอัปเดตให้เอง
+                  </p>
+                </div>
+              )}
 
               {statements.length > 0 && (
                 <div className="px-4 py-2 border-b border-slate-100 text-xs text-slate-600">

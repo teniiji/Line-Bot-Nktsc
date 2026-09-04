@@ -475,6 +475,16 @@ model StatementRound {
   id        String   @id @default(cuid())
   period    String   @unique
   label     String
+  // How much of the หักไม่ได้ sheet had no result yet when it was uploaded:
+  // units that have not reported back ("รอผล (ยังไม่มีข้อมูล)" in the sheet's
+  // own summary), the members in them, and what they were due to have
+  // deducted. Those rows are deliberately not imported — nobody knows yet
+  // whether they paid — but without recording this, a round looks complete
+  // when a large part of it simply has not been processed. Stored rather
+  // than derived because the skipped rows are not kept anywhere.
+  awaitingUnits   Int   @default(0)
+  awaitingMembers Int   @default(0)
+  awaitingAmount  Float @default(0)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }

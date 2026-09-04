@@ -5,7 +5,7 @@ import {
   readFirstSheetRows,
   UNREADABLE_FILE_ERROR,
 } from "@/lib/excelUpload";
-import { parseMaiDaiRows } from "@/lib/statementReconcile";
+import { parseMaiDaiSheet } from "@/lib/statementReconcile";
 import {
   applyDirectoryAccounts,
   recomputeRoundPayments,
@@ -46,8 +46,22 @@ export async function POST(
     return NextResponse.json({ error: UNREADABLE_FILE_ERROR }, { status: 400 });
   }
 
-  const parsed = parseMaiDaiRows(rows);
+  const sheet = parseMaiDaiSheet(rows);
+  const parsed = sheet.rows;
   if (parsed.length === 0) {
+    // A sheet where every unit is still awaiting its result is a real case,
+    // and saying "ไม่พบรายชื่อ" for it would send staff hunting for a problem
+    // with the file that is not there.
+    if (sheet.awaitingMembers > 0) {
+      return NextResponse.json(
+        {
+          error:
+            `ไฟล์นี้ยังไม่มีผลการหักเลยสักหน่วย (${sheet.awaitingMembers} คนรอผลอยู่) — ` +
+            `รอให้หน่วยงานส่งผลกลับมาก่อนแล้วค่อยอัปโหลดใหม่`,
+        },
+        { status: 400 }
+      );
+    }
     return NextResponse.json(
       {
         error:
@@ -74,6 +88,18 @@ export async function POST(
     }),
   ]);
 
+  // What the sheet had no result for is recorded on the round so the warning
+  // survives a page refresh — it is a property of this round's data, not a
+  // one-off message about this upload.
+  await prisma.statementRound.update({
+    where: { id: round.id },
+    data: {
+      awaitingUnits: sheet.awaitingUnits.length,
+      awaitingMembers: sheet.awaitingMembers,
+      awaitingAmount: sheet.awaitingAmount,
+    },
+  });
+
   // Members the sheet left without an account number may already be known to
   // the directory from an earlier round, so filling those in first means the
   // work of binding accounts is not repeated every month.
@@ -97,5 +123,8 @@ export async function POST(
     // staff need to know up front rather than wondering why they stay ❌.
     missingAccount,
     filledFromDirectory,
+    awaitingUnits: sheet.awaitingUnits.length,
+    awaitingMembers: sheet.awaitingMembers,
+    awaitingAmount: sheet.awaitingAmount,
   });
 }

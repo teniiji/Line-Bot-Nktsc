@@ -141,6 +141,12 @@ export interface StatementRoundSummary {
   paidMembers: number;
   overpaidMembers: number;
   unpaidMembers: number;
+  // Units in the uploaded sheet that had not reported a deduction result yet.
+  // Their members are not on the round's list — nobody knows whether they
+  // paid — so the round only covers part of the month until they come in.
+  awaitingUnits: number;
+  awaitingMembers: number;
+  awaitingAmount: number;
 }
 
 export interface StatementMemberRow {
