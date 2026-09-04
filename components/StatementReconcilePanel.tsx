@@ -9,6 +9,23 @@ import {
 } from "@/lib/types";
 import ConfirmDialog from "@/components/ConfirmDialog";
 import { describeDeductionPeriod } from "@/lib/deductionPeriod";
+import { downloadStatementMembersCsv } from "@/lib/csv";
+import {
+  StatementSort,
+  filterStatementMembers,
+  sortStatementMembers,
+  summarizeStatementMembers,
+  unitNamesOf,
+} from "@/lib/statementFilters";
+
+const SEARCH_DEBOUNCE_MS = 300;
+
+const SORT_OPTIONS: { value: StatementSort; label: string }[] = [
+  { value: "default", label: "ยังค้างขึ้นก่อน (ค่าเริ่มต้น)" },
+  { value: "outstanding", label: "ยอดค้างมาก → น้อย" },
+  { value: "name", label: "ชื่อ ก-ฮ" },
+  { value: "memberNumber", label: "เลขสมาชิก" },
+];
 
 const STATUS_LABEL: Record<string, string> = {
   paid: "✅ ชำระครบ",
@@ -49,6 +66,10 @@ export default function StatementReconcilePanel() {
   const [busy, setBusy] = useState(false);
   const [pendingDelete, setPendingDelete] = useState<StatementRoundSummary | null>(null);
   const [statusFilter, setStatusFilter] = useState<string>("all");
+  const [searchInput, setSearchInput] = useState("");
+  const [search, setSearch] = useState("");
+  const [unitFilter, setUnitFilter] = useState("");
+  const [sort, setSort] = useState<StatementSort>("default");
 
   const [showNew, setShowNew] = useState(false);
   const [newPeriod, setNewPeriod] = useState("");
@@ -84,6 +105,13 @@ export default function StatementReconcilePanel() {
     });
   }, [fetchRounds]);
 
+  // Debounced so typing in the search box doesn't re-filter on every keystroke
+  // — same 300ms the other panels' search boxes use.
+  useEffect(() => {
+    const timer = setTimeout(() => setSearch(searchInput.trim()), SEARCH_DEBOUNCE_MS);
+    return () => clearTimeout(timer);
+  }, [searchInput]);
+
   useEffect(() => {
     if (selectedId) fetchRound(selectedId);
     else {
@@ -92,6 +120,13 @@ export default function StatementReconcilePanel() {
     }
     setNotice(null);
     setError(null);
+    // A different round has different units and different people in it, so
+    // carrying the previous round's filters over would show an empty table
+    // for no visible reason.
+    setStatusFilter("all");
+    setSearchInput("");
+    setSearch("");
+    setUnitFilter("");
   }, [selectedId, fetchRound]);
 
   const createRound = async () => {
@@ -193,8 +228,21 @@ export default function StatementReconcilePanel() {
   };
 
   const selected = rounds.find((r) => r.id === selectedId) ?? null;
-  const shown =
-    statusFilter === "all" ? members : members.filter((m) => m.status === statusFilter);
+  const units = unitNamesOf(members);
+  const shown = sortStatementMembers(
+    filterStatementMembers(members, { search, unitName: unitFilter, status: statusFilter }),
+    sort
+  );
+  const shownTotals = summarizeStatementMembers(shown);
+  const filtered = statusFilter !== "all" || unitFilter !== "" || search !== "";
+  const missingAccountCount = members.filter((m) => !m.accountNumber).length;
+
+  const clearFilters = () => {
+    setStatusFilter("all");
+    setUnitFilter("");
+    setSearchInput("");
+    setSearch("");
+  };
 
   return (
     <div className="bg-white rounded-lg shadow">
@@ -328,9 +376,12 @@ export default function StatementReconcilePanel() {
               </div>
 
               <div className="flex flex-wrap items-center gap-4 px-4 py-3 border-b border-slate-100 text-sm">
-                <span>
+                <button
+                  onClick={() => setStatusFilter("all")}
+                  className={`hover:underline ${statusFilter === "all" ? "font-semibold" : ""}`}
+                >
                   ทั้งหมด <strong>{selected.totalMembers}</strong> คน
-                </span>
+                </button>
                 <button
                   onClick={() => setStatusFilter(statusFilter === "paid" ? "all" : "paid")}
                   className={`hover:underline ${statusFilter === "paid" ? "font-semibold" : ""}`}
@@ -350,19 +401,89 @@ export default function StatementReconcilePanel() {
                 >
                   ❌ ยังค้าง <strong className="text-red-600">{selected.unpaidMembers}</strong>
                 </button>
-                <span className="text-slate-400">|</span>
-                <span>ยอดหักไม่ได้ {formatAmount(totals.due)}</span>
-                <span>โอนมาแล้ว {formatAmount(totals.paid)}</span>
-                <span>
-                  คงเหลือ <strong>{formatAmount(totals.outstanding)}</strong>
-                </span>
-                {statusFilter !== "all" && (
+                {missingAccountCount > 0 && (
                   <button
-                    onClick={() => setStatusFilter("all")}
-                    className="text-slate-500 hover:underline"
+                    onClick={() =>
+                      setStatusFilter(statusFilter === "no_account" ? "all" : "no_account")
+                    }
+                    title="ไม่มีเลขบัญชีในไฟล์รายชื่อ จับคู่กับ Statement ไม่ได้เลย ต้องหาเลขบัญชีมาเติมก่อน"
+                    className={`hover:underline ${
+                      statusFilter === "no_account" ? "font-semibold" : ""
+                    }`}
                   >
+                    ⛔ ไม่มีเลขบัญชี{" "}
+                    <strong className="text-amber-700">{missingAccountCount}</strong>
+                  </button>
+                )}
+              </div>
+
+              <div className="flex flex-wrap items-center gap-3 px-4 py-3 border-b border-slate-100 text-sm">
+                <input
+                  type="text"
+                  value={searchInput}
+                  onChange={(e) => setSearchInput(e.target.value)}
+                  placeholder="ค้นหาชื่อ, เลขสมาชิก, เลขบัญชี"
+                  className="border border-slate-300 rounded px-3 py-1.5 w-64"
+                />
+                <select
+                  value={unitFilter}
+                  onChange={(e) => setUnitFilter(e.target.value)}
+                  className="border border-slate-300 rounded px-2 py-1.5 max-w-[16rem]"
+                >
+                  <option value="">ทุกสังกัด ({units.length})</option>
+                  {units.map((u) => (
+                    <option key={u} value={u}>
+                      {u}
+                    </option>
+                  ))}
+                </select>
+                <label className="flex items-center gap-2 text-slate-500">
+                  เรียง
+                  <select
+                    value={sort}
+                    onChange={(e) => setSort(e.target.value as StatementSort)}
+                    className="border border-slate-300 rounded px-2 py-1.5 text-slate-900"
+                  >
+                    {SORT_OPTIONS.map((o) => (
+                      <option key={o.value} value={o.value}>
+                        {o.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                {filtered && (
+                  <button onClick={clearFilters} className="text-slate-500 hover:underline">
                     ล้างตัวกรอง
                   </button>
+                )}
+                <button
+                  onClick={() => downloadStatementMembersCsv(shown, selected.label)}
+                  disabled={shown.length === 0}
+                  className="ml-auto px-3 py-1.5 border border-slate-300 rounded disabled:opacity-40"
+                >
+                  ส่งออก CSV ({shown.length})
+                </button>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-4 px-4 py-2 border-b border-slate-100 text-sm bg-slate-50">
+                {/* Totals follow the filters: with a สังกัด picked, "ยอดค้าง" of
+                    that unit is the number staff are about to act on, not the
+                    round-wide one. */}
+                <span className="text-slate-500">
+                  {filtered ? `แสดง ${shownTotals.count} จาก ${members.length} คน` : `${members.length} คน`}
+                </span>
+                <span>ยอดหักไม่ได้ {formatAmount(shownTotals.due)}</span>
+                <span>โอนมาแล้ว {formatAmount(shownTotals.paid)}</span>
+                <span>
+                  คงเหลือ{" "}
+                  <strong className={shownTotals.outstanding > 0 ? "text-red-600" : ""}>
+                    {formatAmount(shownTotals.outstanding)}
+                  </strong>
+                </span>
+                {filtered && (
+                  <span className="text-slate-400">
+                    (ทั้งรอบ: คงเหลือ {formatAmount(totals.outstanding)})
+                  </span>
                 )}
               </div>
             </>
@@ -373,6 +494,13 @@ export default function StatementReconcilePanel() {
           ) : members.length === 0 ? (
             <p className="text-slate-500 text-sm py-8 text-center">
               ยังไม่มีรายชื่อในรอบนี้ — กด "อัปโหลดรายชื่อหักไม่ได้" เพื่อเริ่ม
+            </p>
+          ) : shown.length === 0 ? (
+            <p className="text-slate-500 text-sm py-8 text-center">
+              ไม่มีใครตรงกับตัวกรองนี้ —{" "}
+              <button onClick={clearFilters} className="text-slate-900 hover:underline">
+                ล้างตัวกรอง
+              </button>
             </p>
           ) : (
             <div className="overflow-x-auto">
