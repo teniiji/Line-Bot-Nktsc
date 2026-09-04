@@ -14,6 +14,7 @@ import { downloadStatementMembersCsv } from "@/lib/csv";
 import {
   StatementSort,
   filterStatementMembers,
+  hCodesOf,
   sortStatementMembers,
   summarizeStatementMembers,
   unitNamesOf,
@@ -76,6 +77,7 @@ export default function StatementReconcilePanel() {
   const [searchInput, setSearchInput] = useState("");
   const [search, setSearch] = useState("");
   const [unitFilter, setUnitFilter] = useState("");
+  const [hCodeFilter, setHCodeFilter] = useState("");
   const [sort, setSort] = useState<StatementSort>("default");
 
   const [showNew, setShowNew] = useState(false);
@@ -136,6 +138,7 @@ export default function StatementReconcilePanel() {
     setSearchInput("");
     setSearch("");
     setUnitFilter("");
+    setHCodeFilter("");
   }, [selectedId, fetchRound]);
 
   const createRound = async () => {
@@ -263,20 +266,41 @@ export default function StatementReconcilePanel() {
   };
 
   const selected = rounds.find((r) => r.id === selectedId) ?? null;
-  const units = unitNamesOf(members);
+  const hCodes = hCodesOf(members);
+  // The สังกัด list narrows to whatever หน่วยคุม is selected, so the two
+  // dropdowns can't be combined into a pairing that matches nobody.
+  const units = unitNamesOf(
+    hCodeFilter ? members.filter((m) => m.hCode === hCodeFilter) : members
+  );
   const shown = sortStatementMembers(
-    filterStatementMembers(members, { search, unitName: unitFilter, status: statusFilter }),
+    filterStatementMembers(members, {
+      search,
+      unitName: unitFilter,
+      hCode: hCodeFilter,
+      status: statusFilter,
+    }),
     sort
   );
   const shownTotals = summarizeStatementMembers(shown);
-  const filtered = statusFilter !== "all" || unitFilter !== "" || search !== "";
+  const filtered =
+    statusFilter !== "all" || unitFilter !== "" || hCodeFilter !== "" || search !== "";
   const missingAccountCount = members.filter((m) => !m.accountNumber).length;
 
   const clearFilters = () => {
     setStatusFilter("all");
     setUnitFilter("");
+    setHCodeFilter("");
     setSearchInput("");
     setSearch("");
+  };
+
+  // Picking a หน่วยคุม that the current สังกัด doesn't belong to would leave a
+  // stale unit selected and an empty table with no obvious cause.
+  const changeHCode = (next: string) => {
+    setHCodeFilter(next);
+    if (unitFilter && next && !members.some((m) => m.hCode === next && m.unitName === unitFilter)) {
+      setUnitFilter("");
+    }
   };
 
   return (
@@ -499,6 +523,21 @@ export default function StatementReconcilePanel() {
                   placeholder="ค้นหาชื่อ, เลขสมาชิก, เลขบัญชี"
                   className="border border-slate-300 rounded px-3 py-1.5 w-64"
                 />
+                {hCodes.length > 0 && (
+                  <select
+                    value={hCodeFilter}
+                    onChange={(e) => changeHCode(e.target.value)}
+                    className="border border-slate-300 rounded px-2 py-1.5"
+                    title="รหัสหน่วยคุม (H-code) จากคอลัมน์ J ของไฟล์รายชื่อหักไม่ได้"
+                  >
+                    <option value="">ทุกหน่วยคุม ({hCodes.length})</option>
+                    {hCodes.map((h) => (
+                      <option key={h} value={h}>
+                        หน่วยคุม {h}
+                      </option>
+                    ))}
+                  </select>
+                )}
                 <select
                   value={unitFilter}
                   onChange={(e) => setUnitFilter(e.target.value)}
@@ -578,11 +617,12 @@ export default function StatementReconcilePanel() {
             </p>
           ) : (
             <div className="overflow-x-auto">
-              <table className="w-full text-sm min-w-[980px]">
+              <table className="w-full text-sm min-w-[1060px]">
                 <thead className="bg-slate-100 text-slate-600 text-left">
                   <tr>
                     <th className="px-4 py-2">เลขสมาชิก</th>
                     <th className="px-4 py-2">ชื่อ-สกุล</th>
+                    <th className="px-4 py-2">หน่วยคุม</th>
                     <th className="px-4 py-2">สังกัด</th>
                     <th className="px-4 py-2">เลขบัญชี</th>
                     <th className="px-4 py-2 text-right">ยอดหักไม่ได้</th>
@@ -603,6 +643,9 @@ export default function StatementReconcilePanel() {
                           {m.note && (
                             <span className="text-xs text-slate-400"> · {m.note}</span>
                           )}
+                        </td>
+                        <td className="px-4 py-2 whitespace-nowrap text-slate-500">
+                          {m.hCode ?? "—"}
                         </td>
                         <td className="px-4 py-2">{m.unitName ?? "—"}</td>
                         <td className="px-4 py-2 font-mono text-xs">

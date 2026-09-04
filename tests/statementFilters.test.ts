@@ -5,6 +5,7 @@ import {
   summarizeStatementMembers,
   outstandingOf,
   unitNamesOf,
+  hCodesOf,
 } from "../lib/statementFilters";
 import { StatementMemberRow } from "../lib/types";
 
@@ -43,11 +44,18 @@ const rows: StatementMemberRow[] = [
     amountPaid: 0,
     status: "unpaid",
   }),
-  member({ memberNumber: "004", name: "อรุณ แสงทอง", amountDue: 500, amountPaid: 700, status: "overpaid" }),
+  member({
+    memberNumber: "004",
+    name: "อรุณ แสงทอง",
+    hCode: "10",
+    amountDue: 500,
+    amountPaid: 700,
+    status: "overpaid",
+  }),
 ];
 
 describe("filterStatementMembers", () => {
-  const base = { search: "", unitName: "", status: "all" };
+  const base = { search: "", unitName: "", hCode: "", status: "all" };
 
   it("returns everything with no filters applied", () => {
     expect(filterStatementMembers(rows, base)).toHaveLength(4);
@@ -81,13 +89,38 @@ describe("filterStatementMembers", () => {
     expect(found.every((m) => m.accountNumber === "4131234567")).toBe(true);
   });
 
+  it("filters by หน่วยคุม (H-code)", () => {
+    expect(
+      filterStatementMembers(rows, { ...base, hCode: "1" }).map((m) => m.memberNumber)
+    ).toEqual(["001", "002", "003"]);
+    expect(
+      filterStatementMembers(rows, { ...base, hCode: "10" }).map((m) => m.memberNumber)
+    ).toEqual(["004"]);
+  });
+
+  it("does not confuse หน่วยคุม 1 with หน่วยคุม 10", () => {
+    // A prefix match here would quietly fold หน่วยคุม 10 into 1.
+    const found = filterStatementMembers(rows, { ...base, hCode: "1" });
+    expect(found.some((m) => m.hCode === "10")).toBe(false);
+  });
+
   it("combines filters rather than replacing them", () => {
     const found = filterStatementMembers(rows, {
       search: "สมหญิง",
       unitName: "โรงเรียนบ้านหนองบัว",
+      hCode: "1",
       status: "unpaid",
     });
     expect(found.map((m) => m.memberNumber)).toEqual(["002"]);
+  });
+
+  it("returns nobody when หน่วยคุม and สังกัด disagree", () => {
+    const found = filterStatementMembers(rows, {
+      ...base,
+      hCode: "10",
+      unitName: "โรงเรียนบ้านหนองบัว",
+    });
+    expect(found).toHaveLength(0);
   });
 });
 
@@ -120,6 +153,7 @@ describe("summarizeStatementMembers", () => {
     const unpaidOnly = filterStatementMembers(rows, {
       search: "",
       unitName: "",
+      hCode: "",
       status: "unpaid",
     });
     expect(summarizeStatementMembers(unpaidOnly)).toEqual({
@@ -140,5 +174,22 @@ describe("unitNamesOf", () => {
       "โรงเรียนบ้านโนนสวรรค์",
       "โรงเรียนบ้านหนองบัว",
     ]);
+  });
+});
+
+describe("hCodesOf", () => {
+  it("lists each หน่วยคุม once, ignoring members with none", () => {
+    expect(hCodesOf([...rows, member({ hCode: null })])).toEqual(["1", "10"]);
+  });
+
+  it("orders them as numbers, not as text", () => {
+    const codes = hCodesOf([
+      member({ hCode: "10" }),
+      member({ hCode: "2" }),
+      member({ hCode: "1" }),
+      member({ hCode: "25" }),
+      member({ hCode: "9" }),
+    ]);
+    expect(codes).toEqual(["1", "2", "9", "10", "25"]);
   });
 });
