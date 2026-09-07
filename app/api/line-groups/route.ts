@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 
 export const dynamic = "force-dynamic";
@@ -7,9 +8,27 @@ export const dynamic = "force-dynamic";
 // a group id cannot be typed in, it only ever arrives in a webhook event, so
 // the only way onto this list is to actually add the bot to the chat.
 export async function GET() {
-  const groups = await prisma.lineGroup.findMany({
-    orderBy: [{ leftAt: "asc" }, { lastSeenAt: "desc" }],
-  });
+  let groups: Awaited<ReturnType<typeof prisma.lineGroup.findMany>>;
+  try {
+    groups = await prisma.lineGroup.findMany({
+      orderBy: [{ leftAt: "asc" }, { lastSeenAt: "desc" }],
+    });
+  } catch (err) {
+    // The table is missing until the migration is deployed, and a deploy can
+    // easily land before somebody runs it. Saying so beats an empty panel
+    // that looks like "no groups yet" — the two need entirely different
+    // actions, and only one of them is something staff can do from here.
+    if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === "P2021") {
+      return NextResponse.json(
+        {
+          error:
+            "ยังไม่ได้สร้างตารางกลุ่มในฐานข้อมูล — ต้องรัน `npx prisma migrate deploy` ก่อนถึงจะใช้ฟีเจอร์กลุ่มได้",
+        },
+        { status: 503 }
+      );
+    }
+    throw err;
+  }
 
   // Where each group is already being used, so staff can see what a chat
   // does before removing the bot from it — and so a group that receives

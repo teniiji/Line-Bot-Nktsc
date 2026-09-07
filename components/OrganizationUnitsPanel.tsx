@@ -41,7 +41,9 @@ export default function OrganizationUnitsPanel() {
     fetch("/api/line-groups")
       .then((res) => res.json())
       .then((data: (LineGroupOption & { leftAt: string | null })[]) =>
-        setGroups(data.filter((g) => !g.leftAt))
+        // Guarded because this endpoint returns an error object when the
+        // migration has not been deployed; the picker just stays hidden.
+        setGroups(Array.isArray(data) ? data.filter((g) => !g.leftAt) : [])
       )
       .catch(() => setGroups([]));
   }, []);
