@@ -143,13 +143,30 @@ async function buildUserContent(
 // bookkeeping: knowing which chats the bot is in, so staff can point a unit's
 // or a department's notifications at one.
 async function handleGroupEvent(event: webhook.Event, ref: GroupRef): Promise<void> {
+  // Logged unconditionally, unlike LOG_EVENT_SOURCES, because the bot is
+  // deliberately silent in groups: without a line here there is no way at all
+  // to tell "LINE never delivered the event" from "it arrived and the write
+  // failed", and those need opposite fixes. A group id is not a member's
+  // personal data, so this costs nothing to keep on.
+  console.log(
+    `[line/webhook] group event: type=${event.type} kind=${ref.kind} id=${ref.id}`
+  );
+
   if (event.type === "leave") {
     await recordGroupLeft(ref);
     return;
   }
 
   const joined = event.type === "join";
-  await recordGroupSeen(ref, joined);
+  try {
+    await recordGroupSeen(ref, joined);
+  } catch (err) {
+    // Named rather than left to the generic handler, so the logs say which
+    // half of the path broke.
+    console.error(`[line/webhook] could not record group ${ref.id}:`, err);
+    return;
+  }
+  console.log(`[line/webhook] group recorded: ${ref.id}`);
 
   // Said once, on being added — see GROUP_JOIN_NOTICE for why it earns its
   // place: without it people reasonably expect the bot to answer them here.

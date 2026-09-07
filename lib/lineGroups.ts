@@ -74,10 +74,13 @@ async function fetchGroupName(ref: GroupRef): Promise<string | null> {
 export async function recordGroupSeen(ref: GroupRef, justJoined: boolean): Promise<void> {
   const existing = await prisma.lineGroup.findUnique({ where: { groupId: ref.id } });
 
-  // Only asked for on a join, or when the name is still missing: the summary
-  // call costs a round trip against LINE's rate limit, and a group's name
-  // rarely changes.
-  const name = justJoined || (existing && !existing.name) ? await fetchGroupName(ref) : undefined;
+  // Asked for when the chat is new to us or still unnamed — not on every
+  // message, because the summary call costs a round trip against LINE's rate
+  // limit and a group's name rarely changes. The "new to us" case matters:
+  // a group the bot was already in before this existed is first seen through
+  // somebody posting in it, not through a join, and without this it would be
+  // recorded with no name at all.
+  const name = justJoined || !existing || !existing.name ? await fetchGroupName(ref) : undefined;
 
   await prisma.lineGroup.upsert({
     where: { groupId: ref.id },
