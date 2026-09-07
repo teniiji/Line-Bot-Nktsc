@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { GROUP_JOIN_NOTICE, groupRefOf, lineTargetKind } from "../lib/lineGroups";
+import {
+  GROUP_JOIN_NOTICE,
+  LINE_ID_MALFORMED_ERROR,
+  LINE_PERSONAL_ONLY_ERROR,
+  groupRefOf,
+  lineTargetKind,
+  personalLineIdProblem,
+} from "../lib/lineGroups";
 
 describe("groupRefOf", () => {
   it("reads a group chat's id", () => {
@@ -64,5 +71,37 @@ describe("lineTargetKind", () => {
 
   it("rejects uppercase hex, which is never what LINE issues", () => {
     expect(lineTargetKind(`U${hex.toUpperCase()}`)).toBeNull();
+  });
+});
+
+describe("personalLineIdProblem", () => {
+  const hex = "0123456789abcdef0123456789abcdef";
+
+  it("accepts a person, which is the only thing loan routing may send to", () => {
+    expect(personalLineIdProblem(`U${hex}`)).toBeNull();
+  });
+
+  it("refuses a group id, and says why rather than just rejecting it", () => {
+    // The id is perfectly valid and would work — that is exactly the danger.
+    // A loan enquiry names the member and their case; a group chat is the
+    // wrong room for it, so this is refused at entry rather than discovered
+    // after the first message has already been read by colleagues.
+    expect(personalLineIdProblem(`C${hex}`)).toBe(LINE_PERSONAL_ONLY_ERROR);
+    expect(personalLineIdProblem(`R${hex}`)).toBe(LINE_PERSONAL_ONLY_ERROR);
+  });
+
+  it("tells a wrong-kind id apart from something that is not an id at all", () => {
+    // Different mistakes need different fixes: "use a person instead" versus
+    // "copy the id again", so they must not share one message.
+    expect(personalLineIdProblem("คุณสมชาย")).toBe(LINE_ID_MALFORMED_ERROR);
+    expect(personalLineIdProblem(`U${hex.slice(0, 20)}`)).toBe(LINE_ID_MALFORMED_ERROR);
+    expect(personalLineIdProblem("")).toBe(LINE_ID_MALFORMED_ERROR);
+    expect(LINE_ID_MALFORMED_ERROR).not.toBe(LINE_PERSONAL_ONLY_ERROR);
+  });
+
+  it("does not silently accept an id that only needs trimming", () => {
+    // Callers trim before asking; if one forgets, this must fail loudly
+    // rather than store an id with a stray space that never resolves.
+    expect(personalLineIdProblem(` U${hex}`)).toBe(LINE_ID_MALFORMED_ERROR);
   });
 });

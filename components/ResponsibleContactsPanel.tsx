@@ -131,6 +131,11 @@ export default function ResponsibleContactsPanel() {
           จับคู่รหัสผู้รับผิดชอบรายบุคคล (คอลัมน์ H ในชีตสมาชิก) กับ LINE UserId ของเจ้าหน้าที่ —
           รหัสหนึ่งมีผู้รับได้คนเดียว ถ้าไม่พบรหัสของสมาชิก ระบบจะ fallback ไปที่ชื่อหน่วยงาน แล้วค่อยไปที่ผู้รับสำรอง
         </p>
+        <p className="text-xs text-amber-700 mt-1">
+          ⚠️ ตรงนี้ต้องเป็น <strong>รายบุคคล (U...)</strong> เท่านั้น ใส่เลขกลุ่ม (C...) ไม่ได้ —
+          ต่างจากแท็บ "รายการหัก" และ "แผนก" ที่ส่งเข้ากลุ่มได้ เพราะเรื่องกู้เงินเป็นข้อมูลอ่อนไหว
+          และต้องรู้ว่าใครเป็นเจ้าของเคส
+        </p>
       </div>
 
       <form onSubmit={handleAdd} className="px-4 py-3 border-b border-slate-100 flex flex-wrap gap-2 items-end">
