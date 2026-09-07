@@ -11,6 +11,13 @@ import {
   PENDING_TRANSACTION_RETENTION_MS,
 } from "@/lib/agent/state";
 import { ensureLineUser } from "@/lib/lineUsers";
+import {
+  GROUP_JOIN_NOTICE,
+  GroupRef,
+  groupRefOf,
+  recordGroupLeft,
+  recordGroupSeen,
+} from "@/lib/lineGroups";
 import { prisma } from "@/lib/prisma";
 import { isFeatureEnabled, MESSAGING_ENABLED } from "@/lib/featureFlags";
 
@@ -130,7 +137,43 @@ async function buildUserContent(
   return buildAttachmentContent(image.id, lineUserId, origin, false);
 }
 
+// Everything the bot receives from a group chat. It stays silent in groups —
+// it answers one-to-one only, which is what keeps a member's financial
+// questions out of a room full of their colleagues — so the whole job here is
+// bookkeeping: knowing which chats the bot is in, so staff can point a unit's
+// or a department's notifications at one.
+async function handleGroupEvent(event: webhook.Event, ref: GroupRef): Promise<void> {
+  if (event.type === "leave") {
+    await recordGroupLeft(ref);
+    return;
+  }
+
+  const joined = event.type === "join";
+  await recordGroupSeen(ref, joined);
+
+  // Said once, on being added — see GROUP_JOIN_NOTICE for why it earns its
+  // place: without it people reasonably expect the bot to answer them here.
+  if (joined && "replyToken" in event && event.replyToken) {
+    try {
+      await lineClient.replyMessage({
+        replyToken: event.replyToken,
+        messages: [{ type: "text", text: GROUP_JOIN_NOTICE }],
+      });
+    } catch (err) {
+      console.error("[line/webhook] group join notice failed:", err);
+    }
+  }
+}
+
 async function handleEvent(event: webhook.Event, origin: string): Promise<void> {
+  // Checked first: a group event must never reach the agent, and it carries
+  // the only thing that makes forwarding to a group possible at all.
+  const groupRef = groupRefOf(event.source);
+  if (groupRef) {
+    await handleGroupEvent(event, groupRef);
+    return;
+  }
+
   if (
     event.type !== "message" ||
     (event.message.type !== "text" &&

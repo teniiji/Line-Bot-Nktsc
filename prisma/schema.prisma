@@ -382,6 +382,47 @@ model ResponsibleContact {
   updatedAt  DateTime @updatedAt
 }
 
+// The LINE group chats the bot has been added to, so staff can forward
+// notifications to a group instead of to one person — a contact who is on
+// leave, moves job, or leaves the cooperative takes the notifications with
+// them, while a group survives all three.
+//
+// Rows appear on their own: a group id is never typed in, it only exists in
+// the webhook events LINE sends when the bot is added to a chat or when
+// somebody posts in one. Being listed here means nothing by itself — a group
+// only receives anything once staff pick it as a target for a unit or a
+// department, which is deliberate, since once the LINE account allows group
+// invitations anybody can add the bot to any chat.
+//
+// What LINE will not tell us is who is *in* a group: there is no members API
+// for a normal Official Account. So a group target trades an auditable list
+// of recipients for resilience, which is a decision to take per department
+// rather than everywhere at once.
+model LineGroup {
+  id         String    @id @default(cuid())
+  // LINE's own id: "C…" for a group chat, "R…" for a multi-person room.
+  groupId    String    @unique
+  // "group" or "room" — rooms have no name and no summary endpoint.
+  kind       String
+  // Fetched from getGroupSummary when the bot joins. Null for rooms, and for
+  // groups whose summary the API declined.
+  name       String?
+  // What staff call it, when the LINE name is unhelpful ("กลุ่ม 3" → "การเงิน
+  // สพป.นค.1").
+  note       String?
+  joinedAt   DateTime  @default(now())
+  // Set when the bot is removed rather than deleting the row: a target that
+  // stops working needs to be explainable, not silently absent.
+  leftAt     DateTime?
+  // Touched by any event from the chat, so a group the bot was added to
+  // before this table existed is discovered as soon as somebody posts.
+  lastSeenAt DateTime  @default(now())
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  @@index([leftAt])
+}
+
 // Staff who receive service requests for a given non-loan department (e.g.
 // เงินฝาก, บัญชี, สวัสดิการ) — many-to-one: several officers can share a
 // department, and every request is broadcast to all of them (see

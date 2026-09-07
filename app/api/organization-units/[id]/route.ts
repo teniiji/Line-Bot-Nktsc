@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { LINE_TARGET_FORMAT_ERROR, lineTargetKind } from "@/lib/lineGroups";
 
 // Edits one unit's contact details.
 //
@@ -34,18 +35,13 @@ export async function PUT(
     data[field] = trimmed === "" ? null : trimmed;
   }
 
-  // A LINE userId is always "U" plus 32 hex characters. Checking the shape
-  // catches the common paste mistakes — a display name, a partial copy, the
-  // unit's own name — at the point of entry, instead of surfacing as a failed
-  // send halfway through a round.
-  if (data.lineUserId && !/^U[0-9a-f]{32}$/.test(data.lineUserId)) {
-    return NextResponse.json(
-      {
-        error:
-          'LINE UserID ต้องขึ้นต้นด้วย "U" ตามด้วยตัวอักษร/ตัวเลข 32 ตัว — คัดลอกมาจาก chat.line.biz ให้ครบ',
-      },
-      { status: 400 }
-    );
+  // A unit's รายการหัก can go to one person or to the unit's own group. The
+  // shape is still checked — it catches a display name or a half-copied id at
+  // the point of entry rather than as a failed send halfway through a round —
+  // but a group id ("C…") is now as valid as a personal one ("U…"), which is
+  // what lets a unit whose finance officer changes keep receiving its file.
+  if (data.lineUserId && !lineTargetKind(data.lineUserId)) {
+    return NextResponse.json({ error: LINE_TARGET_FORMAT_ERROR }, { status: 400 });
   }
 
   if (data.email && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(data.email)) {

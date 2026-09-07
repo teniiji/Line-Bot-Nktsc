@@ -3,6 +3,12 @@
 import { useCallback, useEffect, useState } from "react";
 import { OrganizationUnitEntry } from "@/lib/types";
 
+interface LineGroupOption {
+  groupId: string;
+  name: string | null;
+  note: string | null;
+}
+
 const SEARCH_DEBOUNCE_MS = 300;
 
 export default function OrganizationUnitsPanel() {
@@ -18,11 +24,33 @@ export default function OrganizationUnitsPanel() {
   const [editEmail, setEditEmail] = useState("");
   const [editLineUserId, setEditLineUserId] = useState("");
   const [saving, setSaving] = useState(false);
+  // The groups the bot is in, so a unit can be pointed at its own group
+  // instead of one officer's account — see LineGroupsPanel for how a group
+  // gets here.
+  const [groups, setGroups] = useState<LineGroupOption[]>([]);
 
   useEffect(() => {
     const t = setTimeout(() => setSearch(searchInput.trim()), SEARCH_DEBOUNCE_MS);
     return () => clearTimeout(t);
   }, [searchInput]);
+
+  // Only the chats the bot is still in are offered: a group it has been
+  // removed from would accept the assignment and then silently drop every
+  // file sent to it.
+  useEffect(() => {
+    fetch("/api/line-groups")
+      .then((res) => res.json())
+      .then((data: (LineGroupOption & { leftAt: string | null })[]) =>
+        setGroups(data.filter((g) => !g.leftAt))
+      )
+      .catch(() => setGroups([]));
+  }, []);
+
+  const groupLabel = (id: string) => {
+    const group = groups.find((g) => g.groupId === id);
+    if (!group) return null;
+    return group.note ?? group.name ?? group.groupId;
+  };
 
   const fetchUnits = useCallback(async () => {
     setLoading(true);
@@ -171,14 +199,43 @@ export default function OrganizationUnitsPanel() {
                       </td>
                       <td className="px-4 py-2">
                         {editingId === u.id ? (
-                          <input
-                            value={editLineUserId}
-                            onChange={(e) => setEditLineUserId(e.target.value)}
-                            className="border border-slate-300 rounded px-2 py-1 text-sm w-72 font-mono"
-                            placeholder="U1234567890abcdef…"
-                          />
+                          <>
+                            <input
+                              value={editLineUserId}
+                              onChange={(e) => setEditLineUserId(e.target.value)}
+                              list="line-group-targets"
+                              className="border border-slate-300 rounded px-2 py-1 text-sm w-72 font-mono"
+                              placeholder="U… (รายบุคคล) หรือเลือกกลุ่ม"
+                            />
+                            {groups.length > 0 && (
+                              <select
+                                value=""
+                                onChange={(e) => e.target.value && setEditLineUserId(e.target.value)}
+                                className="border border-slate-300 rounded px-2 py-1 text-xs ml-2 bg-white max-w-[12rem]"
+                                title="ส่งเข้ากลุ่มของหน่วยงานแทนการส่งหาคนคนเดียว"
+                              >
+                                <option value="">เลือกกลุ่ม…</option>
+                                {groups.map((g) => (
+                                  <option key={g.groupId} value={g.groupId}>
+                                    {g.note ?? g.name ?? g.groupId}
+                                  </option>
+                                ))}
+                              </select>
+                            )}
+                          </>
                         ) : u.lineUserId ? (
-                          <span className="font-mono text-xs">{u.lineUserId}</span>
+                          <span>
+                            {groupLabel(u.lineUserId) ? (
+                              <>
+                                <span className="inline-block px-2 py-0.5 rounded-full text-xs border bg-sky-50 text-sky-700 border-sky-200">
+                                  👥 กลุ่ม
+                                </span>{" "}
+                                {groupLabel(u.lineUserId)}
+                              </>
+                            ) : (
+                              <span className="font-mono text-xs">{u.lineUserId}</span>
+                            )}
+                          </span>
                         ) : (
                           <span className="text-amber-700 text-xs">ยังไม่มี</span>
                         )}
