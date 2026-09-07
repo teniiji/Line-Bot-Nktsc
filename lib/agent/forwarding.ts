@@ -4,7 +4,10 @@
 import { prisma } from "../prisma";
 import { lineClient } from "../lineClient";
 import { pickLoanForwardTarget } from "../loanRouting";
-import { pickDepartmentForwardTargets } from "../departmentRouting";
+import {
+  DepartmentForwardPlan,
+  planDepartmentForward,
+} from "../departmentRouting";
 import { getCategoryDepartment } from "../categoryDepartments";
 import { formatAmount } from "../format";
 import { NO_DOCUMENT } from "../documentTypes";
@@ -22,10 +25,10 @@ import type { LineUserInfo, PendingServiceInfo } from "./types";
 // against MemberRoster.unitName), falling back to LINE_FORWARD_LOAN_ID if
 // neither matches. Precedence itself lives in lib/loanRouting.ts and
 // lib/departmentRouting.ts so it's unit-testable without Prisma.
-export async function resolveForwardTargets(
+export async function resolveForwardPlan(
   lineUserId: string,
   department: string | null
-): Promise<string[]> {
+): Promise<DepartmentForwardPlan> {
   if (department === "สินเชื่อ") {
     const roster = await prisma.memberRoster.findFirst({ where: { lineUserId } });
 
@@ -45,17 +48,60 @@ export async function resolveForwardTargets(
       unitContactLineUserId: unitContact?.lineUserId ?? null,
       envFallback: process.env.LINE_FORWARD_LOAN_ID ?? null,
     });
-    return target ? [target] : [];
+    // Loan requests stay one named officer with no fallback: the precedence
+    // above already picks the person who owns this member's case, and a
+    // second-choice recipient for a loan enquiry is not a safety net, it is
+    // somebody else's business.
+    return { primary: target ? [target] : [], fallback: [], viaGroup: false };
   }
 
   const contacts = department
     ? await prisma.departmentContact.findMany({ where: { department } })
     : [];
 
-  return pickDepartmentForwardTargets({
+  return planDepartmentForward({
     contactLineUserIds: contacts.map((c) => c.lineUserId),
     envFallback: process.env.LINE_FORWARD_GENERAL_ID ?? null,
   });
+}
+
+// Every recipient a plan could reach, for the log line written when none of
+// them worked.
+export function allPlanTargets(plan: DepartmentForwardPlan): string[] {
+  return [...plan.primary, ...plan.fallback];
+}
+
+// Prepended to a fallback push so the officer who receives it knows why it
+// came to them and that the group needs fixing — otherwise the group quietly
+// stops working and the only sign is that the old recipients are busy again.
+const FALLBACK_NOTICE =
+  "⚠️ ส่งเข้ากลุ่มไม่สำเร็จ (บอทอาจถูกนำออกจากกลุ่มแล้ว) จึงส่งให้คุณโดยตรงแทน — " +
+  "รบกวนตรวจที่แดชบอร์ด > ผู้รับผิดชอบ > กลุ่ม LINE";
+
+// Pushes to the plan's primary, and only if every one of those failed, to
+// the fallback. Returns the same shape as pushToTargets so callers log and
+// report exactly as before.
+export async function pushToPlan(
+  plan: DepartmentForwardPlan,
+  messages: Parameters<typeof lineClient.pushMessage>[0]["messages"],
+  logLabel: string
+): Promise<{ succeededIds: string[]; failedIds: string[] }> {
+  const first = await pushToTargets(plan.primary, messages, logLabel);
+  if (first.succeededIds.length > 0 || plan.fallback.length === 0) return first;
+
+  console.warn(
+    `[financeAgent] ${logLabel}: primary targets all failed, falling back to ${plan.fallback.length} recipient(s)`
+  );
+  const second = await pushToTargets(
+    plan.fallback,
+    [{ type: "text", text: FALLBACK_NOTICE }, ...messages],
+    `${logLabel} (fallback)`
+  );
+
+  return {
+    succeededIds: second.succeededIds,
+    failedIds: [...first.failedIds, ...second.failedIds],
+  };
 }
 
 
@@ -139,8 +185,8 @@ export async function forwardServiceRequest(
     return "The request was recorded, but staff have temporarily paused push notifications for this department (a deliberate setting, not a configuration problem). Tell the user, in Thai, that their request has been received and staff will follow up — do not mention the pause itself.";
   }
 
-  const targetIds = await resolveForwardTargets(lineUserId, pendingService.department);
-  if (targetIds.length === 0) {
+  const plan = await resolveForwardPlan(lineUserId, pendingService.department);
+  if (allPlanTargets(plan).length === 0) {
     await logServiceRequest(lineUserId, pendingService, lineUser, "unconfigured", null);
     await prisma.pendingServiceRequest.delete({ where: { lineUserId } }).catch(() => {});
     console.warn(
@@ -181,14 +227,20 @@ export async function forwardServiceRequest(
   // The member is only told forwarding failed if every recipient failed; a
   // partial failure is still logged so staff can spot and fix the stale
   // contact from the dashboard.
-  const { succeededIds, failedIds } = await pushToTargets(
-    targetIds,
+  const { succeededIds, failedIds } = await pushToPlan(
+    plan,
     messages,
     "forward service request"
   );
 
   if (succeededIds.length === 0) {
-    await logServiceRequest(lineUserId, pendingService, lineUser, "failed", targetIds.join(", "));
+    await logServiceRequest(
+      lineUserId,
+      pendingService,
+      lineUser,
+      "failed",
+      allPlanTargets(plan).join(", ")
+    );
     await prisma.pendingServiceRequest.delete({ where: { lineUserId } }).catch(() => {});
     return "Error: failed to forward the request. Apologize to the user and tell them to contact the cooperative office directly instead — do not claim the request was forwarded.";
   }
@@ -241,8 +293,8 @@ export async function notifyTransactionForward(
       return;
     }
 
-    const targetIds = await resolveForwardTargets(lineUserId, department);
-    if (targetIds.length === 0) {
+    const plan = await resolveForwardPlan(lineUserId, department);
+    if (allPlanTargets(plan).length === 0) {
       await prisma.expense.update({
         where: { id: expense.id },
         data: { forwardStatus: "unconfigured", forwardedTo: null },
@@ -286,15 +338,15 @@ export async function notifyTransactionForward(
             ]
         : [{ type: "text", text }];
 
-    const { succeededIds, failedIds } = await pushToTargets(
-      targetIds,
+    const { succeededIds, failedIds } = await pushToPlan(
+      plan,
       messages,
       "notify transaction forward"
     );
 
     const forwardedTo =
       succeededIds.length === 0
-        ? targetIds.join(", ")
+        ? allPlanTargets(plan).join(", ")
         : failedIds.length > 0
           ? `${succeededIds.join(", ")} (failed: ${failedIds.join(", ")})`
           : succeededIds.join(", ");
