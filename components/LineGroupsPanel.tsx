@@ -30,8 +30,24 @@ export default function LineGroupsPanel() {
 
   const fetchGroups = useCallback(async () => {
     setLoading(true);
-    const res = await fetch("/api/line-groups");
-    setGroups(await res.json());
+    setError(null);
+    try {
+      const res = await fetch("/api/line-groups");
+      const body = await res.json();
+      // A non-array means the request failed — most often because the
+      // migration has not been deployed yet. Showing the reason matters:
+      // an empty table reads as "no groups yet", which is a completely
+      // different situation with a completely different fix.
+      if (!res.ok || !Array.isArray(body)) {
+        setError(body?.error ?? "โหลดรายชื่อกลุ่มไม่สำเร็จ");
+        setGroups([]);
+      } else {
+        setGroups(body);
+      }
+    } catch {
+      setError("โหลดรายชื่อกลุ่มไม่สำเร็จ");
+      setGroups([]);
+    }
     setLoading(false);
   }, []);
 
