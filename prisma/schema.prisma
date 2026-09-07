@@ -601,3 +601,52 @@ model StatementTransfer {
   @@index([roundId])
   @@index([roundId, account])
 }
+
+// Every line of every statement staff have uploaded, kept as the bank wrote
+// it. Deliberately separate from StatementTransfer rather than a wider version
+// of it:
+//
+//   * StatementTransfer answers "did this member settle their หักไม่ได้ this
+//     month", so it holds only member transfers and only within a round.
+//     Everything about the round's money — who paid, what is outstanding, who
+//     to chase — reads that table. Widening it to carry the bank's own
+//     postings would leave ฿90M of ฌาปนกิจ transfers one missing filter away
+//     from counting as somebody's payment.
+//   * StatementLine answers "what came into the account that day", which is
+//     not a round question at all: it spans months and covers days no round
+//     exists for.
+//
+// A member's transfer lands in both. That duplication is the price of keeping
+// the round's arithmetic impossible to break from here.
+model StatementLine {
+  id            String    @id @default(cuid())
+  // Which cooperative account the statement was for: 413 (หนองคาย) or 447
+  // (บึงกาฬ) — not in the rows themselves, chosen when the file is uploaded.
+  account       String
+  branch        String
+  postedAt      DateTime?
+  // The bank's own transaction code (NBSDT, IORSDT, BSD14 …), kept raw so a
+  // line can always be traced back to the export it came from.
+  txnCode       String
+  description   String
+  amount        Float
+  balance       Float?
+  // The paying account, where the description states one — see
+  // extractSenderAccount in lib/statementLines.ts.
+  senderAccount String?
+  // How the money arrived, derived from txnCode: transfer / counter / atm /
+  // mobile / ewallet / cheque, or "other" for the bank's own postings and
+  // anything outward. A code nobody has classified lands in "other".
+  channel       String
+  fingerprint   String
+  sourceFile    String?
+  createdAt     DateTime  @default(now())
+
+  // Statements are exported per date range and those ranges overlap, so the
+  // same line arrives more than once and has to recognise itself. Scoped to
+  // the account rather than a round, unlike StatementTransfer: one line must
+  // not be stored twice because two rounds loaded overlapping files.
+  @@unique([account, fingerprint])
+  @@index([postedAt])
+  @@index([channel, postedAt])
+}

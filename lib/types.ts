@@ -213,3 +213,67 @@ export interface StatementUnmatchedRow {
   branch: string | null;
   description: string | null;
 }
+
+// One line of money arriving in a cooperative account, for the daily
+// reconciliation against slips. Wider than StatementTransferRow: this counts
+// counter deposits, ATM and the rest, not only transfers made in the app.
+export interface DailyDepositRow {
+  id: string;
+  amount: number;
+  postedAt: string | null;
+  senderAccount: string | null;
+  channel: string;
+  branch: string;
+  description: string;
+  // Who the bank-account directory says the paying account belongs to.
+  memberNumber: string | null;
+}
+
+// One slip a member filed through the bot.
+export interface DailySlipRow {
+  id: string;
+  amount: number;
+  date: string;
+  memberNumber: string | null;
+  memberFullName: string | null;
+  category: string | null;
+  slipImageUrl: string | null;
+}
+
+// A statement line that is not a member paying in — the cooperative's own
+// transfers, fees, pension postings. Kept visible rather than dropped.
+export interface DailyOtherLineRow {
+  id: string;
+  amount: number;
+  postedAt: string | null;
+  txnCode: string;
+  description: string;
+  branch: string;
+}
+
+export interface DailyReconcileResult {
+  date: string;
+  matched: {
+    deposit: DailyDepositRow;
+    slip: DailySlipRow;
+    // "account" — the directory confirmed the payer. "amount" — the amounts
+    // agree and nothing contradicts it, which is a guess on a day holding
+    // more than one payment that size.
+    basis: "account" | "amount";
+    dayApart: boolean;
+  }[];
+  slipsWithoutMoney: DailySlipRow[];
+  depositsWithoutSlip: DailyDepositRow[];
+  otherLines: DailyOtherLineRow[];
+  totals: {
+    depositCount: number;
+    depositAmount: number;
+    slipCount: number;
+    slipAmount: number;
+    matchedCount: number;
+    matchedAmount: number;
+  };
+  // False when no statement covering this day has been uploaded yet — a
+  // different thing from a day on which no money arrived.
+  loaded: boolean;
+}

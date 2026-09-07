@@ -10,6 +10,7 @@ import {
   transferFingerprint,
   STATEMENT_ACCOUNTS,
 } from "@/lib/statementReconcile";
+import { storeStatementLines } from "@/lib/statementLineStore";
 import {
   applyDirectoryAccounts,
   recomputeRoundPayments,
@@ -143,6 +144,20 @@ export async function POST(
   ]);
   const refreshed = existing.length;
 
+  // The same file, read a second way. The round only wants member transfers;
+  // the daily reconciliation wants everything the account received, counter
+  // deposits and the bank's own postings included. Reading both here means
+  // staff upload once — see the StatementLine model for why they are separate
+  // tables. Failing this must not fail the upload: the round is the thing
+  // being asked for, and a statement can always be re-uploaded to fill the
+  // daily view in later.
+  let lines = 0;
+  try {
+    lines = await storeStatementLines(rows, account, branch, checked.file.name);
+  } catch (err) {
+    console.error("statement lines not stored", err);
+  }
+
   await applyDirectoryAccounts(round.id);
   await rematchRoundTransfers(round.id);
   await recomputeRoundPayments(round.id);
@@ -170,6 +185,9 @@ export async function POST(
     // separately from "added" so an upload that adds nothing new still says
     // plainly that it did something.
     refreshed,
+    // Every line of the file, including the ones no round cares about, now
+    // available to the daily reconciliation.
+    lines,
     matched: matched.size,
     unmatched: unmatched.size,
   });

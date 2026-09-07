@@ -25,6 +25,7 @@ import TestDataCleanupPanel from "@/components/TestDataCleanupPanel";
 import DeductionRoundsPanel from "@/components/DeductionRoundsPanel";
 import OrganizationUnitsPanel from "@/components/OrganizationUnitsPanel";
 import StatementReconcilePanel from "@/components/StatementReconcilePanel";
+import DailyReconcilePanel from "@/components/DailyReconcilePanel";
 import MemberBankAccountsPanel from "@/components/MemberBankAccountsPanel";
 
 const PAGE_SIZE = 10;
@@ -244,6 +245,11 @@ export default function Dashboard() {
                 <MemberBankAccountsPanel />
               </div>
             ),
+          },
+          {
+            id: "daily",
+            label: "เงินเข้าประจำวัน",
+            content: <DailyReconcilePanel />,
           },
           {
             id: "service-requests",
