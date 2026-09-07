@@ -33,6 +33,32 @@ export function lineTargetKind(id: string): LineTargetKind | null {
   return TARGET_PREFIXES[id[0]] ?? null;
 }
 
+// Loan routing is the one place a group is wrong rather than merely
+// unusual: the precedence in lib/loanRouting.ts picks the officer who owns
+// this member's case, and a loan enquiry seen by a room of colleagues is the
+// most sensitive disclosure the system can make. Refused at entry, because
+// the id would otherwise be accepted and quietly work.
+export const LINE_PERSONAL_ONLY_ERROR =
+  'ตรงนี้ต้องเป็น LINE UserId รายบุคคล (ขึ้นต้นด้วย "U") — ' +
+  "สินเชื่อจงใจไม่ให้ส่งเข้ากลุ่ม เพราะต้องรู้ว่าใครเป็นเจ้าของเคส และเป็นข้อมูลที่อ่อนไหวที่สุดในระบบ";
+
+// The other way this field goes wrong, and the more common one: something
+// that is not a LINE id at all — a staff member's name, a half-copied id, an
+// internal code. Told apart from the group case because the fix is different:
+// one is "use a person instead", the other is "copy the id again".
+export const LINE_ID_MALFORMED_ERROR =
+  'ไม่ใช่ LINE UserId — ต้องขึ้นต้นด้วย "U" ตามด้วยตัวอักษร a-f หรือตัวเลข 32 ตัว ' +
+  "(คัดลอกจาก chat.line.biz ในหน้าแชทของคนนั้น) ไม่ใช่ชื่อหรือรหัสอื่น";
+
+// The single rule for every field that routes a loan enquiry: the dashboard,
+// the per-row edit, and the spreadsheet import all ask here, so an id the
+// screen refuses cannot arrive through the import instead.
+export function personalLineIdProblem(id: string): string | null {
+  const kind = lineTargetKind(id);
+  if (kind === "user") return null;
+  return kind ? LINE_PERSONAL_ONLY_ERROR : LINE_ID_MALFORMED_ERROR;
+}
+
 export const LINE_TARGET_FORMAT_ERROR =
   'ต้องเป็น LINE ID ที่ขึ้นต้นด้วย "U" (รายบุคคล) หรือ "C" (กลุ่ม) ตามด้วยตัวอักษร/ตัวเลข 32 ตัว — ' +
   "รายบุคคลคัดลอกจาก chat.line.biz ส่วนกลุ่มให้เลือกจากรายการกลุ่มที่บอทอยู่";

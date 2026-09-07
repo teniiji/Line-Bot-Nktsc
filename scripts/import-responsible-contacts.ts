@@ -14,6 +14,7 @@
 // Usage: npx tsx scripts/import-responsible-contacts.ts <path-to-xlsx>
 
 import ExcelJS from "exceljs";
+import { personalLineIdProblem } from "../lib/lineGroups";
 import { PrismaClient } from "@prisma/client";
 import { cellText as cell } from "./excelUtils";
 
@@ -60,6 +61,16 @@ async function main() {
     const code = cell(row, CODE_COLUMN);
     const lineUserId = cell(row, LINE_USER_ID_COLUMN);
     if (!code || !lineUserId) {
+      skipped++;
+      continue;
+    }
+    // Same rule the dashboard enforces: loan routing goes to a named
+    // officer, never a group. A malformed id is skipped loudly rather than
+    // stored, because stored it would look configured and only fail at the
+    // moment a member is waiting for an answer.
+    const idProblem = personalLineIdProblem(lineUserId);
+    if (idProblem) {
+      console.warn(`  ข้าม รหัส "${code}" — ${idProblem}`);
       skipped++;
       continue;
     }
