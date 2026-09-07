@@ -1,5 +1,6 @@
 import ExcelJS from "exceljs";
 import { looksLikeLegacyXls, looksLikeZip, repairZip, toArrayBuffer } from "./xlsxRepair";
+import { looksLikeHtml, parseHtmlTableRows } from "./htmlTable";
 
 export const MAX_UPLOAD_BYTES = 4 * 1024 * 1024;
 
@@ -52,7 +53,19 @@ async function loadWorkbook(buffer: ArrayBuffer): Promise<ExcelJS.Workbook> {
 // statement/มาไม่ได้ parsers need — they address cells by position, not by
 // header name, because neither sheet has a dependable header row.
 export async function readFirstSheetRows(file: File): Promise<unknown[][]> {
-  const workbook = await loadWorkbook(await file.arrayBuffer());
+  const buffer = await file.arrayBuffer();
+
+  // Checked before handing the bytes to a spreadsheet reader, because the
+  // bank's web export writes an HTML table and calls it .xls. Excel opens
+  // those, so nothing about downloading one suggests it is not a spreadsheet
+  // — but no spreadsheet reader will touch it, and the failure it produces
+  // looks exactly like a corrupt file.
+  const data = Buffer.from(buffer);
+  if (looksLikeHtml(data)) {
+    return parseHtmlTableRows(data.toString("utf8"));
+  }
+
+  const workbook = await loadWorkbook(buffer);
 
   const sheet = workbook.worksheets[0];
   if (!sheet) return [];
