@@ -237,6 +237,10 @@ export interface DailySlipRow {
   memberNumber: string | null;
   memberFullName: string | null;
   category: string | null;
+  // Read off the slip when it showed them: the time as "HH:MM" on the slip's
+  // own clock, and the paying account exactly as printed, mask and all.
+  transferTime: string | null;
+  senderAccount: string | null;
   slipImageUrl: string | null;
 }
 
@@ -256,11 +260,17 @@ export interface DailyReconcileResult {
   matched: {
     deposit: DailyDepositRow;
     slip: DailySlipRow;
-    // "account" — the directory confirmed the payer. "amount" — the amounts
-    // agree and nothing contradicts it, which is a guess on a day holding
-    // more than one payment that size.
-    basis: "account" | "amount";
+    // How the pair was arrived at, strongest first. "account" — the directory
+    // confirmed the payer. "slipAccount" — the account printed on the slip
+    // agrees with the one the bank named, which needs no directory.
+    // "time" — the amounts agree and the two clocks are within the hour.
+    // "amount" — the amounts agree and nothing else is known, which is a
+    // guess on a day holding more than one payment that size.
+    basis: "account" | "slipAccount" | "time" | "amount";
     dayApart: boolean;
+    // Minutes between the slip's clock and the bank's posting, when both are
+    // known. null for every slip logged before the time was read.
+    minutesApart: number | null;
   }[];
   slipsWithoutMoney: DailySlipRow[];
   depositsWithoutSlip: DailyDepositRow[];

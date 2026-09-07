@@ -12,6 +12,7 @@ import { LOAN_TYPES } from "../loanTypes";
 import { formatAmount } from "../format";
 import { isPlaceholderText } from "../placeholderText";
 import { namesLikelyMatch } from "../nameMatch";
+import { normalizeAccountPattern, parseSlipTime } from "../slipDetails";
 import { classifyRecipient } from "../recipientCheck";
 import { isFeatureEnabled, TRANSACTIONS_ENABLED } from "../featureFlags";
 import {
@@ -69,6 +70,13 @@ export async function finalizeTransaction(
         depositAccountNumber: pending.depositAccountNumber,
         slipSenderName: pending.slipSenderName,
         senderNameMismatch,
+        // Carried onto the permanent record so the daily reconciliation has
+        // them: the time tells apart several payments of the same amount, and
+        // the account is the member's own statement of where the money came
+        // from — independent of the bank-account directory, which is only as
+        // complete as staff have made it.
+        slipTransferTime: pending.slipTransferTime,
+        slipSenderAccount: pending.slipSenderAccount,
       },
     });
     await prisma.pendingTransaction.delete({ where: { lineUserId } }).catch(() => {});
@@ -127,6 +135,8 @@ export type ReportTransactionInput = {
   referenceNumber?: unknown;
   senderName?: unknown;
   recipientName?: unknown;
+  transferTime?: unknown;
+  senderAccount?: unknown;
 };
 
 
@@ -140,8 +150,17 @@ export async function reportTransaction(
     return "Error: transaction logging is temporarily paused by staff. Apologize to the user, in Thai, and tell them to try again later or contact the cooperative office directly — do not log anything.";
   }
 
-  const { category, amount, description, date, referenceNumber, senderName, recipientName } =
-    input;
+  const {
+    category,
+    amount,
+    description,
+    date,
+    referenceNumber,
+    senderName,
+    recipientName,
+    transferTime,
+    senderAccount,
+  } = input;
 
   // Deterministic backstop for the prompt's "must be a transfer to the
   // cooperative" rule (ขั้นที่ 1.5), which the model has ignored in
@@ -189,6 +208,21 @@ export async function reportTransaction(
   const parsedSenderName =
     typeof senderName === "string" && senderName.trim() && !isPlaceholderText(senderName)
       ? senderName.trim()
+      : null;
+
+  // Both are optional and both fail closed: a time that is not a real clock,
+  // or an "account" that turns out to be a bank name, is dropped rather than
+  // stored. A wrong value here would rank a reconciliation pairing
+  // confidently in the wrong direction, which is worse than having none.
+  const parsedTransferTime = parseSlipTime(transferTime);
+  // Stored exactly as printed, mask characters and all — normalizeAccountPattern
+  // is only asked whether it *could* be an account, so that changing how much
+  // of one has to be visible later needs no slips re-read.
+  const parsedSenderAccount =
+    typeof senderAccount === "string" &&
+    !isPlaceholderText(senderAccount) &&
+    normalizeAccountPattern(senderAccount)
+      ? senderAccount.trim()
       : null;
 
   // Catch a duplicate slip as early as possible instead of only at the
@@ -247,6 +281,8 @@ export async function reportTransaction(
       slipIsPdf: ctx.slipIsPdf,
       referenceNumber: refNumber,
       slipSenderName: parsedSenderName,
+      slipTransferTime: parsedTransferTime,
+      slipSenderAccount: parsedSenderAccount,
     },
     update: {
       // Only overwrite fields we actually have new info for, so a slip
@@ -267,6 +303,8 @@ export async function reportTransaction(
       ...(parsedSenderName
         ? { slipSenderName: parsedSenderName, senderNameConfirmed: false }
         : {}),
+      ...(parsedTransferTime ? { slipTransferTime: parsedTransferTime } : {}),
+      ...(parsedSenderAccount ? { slipSenderAccount: parsedSenderAccount } : {}),
       createdAt: new Date(),
     },
   });

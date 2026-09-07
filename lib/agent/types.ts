@@ -30,6 +30,8 @@ export type PendingInfo = {
   depositAccountNumber: string | null;
   slipSenderName: string | null;
   senderNameConfirmed: boolean;
+  slipTransferTime: string | null;
+  slipSenderAccount: string | null;
 };
 
 

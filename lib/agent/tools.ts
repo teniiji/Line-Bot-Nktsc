@@ -46,6 +46,16 @@ export const tools: Anthropic.Tool[] = [
           description:
             "The name shown in the slip's \"จาก\" (sender/from) field — the person or account the money is moving FROM — if a slip image or PDF is present and clearly shows one. Copy exactly as printed, including any title (นาย/นาง/นางสาว). Omit if not visible, not applicable, or this message has no slip attached. Never guess.",
         },
+        transferTime: {
+          type: "string",
+          description:
+            "The time of day printed on the slip, as HH:MM on a 24-hour clock (e.g. \"09:07\" or \"14:32\"). Copy what is printed — if the slip shows seconds, they are ignored. This is what lets staff tell apart several members who transferred the same amount on the same day, so report it whenever a slip shows one. Omit if no time is visible, or this message has no slip. Never guess.",
+        },
+        senderAccount: {
+          type: "string",
+          description:
+            "The paying account number shown next to the slip's \"จาก\" (sender/from) name — the account the money left. Copy it EXACTLY as printed, including the hyphens and every masking character (e.g. \"xxx-x-x7288-5\"); do not fill in, guess, or drop the hidden digits. This is the account the bank's own statement will name, so even a mostly-masked one is useful. Omit if the slip shows no account number for the sender, or this message has no slip.",
+        },
         recipientName: {
           type: "string",
           description:

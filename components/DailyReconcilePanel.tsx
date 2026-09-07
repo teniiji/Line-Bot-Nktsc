@@ -43,6 +43,54 @@ const Payer = ({ deposit }: { deposit: DailyDepositRow }) => (
   </span>
 );
 
+// Why this pair was made, said plainly enough that a person can decide
+// whether to trust it. The four are genuinely different levels of evidence,
+// so they get four different labels rather than a tick.
+const MatchBasis = ({
+  basis,
+  minutesApart,
+}: {
+  basis: DailyReconcileResult["matched"][number]["basis"];
+  minutesApart: number | null;
+}) => {
+  if (basis === "account") {
+    return (
+      <span className="text-green-700" title="เลขบัญชีผู้โอนตรงกับทะเบียนเลขบัญชีของสมาชิกคนนี้">
+        เลขบัญชีตรง
+      </span>
+    );
+  }
+  if (basis === "slipAccount") {
+    return (
+      <span
+        className="text-green-700"
+        title="เลขบัญชีที่พิมพ์อยู่บนสลิป (เท่าที่ไม่ถูกปิดบัง) ตรงกับเลขบัญชีผู้โอนใน statement — ไม่ต้องพึ่งทะเบียนเลขบัญชี"
+      >
+        บัญชีในสลิปตรง
+      </span>
+    );
+  }
+  if (basis === "time") {
+    return (
+      <span
+        className="text-sky-700"
+        title="ยอดตรงและเวลาบนสลิปใกล้กับเวลาที่ธนาคารบันทึก — ยังไม่ยืนยันเลขบัญชี"
+      >
+        เวลาใกล้กัน
+        {minutesApart !== null && <span className="text-slate-400"> ({minutesApart} นาที)</span>}
+      </span>
+    );
+  }
+  return (
+    <span
+      className="text-amber-700"
+      title="จับคู่จากยอดเงินอย่างเดียว — ถ้าวันนี้มีคนโอนยอดเท่ากันหลายคน คู่นี้อาจสลับกันได้"
+    >
+      ยอดตรงเท่านั้น
+    </span>
+  );
+};
+
 export default function DailyReconcilePanel() {
   const [date, setDate] = useState(todayISO);
   const [data, setData] = useState<DailyReconcileResult | null>(null);
@@ -87,10 +135,15 @@ export default function DailyReconcilePanel() {
           สลิปที่ไม่มีเงินเข้าจริง และเงินที่เข้ามาโดยไม่มีใครแจ้ง
         </p>
         <p className="text-xs text-amber-700 mt-1">
-          ⚠️ สลิปที่บอทบันทึกมีแค่<strong>วันที่ ไม่มีเวลา</strong>และไม่มีเลขบัญชีผู้โอน
-          การจับคู่ส่วนใหญ่จึงอาศัย<strong>ยอดเงิน</strong>อย่างเดียว —
-          วันที่มีคนโอนยอดเท่ากันหลายคนจะแยกไม่ออกว่าใบไหนคู่กับรายการไหน
+          ⚠️ ช่อง <strong>"จับคู่จาก"</strong> บอกว่าคู่นั้นเชื่อได้แค่ไหน —
+          <strong>เลขบัญชีตรง</strong> กับ <strong>บัญชีในสลิปตรง</strong> แน่นอนเกือบ 100%,
+          <strong>เวลาใกล้กัน</strong> ค่อนข้างแน่, ส่วน <strong>ยอดตรงเท่านั้น</strong> คือ
+          <strong>เดา</strong> — วันที่มีคนโอนยอดเท่ากันหลายคนอาจสลับคู่กันได้
           ให้ถือว่าเป็นรายการให้ไล่ดู ไม่ใช่คำตอบสุดท้าย
+        </p>
+        <p className="text-xs text-slate-400 mt-1">
+          สลิปที่บอทบันทึก<strong>ตั้งแต่ 7 ก.ย. 69 เป็นต้นไป</strong>จะเก็บเวลาที่โอนและเลขบัญชีผู้โอน
+          (เท่าที่สลิปแสดง) ไว้ด้วย — รายการเก่ากว่านั้นยังมีแค่วันที่กับยอดเงิน จึงจับคู่ได้แค่ "ยอดตรงเท่านั้น"
         </p>
       </div>
 
@@ -175,7 +228,7 @@ export default function DailyReconcilePanel() {
                 </tr>
               </thead>
               <tbody>
-                {data.matched.map(({ deposit, slip, basis, dayApart }) => (
+                {data.matched.map(({ deposit, slip, basis, dayApart, minutesApart }) => (
                   <tr key={deposit.id} className="border-t border-slate-100 hover:bg-slate-50">
                     <td className="px-2 py-1.5 whitespace-nowrap">
                       <Clock iso={deposit.postedAt} />
@@ -194,16 +247,7 @@ export default function DailyReconcilePanel() {
                     </td>
                     <td className="px-2 py-1.5 text-slate-500">{slip.category ?? "—"}</td>
                     <td className="px-2 py-1.5 whitespace-nowrap text-xs">
-                      {basis === "account" ? (
-                        <span className="text-green-700">เลขบัญชีตรง</span>
-                      ) : (
-                        <span
-                          className="text-amber-700"
-                          title="จับคู่จากยอดเงินอย่างเดียว — ถ้าวันนี้มีคนโอนยอดเท่ากันหลายคน คู่นี้อาจสลับกันได้"
-                        >
-                          ยอดตรงเท่านั้น
-                        </span>
-                      )}
+                      <MatchBasis basis={basis} minutesApart={minutesApart} />
                       {dayApart && (
                         <span className="text-slate-400" title="สลิปลงวันที่คนละวันกับที่ธนาคารบันทึก">
                           {" "}
@@ -315,7 +359,8 @@ const SlipTable = ({ slips }: { slips: DailySlipRow[] }) => (
         <th className="px-2 py-1.5 font-semibold text-right">ยอด</th>
         <th className="px-2 py-1.5 font-semibold">สมาชิก</th>
         <th className="px-2 py-1.5 font-semibold">แจ้งว่าเป็น</th>
-        <th className="px-2 py-1.5 font-semibold">วันที่สลิป</th>
+        <th className="px-2 py-1.5 font-semibold">วันที่/เวลาบนสลิป</th>
+        <th className="px-2 py-1.5 font-semibold">บัญชีผู้โอนบนสลิป</th>
         <th className="px-2 py-1.5 font-semibold">สลิป</th>
       </tr>
     </thead>
@@ -334,6 +379,12 @@ const SlipTable = ({ slips }: { slips: DailySlipRow[] }) => (
           <td className="px-2 py-1.5 text-slate-500">{slip.category ?? "—"}</td>
           <td className="px-2 py-1.5 num text-slate-500 whitespace-nowrap">
             {formatStatementDate(slip.date)}
+            {slip.transferTime && <span className="text-slate-900"> {slip.transferTime}</span>}
+          </td>
+          {/* The one thing that turns an unexplained slip into something staff
+              can actually look up in the statement themselves. */}
+          <td className="px-2 py-1.5 font-mono text-xs whitespace-nowrap">
+            {slip.senderAccount ?? <span className="text-slate-300">—</span>}
           </td>
           <td className="px-2 py-1.5">
             {slip.slipImageUrl ? (

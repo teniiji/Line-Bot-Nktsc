@@ -49,6 +49,8 @@ export async function GET(request: NextRequest) {
         memberNumber: true,
         memberFullName: true,
         slipImageUrl: true,
+        slipTransferTime: true,
+        slipSenderAccount: true,
       },
     }),
     prisma.memberBankAccount.findMany({ select: { accountNumber: true, memberNumber: true } }),
@@ -91,6 +93,8 @@ export async function GET(request: NextRequest) {
     memberNumber: slip.memberNumber,
     memberFullName: slip.memberFullName,
     category: slip.category,
+    transferTime: slip.slipTransferTime,
+    senderAccount: slip.slipSenderAccount,
   }));
 
   // Round lists first, then the directory over the top: a binding staff made
@@ -114,6 +118,8 @@ export async function GET(request: NextRequest) {
     memberNumber: slip.memberNumber,
     memberFullName: slip.memberFullName,
     category: slip.category,
+    transferTime: slip.transferTime,
+    senderAccount: slip.senderAccount,
     slipImageUrl: slipImages.get(slip.id) ?? null,
   });
 
@@ -141,6 +147,7 @@ export async function GET(request: NextRequest) {
       slip: describeSlip(pair.slip),
       basis: pair.basis,
       dayApart: pair.dayApart,
+      minutesApart: pair.minutesApart,
     })),
     slipsWithoutMoney: unclaimedSlips.map(describeSlip),
     depositsWithoutSlip: result.depositsWithoutSlip.map(describeDeposit),
