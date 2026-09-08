@@ -16,6 +16,10 @@ const basePending: PendingInfo = {
   depositAccountNumber: null,
   slipSenderName: null,
   senderNameConfirmed: false,
+  // Never a requirement: a slip that shows no time or no account is still a
+  // complete transaction, so these can't hold up a member's logging.
+  slipTransferTime: null,
+  slipSenderAccount: null,
 };
 
 const unknownMember: LineUserInfo = {

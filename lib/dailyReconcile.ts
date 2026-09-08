@@ -10,14 +10,36 @@
 //   * money with no slip — cash the cooperative holds without knowing whose it
 //     is or what it was for
 //
-// What this cannot do is be certain. A slip carries a date but no time (the
-// bot's record_transaction takes YYYY-MM-DD) and the sender's name but not
-// their account number, so for most pairs the only thing to match on is the
-// amount. On a day when eleven people each send ฿5,000 the pairing between
-// them is a guess. So every pair says how it was arrived at, and the tab
-// presents this as a list to read rather than a tick to trust.
+// What this cannot do is be certain, so every pair says how it was arrived
+// at, and the tab presents this as a list to read rather than a tick to
+// trust. Four kinds of evidence, strongest first:
+//
+//   account     — the statement named the paying account and the directory
+//                 says it belongs to the member who filed the slip
+//   slipAccount — the slip's own account, masked as the bank printed it,
+//                 agrees with the account on the statement. Needs no
+//                 directory, which matters because the directory only holds
+//                 the members staff have bound by hand
+//   time        — the amounts agree and the slip's clock is within an hour
+//                 of the bank's posting
+//   amount      — the amounts agree and nothing else is known. A guess
+//                 whenever the day holds more than one payment of that size
+//
+// A slip that names an account the statement contradicts is refused
+// outright, the same way a directory contradiction is: silence beats a
+// confident wrong pairing, because the whole point of the view is to surface
+// what does not add up.
+
+import { compareSlipAccount, slipTimeMinutes } from "./slipDetails";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
+
+// How close two clocks have to be for the time to count as evidence. A
+// transfer posts within minutes, but the two records are a member's banking
+// app and the bank's own ledger, and slips get filed a little after they were
+// sent — an hour keeps the ordinary skew without letting "some time today"
+// pass as a match.
+const CLOSE_MINUTES = 60;
 
 export interface DepositLine {
   id: string;
@@ -37,15 +59,17 @@ export interface SlipRecord {
   memberNumber: string | null;
   memberFullName: string | null;
   category: string | null;
+  // Read off the slip: "HH:MM" on its own clock, and the paying account
+  // exactly as printed, mask characters and all. Both are best-effort — a
+  // slip may show neither, and everything logged before these were read
+  // shows neither.
+  transferTime: string | null;
+  senderAccount: string | null;
 }
 
 // How the pair was arrived at, which is what decides whether staff need to
-// look at it:
-//   account — the statement named the paying account and the directory says
-//             it belongs to the member who filed the slip. Near certain.
-//   amount  — the amounts agree and nothing contradicts it. A guess whenever
-//             the day holds more than one payment of that size.
-export type MatchBasis = "account" | "amount";
+// look at it. See the note at the top of this file for what each one means.
+export type MatchBasis = "account" | "slipAccount" | "time" | "amount";
 
 export interface MatchedPair {
   deposit: DepositLine;
@@ -54,6 +78,10 @@ export interface MatchedPair {
   // True when the slip's date and the bank's posting fall on different days —
   // normal (a late-evening transfer posts the next morning) but worth showing.
   dayApart: boolean;
+  // Minutes between the slip's clock and the bank's posting, when both are
+  // known. Shown as-is: a pair four hours apart is still probably right, but
+  // it is the one a person should look at first.
+  minutesApart: number | null;
 }
 
 export interface DayReconciliation {
@@ -78,11 +106,26 @@ const sameAmount = (a: number, b: number) => Math.abs(a - b) < 0.01;
 
 const dayOf = (date: Date) => Math.floor(date.getTime() / DAY_MS);
 
+// Minutes between the slip's printed clock and the bank's posting, when both
+// are known. The bank's timestamps hold its wall clock in UTC (see
+// parseStatementDate) and the slip prints the same wall clock, so the two are
+// compared as clock times — reading either as a real instant would put an
+// offset between two records of the same moment.
+function minutesBetween(slip: SlipRecord, deposit: DepositLine): number | null {
+  const slipMinutes = slipTimeMinutes(slip.transferTime);
+  if (slipMinutes === null || !deposit.postedAt) return null;
+
+  const postedMinutes = deposit.postedAt.getUTCHours() * 60 + deposit.postedAt.getUTCMinutes();
+  const dayShift = (dayOf(deposit.postedAt) - dayOf(slip.date)) * 24 * 60;
+  return Math.abs(postedMinutes + dayShift - slipMinutes);
+}
+
 interface Candidate {
   deposit: DepositLine;
   slip: SlipRecord;
   basis: MatchBasis;
   dayApart: boolean;
+  minutesApart: number | null;
   rank: number;
 }
 
@@ -110,19 +153,46 @@ export function reconcileDay(
       // to surface what does not add up.
       if (owner && slip.memberNumber && owner !== slip.memberNumber) continue;
 
+      // The slip's own account says the same thing without needing the
+      // directory, and it can say it the other way too: a slip whose visible
+      // digits contradict the statement's account is a different payment, so
+      // the pair is refused for the same reason as above.
+      const slipAccountSays = compareSlipAccount(slip.senderAccount, deposit.senderAccount);
+      if (slipAccountSays === "conflict") continue;
+
+      const minutesApart = minutesBetween(slip, deposit);
+      const closeInTime = minutesApart !== null && minutesApart <= CLOSE_MINUTES;
+
+      const basis: MatchBasis = byAccount
+        ? "account"
+        : slipAccountSays === "match"
+          ? "slipAccount"
+          : closeInTime
+            ? "time"
+            : "amount";
+
       candidates.push({
         deposit,
         slip,
-        basis: byAccount ? "account" : "amount",
+        basis,
         dayApart,
-        // Best evidence first: a known account beats a bare amount, and the
-        // same day beats the next one.
-        rank: (byAccount ? 0 : 2) + (dayApart ? 1 : 0),
+        minutesApart,
+        // Best evidence first, so that when several slips fit one deposit the
+        // best-supported pairing claims it and the rest fall to the next
+        // deposit — a known account beats the slip's own, which beats a clock,
+        // which beats a bare amount; and the same day beats the next one.
+        rank: { account: 0, slipAccount: 2, time: 4, amount: 6 }[basis] + (dayApart ? 1 : 0),
       });
     }
   }
 
-  candidates.sort((a, b) => a.rank - b.rank);
+  // Within the same kind of evidence the closer clock wins: on a day with
+  // eleven ฿5,000 transfers, that is the whole difference between a list
+  // staff can read and eleven coin flips.
+  candidates.sort(
+    (a, b) =>
+      a.rank - b.rank || (a.minutesApart ?? Number.MAX_SAFE_INTEGER) - (b.minutesApart ?? Number.MAX_SAFE_INTEGER)
+  );
 
   const matched: MatchedPair[] = [];
   const usedDeposits = new Set<string>();
@@ -137,6 +207,7 @@ export function reconcileDay(
       slip: candidate.slip,
       basis: candidate.basis,
       dayApart: candidate.dayApart,
+      minutesApart: candidate.minutesApart,
     });
   }
 

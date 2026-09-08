@@ -274,6 +274,8 @@ export async function notifyTransactionForward(
     depositAccountNumber: string | null;
     slipSenderName: string | null;
     senderNameMismatch: boolean;
+    slipTransferTime: string | null;
+    slipSenderAccount: string | null;
     slipImageUrl: string | null;
     slipIsPdf: boolean;
   },
@@ -309,7 +311,11 @@ export async function notifyTransactionForward(
       expense.loanType ? ` (${expense.loanType})` : ""
     }\nจำนวนเงิน: ${formatAmount(expense.amount)}\nวันที่: ${expense.date
       .toISOString()
-      .slice(0, 10)}${
+      .slice(0, 10)}${expense.slipTransferTime ? ` ${expense.slipTransferTime} น.` : ""}${
+      // The account the money left, exactly as the slip printed it. Staff read
+      // this straight across to the bank statement, so the mask stays.
+      expense.slipSenderAccount ? `\nบัญชีผู้โอน: ${expense.slipSenderAccount}` : ""
+    }${
       expense.depositAccountNumber ? `\nเลขที่บัญชีที่ฝาก: ${expense.depositAccountNumber}` : ""
     }${
       expense.description ? `\nหมายเหตุ: ${expense.description}` : ""

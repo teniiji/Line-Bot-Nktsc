@@ -66,6 +66,20 @@ model Expense {
   // still spot-check these.
   slipSenderName       String?
   senderNameMismatch   Boolean  @default(false)
+  // The two things printed on nearly every slip that used to be thrown
+  // away, read best-effort by the model and normalised by lib/slipDetails.ts.
+  //
+  // slipTransferTime is "HH:MM" on the slip's own clock — not a DateTime,
+  // because the slip states a wall-clock time and nothing on it says which
+  // zone; storing it as text keeps it the fact it is instead of a timestamp
+  // that quietly shifts. The daily reconciliation uses it to tell apart
+  // several payments of the same amount on the same day.
+  //
+  // slipSenderAccount is the paying account exactly as printed, mask
+  // characters and all ("xxx-x-x7288-5") — kept raw so a later change to
+  // how much of it can be matched does not need the slips re-read.
+  slipTransferTime     String?
+  slipSenderAccount    String?
 
   @@index([date])
   @@index([category])
@@ -121,6 +135,10 @@ model PendingTransaction {
   // done at submit time.
   slipSenderName       String?
   senderNameConfirmed  Boolean   @default(false)
+  // Carried through to Expense on commit — see the fields of the same name
+  // there for what they hold and why the time is text.
+  slipTransferTime     String?
+  slipSenderAccount    String?
   createdAt            DateTime  @default(now())
 }
 
