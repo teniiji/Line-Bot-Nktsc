@@ -127,6 +127,14 @@ export default function StatementReconcilePanel() {
   const [notice, setNotice] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [pendingDelete, setPendingDelete] = useState<StatementRoundSummary | null>(null);
+  // A member-list upload the server refused to do quietly because it would
+  // take most of the round away. The file is held so confirming does not make
+  // staff pick it again.
+  const [pendingShrink, setPendingShrink] = useState<{
+    file: File;
+    roundId: string;
+    description: string;
+  } | null>(null);
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [searchInput, setSearchInput] = useState("");
   const [search, setSearch] = useState("");
@@ -245,28 +253,39 @@ export default function StatementReconcilePanel() {
     }
   };
 
-  const uploadMembers = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    e.target.value = "";
-    if (!file || !selectedId) return;
-
+  // Split from the change handler so the same file can be sent again with
+  // confirm=yes after the shrink question, without asking staff to pick it a
+  // second time — re-picking is where the wrong file gets chosen twice.
+  const sendMembers = async (file: File, roundId: string, confirm: boolean) => {
     setBusy(true);
     setError(null);
     setNotice(null);
     try {
       const form = new FormData();
       form.append("file", file);
-      const res = await fetch(`/api/statement-rounds/${selectedId}/members`, {
+      if (confirm) form.append("confirm", "yes");
+      const res = await fetch(`/api/statement-rounds/${roundId}/members`, {
         method: "POST",
         body: form,
       });
       const body = await res.json();
+      if (res.status === 409 && body.needsConfirm) {
+        // Not an error — the upload is legitimate but destructive, so it
+        // waits for a person to look at the numbers.
+        setPendingShrink({ file, roundId, description: body.error });
+        return;
+      }
       if (!res.ok) {
         setError(body.error || "อัปโหลดรายชื่อไม่สำเร็จ");
         return;
       }
       setNotice(
         `นำเข้ารายชื่อหักไม่ได้ ${body.imported} คน` +
+          (body.removed > 0
+            ? ` (เอาออก ${body.removed} คน${
+                body.removedUnits > 0 ? ` รวม ${body.removedUnits} หน่วยงานที่หายไปทั้งหน่วย` : ""
+              })`
+            : "") +
           (body.awaitingMembers > 0
             ? ` (อีก ${body.awaitingMembers} คนใน ${body.awaitingUnits} หน่วยงานยังไม่ส่งผลการหักมา จึงยังไม่นับ)`
             : "") +
@@ -277,10 +296,17 @@ export default function StatementReconcilePanel() {
             ? ` — มี ${body.missingAccount} คนไม่มีเลขบัญชีในไฟล์ จับคู่กับ Statement ไม่ได้`
             : "")
       );
-      await Promise.all([fetchRound(selectedId), fetchRounds()]);
+      await Promise.all([fetchRound(roundId), fetchRounds()]);
     } finally {
       setBusy(false);
     }
+  };
+
+  const uploadMembers = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file || !selectedId) return;
+    await sendMembers(file, selectedId, false);
   };
 
   const uploadStatement = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -1138,6 +1164,20 @@ export default function StatementReconcilePanel() {
         confirmLabel="ล้างรายการ"
         onConfirm={confirmClearAccount}
         onCancel={() => setPendingClear(null)}
+      />
+
+      <ConfirmDialog
+        open={pendingShrink !== null}
+        title="ไฟล์นี้จะเอารายชื่อส่วนใหญ่ออกจากรอบ — แน่ใจไหม?"
+        description={pendingShrink?.description}
+        confirmLabel="ใช่ แทนที่รายชื่อทั้งรอบ"
+        cancelLabel="ยกเลิก (ไม่แตะรายชื่อเดิม)"
+        onConfirm={() => {
+          const pending = pendingShrink;
+          setPendingShrink(null);
+          if (pending) sendMembers(pending.file, pending.roundId, true);
+        }}
+        onCancel={() => setPendingShrink(null)}
       />
     </div>
   );

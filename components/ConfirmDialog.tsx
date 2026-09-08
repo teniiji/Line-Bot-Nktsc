@@ -27,12 +27,12 @@ export default function ConfirmDialog({
       onClick={onCancel}
     >
       <div
-        className="bg-white rounded-lg shadow-lg p-5 max-w-sm w-full space-y-3"
+        className="bg-white rounded-lg shadow-lg p-5 max-w-lg w-full space-y-3"
         onClick={(e) => e.stopPropagation()}
       >
         <h3 className="font-semibold text-lg">{title}</h3>
         {description && (
-          <p className="text-sm text-slate-600">{description}</p>
+          <p className="text-sm text-slate-600 whitespace-pre-line">{description}</p>
         )}
         <div className="flex justify-end gap-2 pt-2">
           <button

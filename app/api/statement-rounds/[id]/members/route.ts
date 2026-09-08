@@ -7,6 +7,11 @@ import {
 } from "@/lib/excelUpload";
 import { parseMaiDaiSheet } from "@/lib/statementReconcile";
 import {
+  describeShrink,
+  needsShrinkConfirmation,
+  summarizeMemberListChange,
+} from "@/lib/memberListChange";
+import {
   applyDirectoryAccounts,
   recomputeRoundPayments,
   rematchRoundTransfers,
@@ -24,6 +29,11 @@ export const dynamic = "force-dynamic";
 // round forever. Transfers already read out of statements survive the
 // replacement and are re-matched against the new list, so correcting the
 // sheet never costs the reconciliation work already done.
+//
+// The one thing that replacement cannot undo is uploading the wrong file, so
+// a replacement that takes away most of the round comes back with 409 and the
+// numbers instead of doing it — see lib/memberListChange.ts. Sending the same
+// file again with confirm=yes goes through.
 export async function POST(
   request: NextRequest,
   { params }: { params: { id: string } }
@@ -68,6 +78,23 @@ export async function POST(
           "ไม่พบรายชื่อหักไม่ได้ในไฟล์นี้ — ตรวจว่าเป็นไฟล์ \"รวม_ไม่ได้\" ที่คอลัมน์ E เป็นยอดหักไม่ได้",
       },
       { status: 400 }
+    );
+  }
+
+  // Asked before anything is deleted, and only when the replacement would
+  // take away most of the round. The check reads the round's current list
+  // rather than trusting a count sent from the browser, so a stale page
+  // cannot wave it through.
+  const existing = await prisma.statementMember.findMany({
+    where: { roundId: round.id },
+    select: { memberNumber: true, unitName: true },
+  });
+  const change = summarizeMemberListChange(existing, parsed);
+  const confirmed = form.get("confirm") === "yes";
+  if (!confirmed && needsShrinkConfirmation(change)) {
+    return NextResponse.json(
+      { needsConfirm: true, change, error: describeShrink(change) },
+      { status: 409 }
     );
   }
 
@@ -119,6 +146,10 @@ export async function POST(
   });
   return NextResponse.json({
     imported,
+    // What this upload changed about the round's population, so the notice
+    // can say it plainly whether or not it had to stop and ask.
+    removed: change.removedCount,
+    removedUnits: change.removedUnits.length,
     // Members with no account number can never be matched to a transfer, so
     // staff need to know up front rather than wondering why they stay ❌.
     missingAccount,
