@@ -45,6 +45,27 @@ const Payer = ({ deposit }: { deposit: DailyDepositRow }) => (
   </span>
 );
 
+// The slip behind a transaction, or why there is no image to open. Shared by
+// every table that shows one, so "no slip" and "never had a slip" keep saying
+// two different things wherever they appear.
+const SlipLink = ({ slip }: { slip: DailySlipRow }) =>
+  slip.slipImageUrl ? (
+    <a
+      href={slip.slipImageUrl}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="text-slate-900 hover:underline"
+    >
+      ดูสลิป
+    </a>
+  ) : slip.statementLineId ? (
+    // Not a missing file: this one never had a slip, staff recorded it from
+    // the statement. Saying so stops it reading as an error.
+    <span className="text-xs text-slate-500">เจ้าหน้าที่บันทึกเอง</span>
+  ) : (
+    <span className="text-slate-400">—</span>
+  );
+
 // Why this pair was made, said plainly enough that a person can decide
 // whether to trust it. The five are genuinely different levels of evidence,
 // so they get five different labels rather than a tick.
@@ -384,7 +405,10 @@ export default function DailyReconcilePanel() {
           <Section
             title={`✅ ตรงกัน (${data.matched.length} รายการ)`}
             tone="text-green-800"
-            note="เงินเข้าและสลิปคู่กันได้ — ไม่ต้องทำอะไร"
+            note={
+              "เงินเข้าและสลิปคู่กันได้ — ไม่ต้องทำอะไร · " +
+              'กด "ดูสลิป" เพื่อตรวจคู่ที่ยังไม่แน่ใจได้ โดยเฉพาะแถวที่จับคู่จาก "ยอดตรงเท่านั้น"'
+            }
             empty={data.matched.length === 0}
           >
             <table className="w-full text-sm">
@@ -396,6 +420,7 @@ export default function DailyReconcilePanel() {
                   <th className="px-2 py-1.5 font-semibold">ช่องทาง</th>
                   <th className="px-2 py-1.5 font-semibold">สลิปแจ้งว่า</th>
                   <th className="px-2 py-1.5 font-semibold">จับคู่จาก</th>
+                  <th className="px-2 py-1.5 font-semibold">สลิป</th>
                 </tr>
               </thead>
               <tbody>
@@ -425,6 +450,9 @@ export default function DailyReconcilePanel() {
                           · คนละวัน
                         </span>
                       )}
+                    </td>
+                    <td className="px-2 py-1.5">
+                      <SlipLink slip={slip} />
                     </td>
                   </tr>
                 ))}
@@ -576,22 +604,7 @@ const SlipTable = ({ slips }: { slips: DailySlipRow[] }) => (
             {slip.senderAccount ?? <span className="text-slate-300">—</span>}
           </td>
           <td className="px-2 py-1.5">
-            {slip.slipImageUrl ? (
-              <a
-                href={slip.slipImageUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-slate-900 hover:underline"
-              >
-                ดูสลิป
-              </a>
-            ) : slip.statementLineId ? (
-              // Not a missing file: this one never had a slip, staff recorded
-              // it from the statement. Saying so stops it reading as an error.
-              <span className="text-xs text-slate-500">เจ้าหน้าที่บันทึกเอง</span>
-            ) : (
-              <span className="text-slate-400">—</span>
-            )}
+            <SlipLink slip={slip} />
           </td>
         </tr>
       ))}
