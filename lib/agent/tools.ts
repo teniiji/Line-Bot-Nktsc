@@ -67,20 +67,25 @@ export const tools: Anthropic.Tool[] = [
   {
     name: "submit_member_info",
     description:
-      "Call when the user provides their full name and cooperative member number — either proactively, or in answer to being asked for it. Never call this for any other reason.",
+      "Call when the user provides their full name and/or cooperative member number — either proactively, or in answer to being asked for it. Send whatever they actually stated, even if that is only one of the two: the system stores each piece as it arrives and tells you which is still outstanding. Members routinely give the number in one message and the name in the next. Never call this for any other reason.",
     input_schema: {
       type: "object",
       properties: {
         fullName: {
           type: "string",
-          description: "The member's full name (ชื่อ-นามสกุล), copied as stated.",
+          description:
+            "The member's full name (ชื่อ-นามสกุล), copied as stated. Omit the field entirely if they have not stated a name yet — never send a placeholder, and never repeat a name the system says it already holds.",
         },
         memberNumber: {
           type: "string",
-          description: "The member's cooperative member number (เลขสมาชิก), copied as stated.",
+          description:
+            "The member's cooperative member number (เลขสมาชิก), copied as stated. Omit the field entirely if they have not stated one yet — never send a placeholder, and never send their national ID (13 digits) in its place.",
         },
       },
-      required: ["fullName", "memberNumber"],
+      // Deliberately neither is required. Requiring both is what made the
+      // model fill the missing one with "<UNKNOWN>" rather than leave it out,
+      // and what made a member who answered one question per message get both
+      // answers thrown away and be asked for each of them twice.
     },
   },
   {

@@ -7,6 +7,7 @@
 // reason — neither one advances a transaction or a service request.
 import { prisma } from "../prisma";
 import { isPlaceholderText } from "../placeholderText";
+import { askForMissingIdentity, mergeIdentity, statedValue } from "../memberIdentity";
 import { matchesIdentity } from "../memberLookup";
 import { isFeatureEnabled, MEMBER_LOOKUP_ENABLED } from "../featureFlags";
 import {
@@ -30,12 +31,31 @@ export async function submitMemberInfo(
   input: SubmitMemberInfoInput,
   ctx: ToolContext
 ): Promise<string> {
-  const fullName = typeof input.fullName === "string" ? input.fullName.trim() : "";
-  const memberNumber =
-    typeof input.memberNumber === "string" ? input.memberNumber.trim() : "";
-  if (isPlaceholderText(fullName) || isPlaceholderText(memberNumber)) {
-    return "Error: fullName and memberNumber must be the member's actual name and number — never a placeholder like 'unknown' or '-'. If the user hasn't actually stated their real name and member number yet, ask them again, in Thai, instead of calling this tool.";
+  // Each piece is taken on its own. A member who gives their number in one
+  // message and their name in the next used to have both thrown away, and was
+  // asked for each of them twice — see lib/memberIdentity.ts for the
+  // conversation that showed it.
+  //
+  // A placeholder ("unknown", "-") still counts as not given, so it can never
+  // be stored as if it were a real name or number.
+  const givenName = statedValue(input.fullName);
+  const givenNumber = statedValue(input.memberNumber);
+
+  const savedIdentity = await prisma.lineUser.findUnique({
+    where: { id: ctx.lineUserId },
+    select: { fullName: true, memberNumber: true },
+  });
+  const merged = mergeIdentity(
+    { fullName: givenName, memberNumber: givenNumber },
+    { fullName: savedIdentity?.fullName ?? null, memberNumber: savedIdentity?.memberNumber ?? null }
+  );
+
+  if (merged.missing === "both") {
+    return askForMissingIdentity(merged);
   }
+
+  const fullName = merged.fullName ?? "";
+  const memberNumber = merged.memberNumber ?? "";
   // A message giving a name alongside a 13-digit all-numeric string is far
   // more likely to be a เลขประจำตัวประชาชน (national ID) than a cooperative
   // member number — real member numbers here run a handful of digits, never
@@ -45,12 +65,15 @@ export async function submitMemberInfo(
   // the model to recognize the reply as belonging to it (see
   // submit_lookup_info's description). Reject deterministically rather than
   // trust the model to keep telling the two flows apart.
-  if (/^\d{13}$/.test(memberNumber)) {
+  if (givenNumber !== null && /^\d{13}$/.test(givenNumber)) {
     return "Error: this looks like a 13-digit เลขประจำตัวประชาชน (national ID number), not a เลขสมาชิก (member number) — cooperative member numbers are much shorter. If the member was actually trying to look up their own member number, use submit_lookup_info instead (it needs their name, national ID, and phone). If they really do have a member number, ask them to confirm it — don't save this value as-is.";
   }
 
-  // Verify the claimed member number against the imported roster.
-  const roster = await prisma.memberRoster.findUnique({ where: { memberNumber } });
+  // Verify the claimed member number against the imported roster. Skipped
+  // while only the name is known — there is nothing yet to verify against.
+  const roster = memberNumber
+    ? await prisma.memberRoster.findUnique({ where: { memberNumber } })
+    : null;
 
   // Block impersonation: this member number is already bound to a
   // different LINE account in the roster. Do not save or proceed.
@@ -60,19 +83,45 @@ export async function submitMemberInfo(
 
   const verified = roster !== null;
 
+  // Written before the completeness check, so half an identity survives to the
+  // next message. Only fields we actually have are set — a piece not given
+  // this time must never blank one already saved, which would restart the
+  // very loop this is fixing.
+  const savedUser = await prisma.lineUser.upsert({
+    where: { id: ctx.lineUserId },
+    create: {
+      id: ctx.lineUserId,
+      // null, not "": both columns are nullable and "not known yet" is what
+      // this means. computeNextRequirement reads either as missing, but null
+      // is the one a person reading the row can understand.
+      fullName: merged.fullName,
+      memberNumber: merged.memberNumber,
+    },
+    update: {
+      ...(merged.fullName ? { fullName: merged.fullName } : {}),
+      ...(merged.memberNumber ? { memberNumber: merged.memberNumber } : {}),
+    },
+  });
+
+  // Half an identity is stored but cannot log anything yet, so the bot asks
+  // for exactly the piece still outstanding and says the other is already on
+  // record — never for both again.
+  if (merged.missing !== null) {
+    return askForMissingIdentity(merged);
+  }
+
   // Link this LINE account to the roster row the first time a known member
   // identifies, so their future messages auto-identify without asking.
+  //
+  // Deliberately below the completeness check: this is an identity binding,
+  // and a member number on its own is weaker evidence than a number given
+  // together with a matching name. Storing half an identity on LineUser is
+  // cheap to undo; binding the roster row on half of one is not.
   if (roster && !roster.lineUserId) {
     await prisma.memberRoster
       .update({ where: { memberNumber }, data: { lineUserId: ctx.lineUserId } })
       .catch(() => {});
   }
-
-  const savedUser = await prisma.lineUser.upsert({
-    where: { id: ctx.lineUserId },
-    create: { id: ctx.lineUserId, fullName, memberNumber },
-    update: { fullName, memberNumber },
-  });
 
   // Use the roster's canonical name when verified, so a small typo in what
   // the user typed doesn't end up on the logged record. phone carries over

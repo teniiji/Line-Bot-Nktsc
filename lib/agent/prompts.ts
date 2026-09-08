@@ -49,8 +49,31 @@ export function buildSystemPrompt(
   if (pending) {
     const next = computeNextRequirement(lineUser, pending, disabledRequirements);
     const amountNote = pending.amount ? formatAmount(pending.amount) : "ยังไม่ทราบยอด";
+    // Said explicitly because the model has no conversation history: without
+    // it, a plain-text message arriving while the bot waits for something else
+    // looks like a transaction with no slip, and it asks for one it is already
+    // holding. A member who has sent a slip and is then asked "ลืมไฟล์สลิป
+    // แล้วหรือคะ" reasonably answers "สลิปก็ส่งให้แล้ว ไม่เข้าใจคือว่าไรคะ".
+    // Named precisely, because half an identity is now kept: asking again for
+    // the piece already on record is what broke the conversation this fixes.
+    const identityNeeded =
+      !lineUser?.fullName && !lineUser?.memberNumber
+        ? "ข้อมูลสมาชิก (ชื่อ-นามสกุล และเลขสมาชิก)"
+        : !lineUser?.fullName
+          ? "**ชื่อ-นามสกุล** ของสมาชิก"
+          : "**เลขสมาชิก** ของสมาชิก";
+    const identityHeldNote =
+      lineUser?.memberNumber && !lineUser?.fullName
+        ? `**ระบบมีเลขสมาชิก ${lineUser.memberNumber} เก็บไว้แล้ว ห้ามถามเลขสมาชิกซ้ำ** `
+        : lineUser?.fullName && !lineUser?.memberNumber
+          ? `**ระบบมีชื่อ "${lineUser.fullName}" เก็บไว้แล้ว ห้ามถามชื่อซ้ำ** `
+          : "";
+
+    const slipHeldNote = pending.hasSlip
+      ? " **ระบบมีรูปสลิปของรายการนี้เก็บไว้แล้วเรียบร้อย ห้ามถามหาสลิปซ้ำ ห้ามบอกว่ายังไม่ได้รับสลิป หรือถามว่าลืมแนบสลิปหรือเปล่าเด็ดขาด**"
+      : "";
     if (next === "member_info") {
-      flowNote = `\n\nหมายเหตุระบบ (สำคัญ): มีธุรกรรมค้างอยู่ (${pending.category ?? "ยังไม่ทราบหมวดหมู่"}, ${amountNote}) กำลังรอข้อมูลสมาชิก (ชื่อ-นามสกุล และเลขสมาชิก) — นี่คือครั้งแรกที่ผู้ใช้คนนี้ทำธุรกรรม ถ้าข้อความปัจจุบันของผู้ใช้เป็นข้อความธรรมดาที่มีชื่อ-นามสกุลและเลขสมาชิกอยู่แล้ว ให้เรียก submit_member_info ทันทีด้วยข้อมูลนั้น ถ้าเป็นข้อความธรรมดาที่ไม่มีชื่อ-นามสกุลและเลขสมาชิก ให้ถามชื่อ-นามสกุลและเลขสมาชิกอีกครั้งสั้นๆ โดยไม่ต้องเรียก tool ใดๆ **ถ้าข้อความนี้เป็นรูปภาพหรือไฟล์ PDF (สลิปใหม่) ให้ตรวจสอบตามกฎขั้นที่ 1-1.5 ด้านล่างตามปกติแล้วเรียก report_transaction เพื่อบันทึกข้อมูลสลิปไว้ก่อน (หรือ decline_unreadable_image ถ้าสลิปไม่ถูกต้องจริงๆ) — ระบบจะเก็บสลิปนี้ไว้และถามชื่อ-นามสกุล/เลขสมาชิกในข้อความถัดไปเอง ห้ามปฏิเสธสลิปที่ถูกต้องเพียงเพราะยังไม่มีข้อมูลสมาชิก**`;
+      flowNote = `\n\nหมายเหตุระบบ (สำคัญ): มีธุรกรรมค้างอยู่ (${pending.category ?? "ยังไม่ทราบหมวดหมู่"}, ${amountNote}) กำลังรอ${identityNeeded} ${identityHeldNote}**ถ้าข้อความปัจจุบันของผู้ใช้มีข้อมูลที่ยังขาดอยู่ ให้เรียก submit_member_info ทันที — ส่งเท่าที่มีก็ได้ ไม่ต้องรอให้ครบทั้งสองอย่าง** (เช่น ผู้ใช้บอกมาแค่เลขสมาชิก ก็เรียกด้วย memberNumber อย่างเดียว ระบบจะเก็บไว้แล้วบอกกลับมาเองว่ายังขาดอะไร) **ห้ามถามซ้ำสิ่งที่ระบบมีอยู่แล้ว** ถ้าข้อความนี้ไม่มีข้อมูลที่ขาดเลย ให้ถามเฉพาะส่วนที่ขาดสั้นๆ โดยไม่ต้องเรียก tool ใดๆ **ถ้าข้อความนี้เป็นรูปภาพหรือไฟล์ PDF (สลิปใหม่) ให้ตรวจสอบตามกฎขั้นที่ 1-1.5 ด้านล่างตามปกติแล้วเรียก report_transaction เพื่อบันทึกข้อมูลสลิปไว้ก่อน (หรือ decline_unreadable_image ถ้าสลิปไม่ถูกต้องจริงๆ) — ระบบจะเก็บสลิปนี้ไว้และถามชื่อ-นามสกุล/เลขสมาชิกในข้อความถัดไปเอง ห้ามปฏิเสธสลิปที่ถูกต้องเพียงเพราะยังไม่มีข้อมูลสมาชิก**${slipHeldNote}`;
     } else if (next === "slip") {
       flowNote = `\n\nหมายเหตุระบบ (สำคัญ): มีธุรกรรมค้างอยู่ (${pending.category ?? "ยังไม่ทราบหมวดหมู่"}, ${amountNote}) ข้อมูลสมาชิกครบแล้ว กำลังรอรูปสลิปการโอนเงิน ถ้าข้อความนี้เป็นรูปภาพหรือไฟล์ PDF ให้ตรวจสอบตามกฎในขั้นที่ 1-4 ด้านล่างแล้วเรียก report_transaction (พร้อมส่ง category เดิมคือ "${pending.category}" ซ้ำไปด้วย) หรือ decline_unreadable_image ถ้าไม่ใช่สลิปที่ถูกต้อง ถ้าข้อความนี้ไม่ใช่รูปภาพหรือไฟล์ PDF ให้ขอให้ผู้ใช้ส่งรูปหรือไฟล์ PDF ของสลิปการโอนเงินอีกครั้งสั้นๆ โดยไม่ต้องเรียก tool ใดๆ`;
     } else if (next === "category") {
