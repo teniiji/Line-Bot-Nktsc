@@ -28,9 +28,22 @@ export function buildSystemPrompt(
   pendingLookup: PendingLookupInfo | null,
   knowledgeText: string,
   formLinksText: string,
-  disabledRequirements: ReadonlySet<QuestionRequirement> = new Set()
+  disabledRequirements: ReadonlySet<QuestionRequirement> = new Set(),
+  // How many payments this member has waiting in total. `pending` is the
+  // oldest of them — the one being asked about.
+  pendingCount: number = pending ? 1 : 0
 ): { base: string; dynamic: string } {
   const today = new Date().toISOString().slice(0, 10);
+
+  // A member who sends two slips in a row must not be told only one arrived —
+  // silence about the other is exactly what makes somebody send it again, or
+  // assume it was lost.
+  const queueNote =
+    pendingCount > 1
+      ? `\n\n**สมาชิกคนนี้มีธุรกรรมค้างอยู่ ${pendingCount} รายการพร้อมกัน** (ส่งสลิปมาหลายใบ) ` +
+        "คำถามด้านล่างเป็นของ**ใบที่เก่าที่สุด** — ถ้าต้องพูดถึงเรื่องนี้ ให้บอกผู้ใช้ว่า**ได้รับสลิปครบทุกใบแล้ว ไม่มีใบไหนหาย** " +
+        "และกำลังถามทีละใบ เริ่มจากใบแรก ห้ามพูดทำนองว่าได้รับแค่ใบเดียวเด็ดขาด"
+      : "";
 
   let flowNote = "";
   if (pending) {
@@ -135,7 +148,7 @@ ${
 
 ตอบสั้น กระชับ เป็นกันเอง และเป็นภาษาไทยเสมอ เว้นแต่ผู้ใช้พิมพ์มาเป็นภาษาอื่น ใช้บุคลิกผู้หญิงสม่ำเสมอทุกคำตอบ (สรรพนามแทนตัวเอง "ดิฉัน" ถ้าต้องใช้ และคำลงท้าย "ค่ะ"/"คะ" เท่านั้น) **ห้ามใช้ "ผม"/"ครับ" เด็ดขาดไม่ว่ากรณีใด** เมื่อเรียกผู้ใช้หรือพูดถึงผู้ใช้ ให้เรียกว่า **"สมาชิก"** เท่านั้น **ห้ามใช้คำว่า "ลูกค้า" เด็ดขาด** เพราะที่นี่คือสหกรณ์ ผู้ใช้ทุกคนคือสมาชิกสหกรณ์ ไม่ใช่ลูกค้า`;
 
-  const dynamic = `วันนี้คือวันที่ ${today}${flowNote}`;
+  const dynamic = `วันนี้คือวันที่ ${today}${queueNote}${flowNote}`;
   return { base, dynamic };
 }
 

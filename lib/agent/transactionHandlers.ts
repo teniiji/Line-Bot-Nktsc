@@ -15,7 +15,9 @@ import { namesLikelyMatch } from "../nameMatch";
 import { normalizeAccountPattern, parseSlipTime } from "../slipDetails";
 import { classifyRecipient } from "../recipientCheck";
 import { isFeatureEnabled, TRANSACTIONS_ENABLED } from "../featureFlags";
+import { startsNewPayment } from "../pendingSlip";
 import {
+  loadAllPending,
   loadLineUser,
   loadPending,
   computeNextRequirement,
@@ -79,7 +81,9 @@ export async function finalizeTransaction(
         slipSenderAccount: pending.slipSenderAccount,
       },
     });
-    await prisma.pendingTransaction.delete({ where: { lineUserId } }).catch(() => {});
+    // By id: this member may have another slip still queued behind this one,
+    // and deleting by lineUserId would throw it away unlogged.
+    await prisma.pendingTransaction.delete({ where: { id: pending.id } }).catch(() => {});
     await notifyTransactionForward(lineUserId, expense, lineUser);
 
     return `Logged: ${formatAmount(expense.amount)} (${expense.category}) on ${expense.date
@@ -92,7 +96,7 @@ export async function finalizeTransaction(
       ((err.meta?.target as string[] | undefined)?.includes("referenceNumber") ||
         (err.meta?.target as string[] | undefined)?.includes("slipImageHash"))
     ) {
-      await prisma.pendingTransaction.delete({ where: { lineUserId } }).catch(() => {});
+      await prisma.pendingTransaction.delete({ where: { id: pending.id } }).catch(() => {});
       return "Error: this exact transaction (same slip image or same reference number) was already recorded — this looks like a duplicate slip. Tell the user it was already logged and do not log it again.";
     }
     throw err;
@@ -245,21 +249,36 @@ export async function reportTransaction(
     }
   }
 
+  // The row the bot is currently asking about — the oldest still alive, since
+  // a member may have more than one payment waiting.
+  const queued = await loadAllPending(ctx.lineUserId);
+  const active = queued[0] ?? null;
+
+  // A different slip arriving while one is still unanswered is a second
+  // payment, not a correction to the first. It used to overwrite it, and the
+  // first payment vanished with no trace anywhere but the LINE chat.
+  const isNewPayment = startsNewPayment({
+    activeHasSlip: active?.hasSlip ?? false,
+    activeSlipHash: active?.slipImageHash ?? null,
+    incomingHasSlip: ctx.hasSlipImage,
+    incomingSlipHash: ctx.slipImageHash,
+  });
+
   // If an amount was already on record for this pending transaction (e.g.
   // stated in an earlier text message) and this call reports a different
   // one (typically the amount actually read off a slip), don't silently
   // pick one — the newer value wins (the slip is verifiable evidence) but
   // the discrepancy is surfaced to the user rather than logged unnoticed.
-  const existingPending = await prisma.pendingTransaction.findUnique({
-    where: { lineUserId: ctx.lineUserId },
-  });
+  // Only for the same payment: two slips of different amounts are not a
+  // discrepancy, they are two payments.
   const amountMismatch =
-    existingPending?.amount != null &&
+    !isNewPayment &&
+    active?.amount != null &&
     parsedAmount !== null &&
-    Math.abs(existingPending.amount - parsedAmount) > 0.005;
+    Math.abs(active.amount - parsedAmount) > 0.005;
   const mismatchNote = amountMismatch
     ? ` Note: the amount previously on record (${formatAmount(
-        existingPending!.amount!
+        active!.amount!
       )}) doesn't match the amount just reported (${formatAmount(
         parsedAmount!
       )}) — the new amount is now used. Point out this discrepancy to the user in your reply so they can correct it if it's wrong.`
@@ -267,58 +286,76 @@ export async function reportTransaction(
 
   const slipImageUrl = ctx.slipImageUrl;
 
-  const pending = await prisma.pendingTransaction.upsert({
-    where: { lineUserId: ctx.lineUserId },
-    create: {
-      lineUserId: ctx.lineUserId,
-      category: parsedCategory,
-      amount: parsedAmount,
-      description: parsedDescription,
-      date: parsedDate,
-      hasSlip: ctx.hasSlipImage,
-      slipImageHash: ctx.slipImageHash,
-      slipImageUrl,
-      slipIsPdf: ctx.slipIsPdf,
-      referenceNumber: refNumber,
-      slipSenderName: parsedSenderName,
-      slipTransferTime: parsedTransferTime,
-      slipSenderAccount: parsedSenderAccount,
-    },
-    update: {
-      // Only overwrite fields we actually have new info for, so a slip
-      // arriving after the amount was already known from text (or vice
-      // versa) doesn't clobber it with null.
-      ...(parsedCategory !== null ? { category: parsedCategory } : {}),
-      ...(parsedAmount !== null ? { amount: parsedAmount } : {}),
-      ...(parsedDescription !== null ? { description: parsedDescription } : {}),
-      date: parsedDate,
-      // Only ever set to true, never back to false, once a slip has been
-      // seen for this pending transaction.
-      ...(ctx.hasSlipImage ? { hasSlip: true, slipIsPdf: ctx.slipIsPdf } : {}),
-      ...(ctx.slipImageHash ? { slipImageHash: ctx.slipImageHash } : {}),
-      ...(slipImageUrl ? { slipImageUrl } : {}),
-      ...(refNumber ? { referenceNumber: refNumber } : {}),
-      // A new slip's sender name replaces any earlier one and resets
-      // confirmation — a different slip image needs its own check.
-      ...(parsedSenderName
-        ? { slipSenderName: parsedSenderName, senderNameConfirmed: false }
-        : {}),
-      ...(parsedTransferTime ? { slipTransferTime: parsedTransferTime } : {}),
-      ...(parsedSenderAccount ? { slipSenderAccount: parsedSenderAccount } : {}),
-      createdAt: new Date(),
-    },
-  });
+  const createData = {
+    lineUserId: ctx.lineUserId,
+    category: parsedCategory,
+    amount: parsedAmount,
+    description: parsedDescription,
+    date: parsedDate,
+    hasSlip: ctx.hasSlipImage,
+    slipImageHash: ctx.slipImageHash,
+    slipImageUrl,
+    slipIsPdf: ctx.slipIsPdf,
+    referenceNumber: refNumber,
+    slipSenderName: parsedSenderName,
+    slipTransferTime: parsedTransferTime,
+    slipSenderAccount: parsedSenderAccount,
+  };
+
+  const pending =
+    active && !isNewPayment
+      ? await prisma.pendingTransaction.update({
+          where: { id: active.id },
+          data: {
+            // Only overwrite fields we actually have new info for, so a slip
+            // arriving after the amount was already known from text (or vice
+            // versa) doesn't clobber it with null.
+            ...(parsedCategory !== null ? { category: parsedCategory } : {}),
+            ...(parsedAmount !== null ? { amount: parsedAmount } : {}),
+            ...(parsedDescription !== null ? { description: parsedDescription } : {}),
+            date: parsedDate,
+            // Only ever set to true, never back to false, once a slip has been
+            // seen for this pending transaction.
+            ...(ctx.hasSlipImage ? { hasSlip: true, slipIsPdf: ctx.slipIsPdf } : {}),
+            ...(ctx.slipImageHash ? { slipImageHash: ctx.slipImageHash } : {}),
+            ...(slipImageUrl ? { slipImageUrl } : {}),
+            ...(refNumber ? { referenceNumber: refNumber } : {}),
+            // A new slip's sender name replaces any earlier one and resets
+            // confirmation — a different slip image needs its own check.
+            ...(parsedSenderName
+              ? { slipSenderName: parsedSenderName, senderNameConfirmed: false }
+              : {}),
+            ...(parsedTransferTime ? { slipTransferTime: parsedTransferTime } : {}),
+            ...(parsedSenderAccount ? { slipSenderAccount: parsedSenderAccount } : {}),
+            // Not createdAt: that is this payment's place in the queue, and
+            // rewriting it would send the payment being answered to the back.
+            lastActivityAt: new Date(),
+          },
+        })
+      : await prisma.pendingTransaction.create({ data: createData });
+
+  // Said out loud so the member is not left wondering whether the earlier
+  // slip was seen — silence there is what makes somebody send it a third time.
+  const queueNote =
+    isNewPayment && active
+      ? ` Note: this member now has ${queued.length + 1} separate payments waiting, and this is the newest. ` +
+        "Tell them, in Thai, that BOTH slips were received and neither was lost, and that the questions still being asked are about the earlier one."
+      : "";
 
   const [lineUser, disabled] = await Promise.all([
     loadLineUser(ctx.lineUserId),
     loadDisabledRequirements(),
   ]);
-  const next = computeNextRequirement(lineUser, pending, disabled);
+  // Asked about the oldest waiting payment, not necessarily the one that just
+  // arrived: the member has already been asked about that one, so switching
+  // topics mid-answer would strand it.
+  const asking = isNewPayment && active ? active : pending;
+  const next = computeNextRequirement(lineUser, asking, disabled);
   if (next === null) {
-    const result = await finalizeTransaction(ctx.lineUserId, pending, lineUser as LineUserInfo);
-    return result + mismatchNote;
+    const result = await finalizeTransaction(ctx.lineUserId, asking, lineUser as LineUserInfo);
+    return result + mismatchNote + queueNote;
   }
-  return requirementMessage(next) + mismatchNote;
+  return requirementMessage(next) + mismatchNote + queueNote;
 }
 
 
@@ -347,8 +384,8 @@ export async function submitLoanType(
   }
 
   const updated = await prisma.pendingTransaction.update({
-    where: { lineUserId: ctx.lineUserId },
-    data: { loanType, createdAt: new Date() },
+    where: { id: pending.id },
+    data: { loanType, lastActivityAt: new Date() },
   });
 
   const [lineUser, disabled] = await Promise.all([
@@ -384,8 +421,8 @@ export async function submitDepositAccount(
   }
 
   const updated = await prisma.pendingTransaction.update({
-    where: { lineUserId: ctx.lineUserId },
-    data: { depositAccountNumber: accountNumber, createdAt: new Date() },
+    where: { id: pending.id },
+    data: { depositAccountNumber: accountNumber, lastActivityAt: new Date() },
   });
 
   const [lineUser, disabled] = await Promise.all([
@@ -418,13 +455,13 @@ export async function confirmTransactionSender(
     // The user said this slip isn't genuinely theirs — don't log it, and
     // don't leave a stale pending transaction around for the next message
     // to accidentally attach to.
-    await prisma.pendingTransaction.delete({ where: { lineUserId: ctx.lineUserId } }).catch(() => {});
+    await prisma.pendingTransaction.delete({ where: { id: pending.id } }).catch(() => {});
     return "The user said this slip is not genuinely their own transaction. Do not log it. Apologize, in Thai, and ask them to double-check and send the correct slip, or contact the cooperative office if they believe this is a mistake.";
   }
 
   const updated = await prisma.pendingTransaction.update({
-    where: { lineUserId: ctx.lineUserId },
-    data: { senderNameConfirmed: true, createdAt: new Date() },
+    where: { id: pending.id },
+    data: { senderNameConfirmed: true, lastActivityAt: new Date() },
   });
 
   const [lineUser, disabled] = await Promise.all([

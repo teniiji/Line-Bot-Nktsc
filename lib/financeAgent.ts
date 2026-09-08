@@ -12,7 +12,7 @@ import { tools } from "./agent/tools";
 import { buildSystemPrompt } from "./agent/prompts";
 import {
   loadLineUser,
-  loadPending,
+  loadAllPending,
   loadPendingServiceRequest,
   loadPendingLookup,
   loadDisabledRequirements,
@@ -56,10 +56,10 @@ export async function runFinanceAgent(
   slipImageHash: string | null = null,
   slipIsPdf: boolean = false
 ): Promise<FinanceAgentReply> {
-  const [lineUser, pending, pendingService, pendingLookup, knowledgeText, formLinksData, disabledRequirements] =
+  const [lineUser, queuedPending, pendingService, pendingLookup, knowledgeText, formLinksData, disabledRequirements] =
     await Promise.all([
       loadLineUser(lineUserId),
-      loadPending(lineUserId),
+      loadAllPending(lineUserId),
       loadPendingServiceRequest(lineUserId),
       loadPendingLookup(lineUserId),
       getKnowledgeText(),
@@ -79,6 +79,10 @@ export async function runFinanceAgent(
     return resolvedSlipImageUrl;
   }
 
+  // The oldest waiting payment is the one the bot is asking about; the count
+  // tells the model not to answer as though only one slip had arrived.
+  const pending = queuedPending[0] ?? null;
+
   const { base, dynamic } = buildSystemPrompt(
     lineUser,
     pending,
@@ -86,7 +90,8 @@ export async function runFinanceAgent(
     pendingLookup,
     knowledgeText,
     formLinksData.text,
-    disabledRequirements
+    disabledRequirements,
+    queuedPending.length
   );
   // A cache breakpoint on the static base block caches everything before it
   // in the request (all tool definitions + this base system prompt), since

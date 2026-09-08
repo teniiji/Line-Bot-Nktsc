@@ -10,7 +10,7 @@ import { isPlaceholderText } from "../placeholderText";
 import { matchesIdentity } from "../memberLookup";
 import { isFeatureEnabled, MEMBER_LOOKUP_ENABLED } from "../featureFlags";
 import {
-  loadPending,
+  loadAllPending,
   loadPendingServiceRequest,
   computeNextRequirement,
   computeServiceRequirement,
@@ -19,7 +19,7 @@ import {
 } from "./state";
 import { forwardServiceRequest } from "./forwarding";
 import { finalizeTransaction, requirementMessage } from "./transactionHandlers";
-import type { LineUserInfo, ToolContext } from "./types";
+import type { LineUserInfo, Requirement, ToolContext } from "./types";
 export type SubmitMemberInfoInput = {
   fullName?: unknown;
   memberNumber?: unknown;
@@ -87,15 +87,40 @@ export async function submitMemberInfo(
     ? ""
     : " (Note to you: this member number is NOT in the cooperative roster, so it could not be verified — proceed, but mention gently in Thai that staff will verify their membership.)";
 
-  const pending = await loadPending(ctx.lineUserId);
-  if (pending) {
+  // Every payment waiting, not just the first. Identity is the requirement
+  // that blocks all of them at once — a member who sent two slips before
+  // saying who they are has both waiting on this one answer, and logging only
+  // the oldest would leave the other stranded until it expired.
+  const queued = await loadAllPending(ctx.lineUserId);
+  if (queued.length > 0) {
     const disabled = await loadDisabledRequirements();
-    const next = computeNextRequirement(identity, pending, disabled);
-    if (next === null) {
-      const result = await finalizeTransaction(ctx.lineUserId, pending, identity);
-      return result + unverifiedNote;
+
+    const logged: string[] = [];
+    let stillWaiting: Requirement = null;
+
+    for (const pending of queued) {
+      const next = computeNextRequirement(identity, pending, disabled);
+      if (next === null) {
+        logged.push(await finalizeTransaction(ctx.lineUserId, pending, identity));
+        continue;
+      }
+      // The first payment that still needs something becomes the question the
+      // bot asks next; the rest keep waiting behind it. Oldest first, because
+      // that is the one the member has been answering about.
+      if (stillWaiting === null) stillWaiting = next;
     }
-    return requirementMessage(next) + unverifiedNote;
+
+    const loggedNote =
+      logged.length > 1
+        ? `Logged ${logged.length} separate transactions for this member: ` +
+          logged.join(" | ") +
+          " Tell them, in Thai, that ALL of the slips they sent were recorded, and say each amount back to them so they can check none is missing."
+        : logged.join(" ");
+
+    if (stillWaiting === null) return loggedNote + unverifiedNote;
+    return (
+      (loggedNote ? loggedNote + " " : "") + requirementMessage(stillWaiting) + unverifiedNote
+    );
   }
 
   const pendingService = await loadPendingServiceRequest(ctx.lineUserId);
