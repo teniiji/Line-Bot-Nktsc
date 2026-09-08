@@ -24,12 +24,19 @@
 // Usage: npx tsx scripts/find-unlogged-payments.ts <from YYYY-MM-DD> <to YYYY-MM-DD>
 //   e.g. npx tsx scripts/find-unlogged-payments.ts 2026-08-01 2026-09-08
 
-import { PrismaClient } from "@prisma/client";
 import { DepositLine, SlipRecord, reconcileDay } from "../lib/dailyReconcile";
 import { OTHER_CHANNEL } from "../lib/statementLines";
 import { formatAmount } from "../lib/format";
+import { scriptPrisma } from "./prismaClient";
 
-const prisma = new PrismaClient();
+const prisma = scriptPrisma(
+  "statementLine",
+  "expense",
+  "memberBankAccount",
+  "statementMember",
+  "memberRoster",
+  "pendingTransaction"
+);
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 const isoDay = (date: Date) => date.toISOString().slice(0, 10);

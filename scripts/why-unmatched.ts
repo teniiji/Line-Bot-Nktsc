@@ -12,14 +12,14 @@
 // Usage: npx tsx scripts/why-unmatched.ts <YYYY-MM-DD> [amount]
 //   e.g. npx tsx scripts/why-unmatched.ts 2026-09-08 4200
 
-import { PrismaClient } from "@prisma/client";
 import { DepositLine, SlipRecord, reconcileDay } from "../lib/dailyReconcile";
 import { CHANNEL_LABELS, OTHER_CHANNEL } from "../lib/statementLines";
 import { compareSlipAccount, normalizeAccountPattern, slipTimeMinutes } from "../lib/slipDetails";
 import { formatAmount } from "../lib/format";
 import { differentMembers, memberNumberKey, sameMember } from "../lib/memberNumber";
+import { scriptPrisma } from "./prismaClient";
 
-const prisma = new PrismaClient();
+const prisma = scriptPrisma("statementLine", "expense", "memberBankAccount", "statementMember");
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 const clock = (date: Date | null) => (date ? date.toISOString().slice(11, 16) : "--:--");
