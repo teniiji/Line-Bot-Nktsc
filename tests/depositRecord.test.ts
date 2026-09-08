@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   ALREADY_RECORDED_ERROR,
+  NO_NAME_TO_VERIFY_ERROR,
   accountCaveat,
   canBindAccount,
   describeDepositRecord,
@@ -117,5 +118,21 @@ describe("ALREADY_RECORDED_ERROR", () => {
     // Two people working the same eight rows is the ordinary case, not a bug.
     expect(ALREADY_RECORDED_ERROR).toContain("ถูกบันทึกเป็นรายการไปแล้ว");
     expect(ALREADY_RECORDED_ERROR).toContain("ลบ");
+  });
+});
+
+describe("NO_NAME_TO_VERIFY_ERROR", () => {
+  it("names both ways out, because they are different problems", () => {
+    // A ฿1,800,000 deposit sat in the review queue unverifiable: staff had
+    // recorded it from a bank line with a member number the roster did not
+    // have, so the transaction carried no name and confirming could not
+    // create a roster row. The old message said only that there was nothing
+    // to verify, which tells a person nothing about what to do.
+    expect(NO_NAME_TO_VERIFY_ERROR).toContain("ไม่มีในทะเบียนสมาชิก");
+    // Wrong number → fix the transaction.
+    expect(NO_NAME_TO_VERIFY_ERROR).toContain("พิมพ์ผิด");
+    // Right number, missing member → supply the name and it gets registered.
+    expect(NO_NAME_TO_VERIFY_ERROR).toContain("ชื่อ-นามสกุล");
+    expect(NO_NAME_TO_VERIFY_ERROR).toContain("แก้ไข");
   });
 });
