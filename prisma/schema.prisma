@@ -4,7 +4,31 @@ generator client {
 
 datasource db {
   provider = "postgresql"
+  // What the app queries through: Neon's connection pooler. Serverless
+  // functions open a connection per invocation, which is exactly what a
+  // pooler is for.
   url      = env("DATABASE_URL")
+  // What migrations go through: the same database, connected to directly.
+  //
+  // prisma migrate deploy takes a session-level advisory lock
+  // (pg_advisory_lock) so two migrations cannot run at once. A transaction
+  // pooler hands each statement whichever backend is free, so the session
+  // that took the lock is not the session that later releases it — the lock
+  // is stranded and the next deploy waits out its ten seconds and fails:
+  //
+  //   Timed out trying to acquire a postgres advisory lock
+  //   (SELECT pg_advisory_lock(72707369)). Elapsed: 10000ms
+  //
+  // which is what broke the production deploy of c3f77e7 on 8 Sep, three
+  // times, while the identical tree had built fine as a preview minutes
+  // earlier. Neon suspending an idle database eats into the same ten
+  // seconds, so a cold start makes it likelier still.
+  //
+  // DIRECT_URL is the same connection string with "-pooler" removed from the
+  // host (Neon calls it the direct connection). It must be set wherever
+  // migrations run — every Vercel environment, and .env locally — because
+  // the Vercel build command is "prisma migrate deploy && next build".
+  directUrl = env("DIRECT_URL")
 }
 
 model Expense {
