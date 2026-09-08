@@ -143,20 +143,30 @@ describe("parseMaiDaiSheet", () => {
     expect(member.note).toBeNull();
   });
 
+  it("stores the member number the one way the rest of the system uses", () => {
+    // This sheet is where "29262" came from while the member's own slip said
+    // "029262", and the two spellings made the daily reconciliation read one
+    // member as two. Canonical from the moment it is read.
+    const padded: unknown[][] = [
+      ["029262", "นางสาวภรณ์ทิพย์ เข็มศิริ", 4200, 0, 4200, "1", "ร.ร. ก", null, null, "1"],
+    ];
+    expect(parseMaiDaiSheet(padded).rows[0].memberNumber).toBe("29262");
+  });
+
   it("separates units awaiting a result from members who paid in full", () => {
     const mixed: unknown[][] = [
       // Reported and collected everything: not outstanding, not awaited.
-      ["001", "หักได้ครบ", 5000, 5000, 0, "1", "ร.ร. ก", null, null, "1"],
+      ["29001", "หักได้ครบ", 5000, 5000, 0, "1", "ร.ร. ก", null, null, "1"],
       // Reported, still short.
-      ["002", "ยังค้าง", 5000, 2000, 3000, "1", "ร.ร. ก", null, null, "1"],
+      ["29002", "ยังค้าง", 5000, 2000, 3000, "1", "ร.ร. ก", null, null, "1"],
       // No result at all — the unit has not reported back.
-      ["003", "รอผล", 4000, null, null, "2", "ร.ร.จ่ายตรง ข", null, null, "2"],
-      ["004", "รอผล", 6000, null, null, "2", "ร.ร.จ่ายตรง ข", null, null, "2"],
-      ["005", "รอผล", 1000, null, null, "3", "บำนาญ ค", null, null, "3"],
+      ["29003", "รอผล", 4000, null, null, "2", "ร.ร.จ่ายตรง ข", null, null, "2"],
+      ["29004", "รอผล", 6000, null, null, "2", "ร.ร.จ่ายตรง ข", null, null, "2"],
+      ["29005", "รอผล", 1000, null, null, "3", "บำนาญ ค", null, null, "3"],
     ];
     const sheet = parseMaiDaiSheet(mixed);
 
-    expect(sheet.rows.map((r) => r.memberNumber)).toEqual(["002"]);
+    expect(sheet.rows.map((r) => r.memberNumber)).toEqual(["29002"]);
     expect(sheet.awaitingMembers).toBe(3);
     expect(sheet.awaitingAmount).toBe(11000);
     // Counted by หน่วยคุม (H-code 2 and 3), matching how the cooperative’s own

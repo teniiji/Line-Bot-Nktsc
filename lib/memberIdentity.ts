@@ -21,6 +21,7 @@
 // direction.
 
 import { isPlaceholderText } from "./placeholderText";
+import { memberNumberKey } from "./memberNumber";
 
 export interface IdentityPieces {
   fullName: string | null;
@@ -81,6 +82,18 @@ export function askForMissingIdentity(merge: IdentityMerge): string {
     "Ask the user, in Thai, ONLY for their เลขสมาชิก — their name is already on record, so do not ask for it again. " +
     "Call submit_member_info again with just the member number when they give it."
   );
+}
+
+// A member number a person stated, in the one form it is stored in.
+//
+// Wraps statedValue rather than replacing it, because the name beside it must
+// not be touched — only numbers have a canonical form. Both the bot and the
+// dashboard call this instead of statedValue for the number, so a member who
+// types "029262" and a หักไม่ได้ sheet that says "29262" end up as one member
+// in the database rather than two. See lib/memberNumber.ts for why leading
+// zeros and nothing else.
+export function statedMemberNumber(value: unknown): string | null {
+  return memberNumberKey(statedValue(value));
 }
 
 // Reasons a member number must not be stored, wherever it was typed. The bot

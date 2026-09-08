@@ -10,6 +10,7 @@ import { isPlaceholderText } from "../placeholderText";
 import {
   askForMissingIdentity,
   memberNumberProblem,
+  statedMemberNumber,
   mergeIdentity,
   statedValue,
 } from "../memberIdentity";
@@ -44,7 +45,7 @@ export async function submitMemberInfo(
   // A placeholder ("unknown", "-") still counts as not given, so it can never
   // be stored as if it were a real name or number.
   const givenName = statedValue(input.fullName);
-  const givenNumber = statedValue(input.memberNumber);
+  const givenNumber = statedMemberNumber(input.memberNumber);
 
   const savedIdentity = await prisma.lineUser.findUnique({
     where: { id: ctx.lineUserId },

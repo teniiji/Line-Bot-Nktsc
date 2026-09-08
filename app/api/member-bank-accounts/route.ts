@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { normalizeAccountNumber } from "@/lib/statementReconcile";
+import { memberNumberKey } from "@/lib/memberNumber";
 import { rematchRoundsForAccount } from "@/lib/statementRecompute";
 
 export const dynamic = "force-dynamic";
@@ -62,7 +63,7 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   const body = await request.json();
   const accountNumber = normalizeAccountNumber(body.accountNumber);
-  const memberNumber = String(body.memberNumber ?? "").trim();
+  const memberNumber = memberNumberKey(String(body.memberNumber ?? "")) ?? "";
   const note = String(body.note ?? "").trim() || null;
 
   if (!accountNumber) {

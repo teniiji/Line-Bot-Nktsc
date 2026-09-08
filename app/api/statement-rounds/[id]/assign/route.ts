@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { normalizeAccountNumber } from "@/lib/statementReconcile";
+import { memberNumberKey } from "@/lib/memberNumber";
 import {
   applyDirectoryAccounts,
   recomputeRoundPayments,
@@ -27,7 +28,7 @@ export async function POST(
 
   const body = await request.json();
   const accountNumber = normalizeAccountNumber(body.accountNumber);
-  const memberNumber = String(body.memberNumber ?? "").trim();
+  const memberNumber = memberNumberKey(String(body.memberNumber ?? "")) ?? "";
 
   if (!accountNumber) {
     return NextResponse.json({ error: "ต้องระบุเลขบัญชี" }, { status: 400 });

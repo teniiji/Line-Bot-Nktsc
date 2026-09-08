@@ -22,6 +22,7 @@ import ExcelJS from "exceljs";
 import { PrismaClient } from "@prisma/client";
 import { cellText as cell } from "./excelUtils";
 import { parseNationalId, parsePhone } from "../lib/identityFormat";
+import { memberNumberKey } from "../lib/memberNumber";
 
 const prisma = new PrismaClient();
 
@@ -53,7 +54,8 @@ async function main() {
 
   for (let rowNumber = 2; rowNumber <= sheet.rowCount; rowNumber++) {
     const row = sheet.getRow(rowNumber);
-    const memberNumber = cell(row, 1);
+    // Canonical, so this sheet finds the roster rows the backfill made.
+    const memberNumber = memberNumberKey(cell(row, 1)) ?? "";
     if (!memberNumber) {
       noMemberNumber++;
       continue;

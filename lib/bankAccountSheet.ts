@@ -16,6 +16,7 @@
 // import refuses rather than guessing.
 
 import { normalizeAccountNumber } from "./statementReconcile";
+import { memberNumberKey } from "./memberNumber";
 
 // Words that identify each column. Matched as substrings against the header
 // cell with spaces removed, so "เลขที่ บัญชี" and "เลขบัญชีธนาคาร" both land.
@@ -139,7 +140,7 @@ export function parseBankAccountSheet(rows: unknown[][]): BankAccountSheet {
     }
 
     parsed.push({
-      memberNumber: memberRaw,
+      memberNumber: memberNumberKey(memberRaw) ?? memberRaw,
       accountNumber,
       memberName: nameColumn === -1 ? null : cellText(row[nameColumn]) || null,
       rowNumber,

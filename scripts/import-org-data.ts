@@ -9,6 +9,7 @@
 import ExcelJS from "exceljs";
 import { PrismaClient } from "@prisma/client";
 import { cellText as cell } from "./excelUtils";
+import { memberNumberKey } from "../lib/memberNumber";
 
 const prisma = new PrismaClient();
 
@@ -78,7 +79,10 @@ async function importMemberRoster(workbook: ExcelJS.Workbook) {
   // 8 รหัสผู้รับผิดชอบ
   for (let rowNumber = 2; rowNumber <= sheet.rowCount; rowNumber++) {
     const row = sheet.getRow(rowNumber);
-    const memberNumber = cell(row, 1);
+    // Canonical, the same as every other way a member number enters — a
+    // roster import that wrote the padded form back would undo the
+    // 20260908070000 backfill on the very next run.
+    const memberNumber = memberNumberKey(cell(row, 1)) ?? "";
     const memberName = cell(row, 2);
     if (!memberNumber || !memberName) {
       skipped++;
