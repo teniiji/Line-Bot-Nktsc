@@ -19,6 +19,8 @@ import {
   recordGroupSeen,
 } from "@/lib/lineGroups";
 import { prisma } from "@/lib/prisma";
+import { conversationKeyOf, groupBySource } from "@/lib/eventOrdering";
+import { withConversationLock } from "@/lib/conversationLock";
 import { isFeatureEnabled, MESSAGING_ENABLED } from "@/lib/featureFlags";
 
 export const runtime = "nodejs";
@@ -231,6 +233,14 @@ async function handleEvent(event: webhook.Event, origin: string): Promise<void> 
     prisma.processedLineEvent
       .deleteMany({ where: { createdAt: { lt: cutoff } } })
       .catch((err) => console.error("[line/webhook] processed-event prune failed:", err));
+
+    // Conversation locks release themselves in a finally, so a row only
+    // outlives its handler when the process died holding it. Rare, but
+    // nothing else would ever delete it unless that same member messaged
+    // again, so it is swept here with everything else.
+    prisma.conversationLock
+      .deleteMany({ where: { expiresAt: { lt: new Date() } } })
+      .catch((err) => console.error("[line/webhook] conversation-lock prune failed:", err));
   }
 
   // In-flight member-number lookups hold a typed national ID, and
@@ -394,15 +404,30 @@ export async function POST(request: NextRequest) {
     console.log("[line/webhook] event sources:", JSON.stringify(events.map((e) => e.source)));
   }
 
-  // Process events but never let a single failure block the 200 response —
-  // LINE retries the whole webhook delivery on a non-2xx, which would
-  // re-trigger already-handled messages.
+  // Two events from the same member must not run at once: both read that
+  // member's pending transaction, both decide, both write, and the member
+  // gets two replies contradicting each other. Different members share
+  // nothing, so those still run in parallel.
+  //
+  // Grouping only orders what arrived together; withConversationLock covers
+  // the same member's events arriving in separate deliveries, which is the
+  // wider window of the two.
+  //
+  // Still never lets a single failure block the 200 response — LINE retries
+  // the whole delivery on a non-2xx, re-triggering already-handled messages.
   await Promise.all(
-    events.map((event) =>
-      handleEvent(event, origin).catch((err) =>
-        console.error("[line/webhook] unhandled event error:", err)
-      )
-    )
+    groupBySource(events, (event) => event.source).map(async (run) => {
+      const key = conversationKeyOf(run[0]?.source);
+      const handleRun = async () => {
+        for (const event of run) {
+          await handleEvent(event, origin).catch((err) =>
+            console.error("[line/webhook] unhandled event error:", err)
+          );
+        }
+      };
+      // No identifiable source means nothing to serialise against.
+      return key === null ? handleRun() : withConversationLock(key, handleRun);
+    })
   );
 
   return NextResponse.json({ status: "ok" });
