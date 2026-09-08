@@ -17,6 +17,9 @@ export type LineUserInfo = {
 
 
 export type PendingInfo = {
+  // A member can have several of these at once, so every update and delete
+  // addresses one row by id — never by lineUserId, which would hit them all.
+  id: string;
   category: string | null;
   amount: number | null;
   description: string | null;
@@ -32,6 +35,10 @@ export type PendingInfo = {
   senderNameConfirmed: boolean;
   slipTransferTime: string | null;
   slipSenderAccount: string | null;
+  // Queue order, and when this payment was last touched. See the
+  // PendingTransaction model for why they are two fields.
+  createdAt: Date;
+  lastActivityAt: Date;
 };
 
 

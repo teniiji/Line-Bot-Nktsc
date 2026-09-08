@@ -3,6 +3,7 @@ import { computeNextRequirement } from "../lib/agent/state";
 import type { LineUserInfo, PendingInfo } from "../lib/agent/types";
 
 const basePending: PendingInfo = {
+  id: "pending-1",
   category: null,
   amount: 1000,
   description: null,
@@ -20,6 +21,8 @@ const basePending: PendingInfo = {
   // complete transaction, so these can't hold up a member's logging.
   slipTransferTime: null,
   slipSenderAccount: null,
+  createdAt: new Date("2026-09-08T00:00:00.000Z"),
+  lastActivityAt: new Date("2026-09-08T00:00:00.000Z"),
 };
 
 const unknownMember: LineUserInfo = {

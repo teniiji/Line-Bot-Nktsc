@@ -109,7 +109,12 @@ model ProcessedLineEvent {
 // expires unanswered.
 model PendingTransaction {
   id                   String    @id @default(cuid())
-  lineUserId           String    @unique
+  // Deliberately NOT unique. It was, and a member who sent a second slip
+  // before finishing the first had the first silently overwritten — the
+  // payment vanished with no trace anywhere but the LINE chat. A member can
+  // send two slips in a row (they often do: one to the cooperative, one to
+  // ฌาปนกิจสงเคราะห์), so the rows queue up and are answered oldest first.
+  lineUserId           String
   category             String?
   amount               Float?
   description          String?
@@ -139,7 +144,19 @@ model PendingTransaction {
   // there for what they hold and why the time is text.
   slipTransferTime     String?
   slipSenderAccount    String?
+  // createdAt is the queue order and is never rewritten: the oldest waiting
+  // payment is the one the bot is asking about, and touching it would send
+  // the payment being answered to the back of its own queue.
+  //
+  // lastActivityAt is what expiry runs on — a member still answering keeps
+  // their payment alive. These were one field while a member could only have
+  // one pending row, where "created" and "last touched" could be conflated
+  // without anything noticing.
   createdAt            DateTime  @default(now())
+  lastActivityAt       DateTime  @default(now())
+
+  // Every lookup is "this member's pending rows, oldest first".
+  @@index([lineUserId, createdAt])
 }
 
 // A supporting document (payslip, ID card copy, house registration copy,

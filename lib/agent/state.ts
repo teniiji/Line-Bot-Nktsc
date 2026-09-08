@@ -188,16 +188,38 @@ export async function loadLineUser(lineUserId: string): Promise<LineUserInfo | n
 }
 
 
-export async function loadPending(lineUserId: string): Promise<PendingInfo | null> {
-  const pending = await prisma.pendingTransaction.findUnique({
+// The member's pending transactions, oldest first, with the expired ones
+// dropped on the way past.
+//
+// A member can have several: they send one slip, then another before
+// answering the question about the first. They queue rather than overwrite —
+// the row is a payment, not a member.
+export async function loadAllPending(lineUserId: string): Promise<PendingInfo[]> {
+  const rows = await prisma.pendingTransaction.findMany({
     where: { lineUserId },
+    orderBy: { createdAt: "asc" },
   });
-  if (!pending) return null;
-  if (Date.now() - pending.createdAt.getTime() > PENDING_TRANSACTION_EXPIRY_MS) {
-    await prisma.pendingTransaction.delete({ where: { lineUserId } }).catch(() => {});
-    return null;
+
+  // Expiry runs on last activity, not creation: a member still answering
+  // questions about a payment has not abandoned it, however long the
+  // conversation has taken.
+  const cutoff = Date.now() - PENDING_TRANSACTION_EXPIRY_MS;
+  const expired = rows.filter((row) => row.lastActivityAt.getTime() < cutoff);
+  if (expired.length > 0) {
+    await prisma.pendingTransaction
+      .deleteMany({ where: { id: { in: expired.map((row) => row.id) } } })
+      .catch(() => {});
   }
-  return pending;
+
+  return rows.filter((row) => row.lastActivityAt.getTime() >= cutoff);
+}
+
+// The one the bot is currently asking about: the oldest still alive. Asking
+// oldest first matters — it is the one the member has already been asked
+// about, so the conversation stays on the payment they think it is on.
+export async function loadPending(lineUserId: string): Promise<PendingInfo | null> {
+  const [oldest] = await loadAllPending(lineUserId);
+  return oldest ?? null;
 }
 
 

@@ -69,7 +69,10 @@ export async function GET() {
       // resuming it, so the bot is no longer waiting on anything here — the
       // member would start over. Flagged so the panel doesn't imply staff are
       // waiting on an answer that can no longer arrive.
-      expired: Date.now() - p.createdAt.getTime() > PENDING_TRANSACTION_EXPIRY_MS,
+      // Measured from last activity, the same as the bot measures it — a
+      // member still answering has not abandoned the payment, and showing it
+      // as expired here would send staff chasing a live conversation.
+      expired: Date.now() - p.lastActivityAt.getTime() > PENDING_TRANSACTION_EXPIRY_MS,
     };
   });
 
