@@ -98,6 +98,11 @@ export default function DailyReconcilePanel() {
   const [error, setError] = useState<string | null>(null);
   const [showOther, setShowOther] = useState(false);
   const [showKnown, setShowKnown] = useState(false);
+  // Uploading right here rather than sending staff to the round tab: checking
+  // one day's money has nothing to do with the month-end round.
+  const [account, setAccount] = useState("413");
+  const [uploading, setUploading] = useState(false);
+  const [uploadNotice, setUploadNotice] = useState<string | null>(null);
 
   const fetchDay = useCallback(async (day: string) => {
     setLoading(true);
@@ -117,6 +122,36 @@ export default function DailyReconcilePanel() {
     fetchDay(date);
   }, [date, fetchDay]);
 
+  const uploadStatement = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+
+    setUploading(true);
+    setError(null);
+    setUploadNotice(null);
+    try {
+      const form = new FormData();
+      form.append("file", file);
+      form.append("account", account);
+      const res = await fetch("/api/statement-lines", { method: "POST", body: form });
+      const body = await res.json();
+      if (!res.ok) {
+        setError(body.error || "อ่าน Statement ไม่สำเร็จ");
+        return;
+      }
+      const covers =
+        body.from && body.to
+          ? ` ครอบคลุม ${formatStatementDate(body.from)} ถึง ${formatStatementDate(body.to)}`
+          : "";
+      setUploadNotice(`บัญชี ${body.account} ${body.branch}: อ่านได้ ${body.lines} รายการ${covers}`);
+      // Reloads the day on screen, which is the one the person came to look at.
+      await fetchDay(date);
+    } finally {
+      setUploading(false);
+    }
+  };
+
   // Money nobody claimed, split by whether anything knows who paid it.
   const unknownPayer = (data?.depositsWithoutSlip ?? []).filter((d) => !d.memberNumber);
   const knownPayer = (data?.depositsWithoutSlip ?? []).filter((d) => d.memberNumber);
@@ -129,10 +164,11 @@ export default function DailyReconcilePanel() {
       <div className="px-4 py-3 border-b border-slate-100">
         <h2 className="font-semibold">เงินเข้าประจำวัน (เทียบกับสลิปที่ส่งมาทางไลน์)</h2>
         <p className="text-xs text-slate-500 mt-1">
-          เทียบ <strong>เงินที่เข้าบัญชีสหกรณ์วันนั้น</strong> (จาก Statement ที่อัปโหลดในแท็บ
-          "เทียบ Statement" — ใช้ไฟล์เดียวกัน ไม่ต้องอัปซ้ำ) กับ{" "}
+          เทียบ <strong>เงินที่เข้าบัญชีสหกรณ์วันนั้น</strong> กับ{" "}
           <strong>สลิปที่สมาชิกส่งเข้าบอท</strong> วันเดียวกัน เพื่อจับ 2 อย่าง:
-          สลิปที่ไม่มีเงินเข้าจริง และเงินที่เข้ามาโดยไม่มีใครแจ้ง
+          สลิปที่ไม่มีเงินเข้าจริง และเงินที่เข้ามาโดยไม่มีใครแจ้ง —{" "}
+          <strong>อัปโหลด Statement ได้ที่นี่เลย ไม่ต้องสร้างรอบเก็บไม่ได้</strong>{" "}
+          (ไฟล์ที่เคยอัปในแท็บ "เทียบ Statement" ก็ใช้ได้ ไม่ต้องอัปซ้ำ)
         </p>
         <p className="text-xs text-amber-700 mt-1">
           ⚠️ ช่อง <strong>"จับคู่จาก"</strong> บอกว่าคู่นั้นเชื่อได้แค่ไหน —
@@ -177,13 +213,45 @@ export default function DailyReconcilePanel() {
         </span>
       </div>
 
+      {/* Statement upload lives here, not only on the round tab: a day's
+          money-in is an everyday question, and it used to require creating a
+          month-end round and importing a หักไม่ได้ sheet first. */}
+      <div className="flex flex-wrap items-center gap-2 px-4 py-2.5 border-b border-slate-100 text-sm bg-slate-50">
+        <span className="text-slate-500">อัปโหลด Statement:</span>
+        <select
+          value={account}
+          onChange={(e) => setAccount(e.target.value)}
+          className="border border-slate-300 rounded-md px-2 py-1.5 bg-white"
+        >
+          <option value="413">413 หนองคาย</option>
+          <option value="447">447 บึงกาฬ</option>
+        </select>
+        <label className="px-3 py-1.5 border border-slate-300 rounded-md bg-white cursor-pointer hover:bg-slate-50">
+          {uploading ? "กำลังอ่าน…" : "เลือกไฟล์"}
+          <input
+            type="file"
+            accept=".xlsx,.xls"
+            onChange={uploadStatement}
+            disabled={uploading}
+            className="hidden"
+          />
+        </label>
+        <span className="text-xs text-slate-400">
+          อัปทับไฟล์เดิมได้ ไม่นับเงินซ้ำ · อัปกี่วันก็ได้ในไฟล์เดียว
+        </span>
+      </div>
+
+      {uploadNotice && (
+        <p className="px-4 py-2 text-sm text-green-700 bg-green-50">{uploadNotice}</p>
+      )}
+
       {error && <p className="px-4 py-3 text-sm text-red-600">{error}</p>}
 
       {loading ? (
         <p className="text-slate-500 text-sm py-10 text-center">กำลังโหลด…</p>
       ) : !data ? null : !data.loaded ? (
         <p className="text-slate-500 text-sm py-10 text-center px-4">
-          ยังไม่มี Statement ที่ครอบคลุมวันนี้ — อัปโหลดในแท็บ "เทียบ Statement" ก่อน
+          ยังไม่มี Statement ที่ครอบคลุมวันนี้ — อัปโหลดไฟล์ของวันนี้ได้ที่แถบด้านบน
           <br />
           <span className="text-xs text-slate-400">
             (ต่างจาก "วันนี้ไม่มีเงินเข้า" — ระบบยังไม่มีข้อมูลของวันนี้เลย)
