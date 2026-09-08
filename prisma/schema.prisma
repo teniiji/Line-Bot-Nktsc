@@ -91,6 +91,25 @@ model Expense {
   @@index([lineUserId, date])
 }
 
+// Held while one conversation's webhook event is being handled, so two
+// deliveries for the same member cannot run at once in different serverless
+// invocations and read-modify-write the same PendingTransaction row. See
+// lib/conversationLock.ts — including why it always lets the work proceed
+// rather than ever dropping a member's message.
+//
+// The primary key is what makes acquiring it atomic between processes:
+// whoever manages to insert the row holds it.
+model ConversationLock {
+  // "user:<lineUserId>" or "group:<groupId>" — see conversationKeyOf.
+  key       String   @id
+  // Never further out than the route's maxDuration, so a lock left behind by
+  // a process that died is recognisable as stale and can be taken.
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  @@index([expiresAt])
+}
+
 // Records LINE webhook events that have already been processed, so a
 // retried delivery (LINE re-sends on timeout / non-2xx) is a no-op instead
 // of re-running the finance agent and creating a duplicate expense.
