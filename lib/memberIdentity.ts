@@ -82,3 +82,33 @@ export function askForMissingIdentity(merge: IdentityMerge): string {
     "Call submit_member_info again with just the member number when they give it."
   );
 }
+
+// Reasons a member number must not be stored, wherever it was typed. The bot
+// learned each of these the hard way, and staff typing into the dashboard can
+// make exactly the same mistakes — so both ask here rather than keeping two
+// copies that drift.
+//
+// Returns null when the value is fine to store.
+export function memberNumberProblem(memberNumber: string): string | null {
+  // A message giving a name alongside a 13-digit all-numeric string is far
+  // more likely to be a เลขประจำตัวประชาชน than a cooperative member number —
+  // real member numbers here run a handful of digits, never 13. Seen in
+  // production through the bot; a person reading an ID card copy can slip the
+  // same way.
+  if (/^\d{13}$/.test(memberNumber)) {
+    return "เลข 13 หลักนี้น่าจะเป็นเลขประจำตัวประชาชน ไม่ใช่เลขสมาชิก — เลขสมาชิกของสหกรณ์สั้นกว่านี้มาก";
+  }
+  // Deliberately nothing about shape beyond that. Member numbers here look
+  // numeric in every sample seen, but "looks numeric in the samples I saw" is
+  // not the same as "the cooperative never issued another kind", and a rule
+  // that rejects a real member's number is worse than one that accepts an odd
+  // one a person can see and correct.
+  return null;
+}
+
+// Said when a member number is already bound to somebody else's LINE account.
+// Refused in both places for the same reason: it is the one check standing
+// between a typo and one member's transactions being filed under another's.
+export const MEMBER_NUMBER_TAKEN_ERROR =
+  "เลขสมาชิกนี้ผูกกับบัญชี LINE อื่นอยู่แล้ว — ตรวจสอบให้แน่ใจก่อน " +
+  "ถ้าสมาชิกเปลี่ยนบัญชี LINE ต้องล้างการผูกของบัญชีเดิมก่อน";

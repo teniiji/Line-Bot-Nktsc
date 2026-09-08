@@ -41,6 +41,10 @@ export interface LineUser {
   fullName: string | null;
   memberNumber: string | null;
   unitName: string | null;
+  // Whether MemberRoster has a row for this member number at all — which is
+  // what tells "no member number yet" apart from "that number is not in the
+  // roster", two blanks with completely different fixes.
+  inRoster: boolean;
   botPaused: boolean;
   createdAt: string;
 }

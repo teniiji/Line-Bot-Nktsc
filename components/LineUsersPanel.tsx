@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { Fragment, useCallback, useEffect, useState } from "react";
 import { LineUser } from "@/lib/types";
 import ConfirmDialog from "@/components/ConfirmDialog";
 
@@ -16,6 +16,9 @@ export default function LineUsersPanel() {
   const [loading, setLoading] = useState(true);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editValue, setEditValue] = useState("");
+  const [editFullName, setEditFullName] = useState("");
+  const [editMemberNumber, setEditMemberNumber] = useState("");
+  const [editError, setEditError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [togglingId, setTogglingId] = useState<string | null>(null);
   const [pendingDelete, setPendingDelete] = useState<LineUser | null>(null);
@@ -56,33 +59,47 @@ export default function LineUsersPanel() {
   const startEdit = (user: LineUser) => {
     setEditingId(user.id);
     setEditValue(user.nickname ?? "");
+    setEditFullName(user.fullName ?? "");
+    setEditMemberNumber(user.memberNumber ?? "");
+    setEditError(null);
   };
 
   const cancelEdit = () => {
     setEditingId(null);
     setEditValue("");
+    setEditFullName("");
+    setEditMemberNumber("");
+    setEditError(null);
   };
 
   const saveEdit = async (id: string) => {
     setSaving(true);
+    setEditError(null);
     try {
       const res = await fetch(`/api/line-users/${id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ nickname: editValue.trim() || null }),
+        body: JSON.stringify({
+          nickname: editValue.trim() || null,
+          fullName: editFullName.trim() || null,
+          memberNumber: editMemberNumber.trim() || null,
+        }),
       });
-      if (res.ok) {
-        const updated: LineUser = await res.json();
-        // Spread onto the existing row rather than replacing it — the PUT
-        // response doesn't include unitName (it's joined in from
-        // MemberRoster by the GET route, not a LineUser column), so a
-        // full replace would blank it out until the next page refetch.
-        setUsers((prev) => prev.map((u) => (u.id === id ? { ...u, ...updated } : u)));
+      const body = await res.json();
+      if (!res.ok) {
+        // Stays open with the reason on screen: a rejected member number is
+        // something to correct, and closing the form would throw away what
+        // was typed along with the explanation.
+        setEditError(body.error ?? "บันทึกไม่สำเร็จ");
+        return;
       }
+      // Refetched rather than merged: สังกัด is joined from MemberRoster by
+      // the member number, so changing the number changes it too, and the PUT
+      // response cannot know the new value.
+      await fetchUsers();
+      cancelEdit();
     } finally {
       setSaving(false);
-      setEditingId(null);
-      setEditValue("");
     }
   };
 
@@ -185,6 +202,7 @@ export default function LineUsersPanel() {
                 <th className="px-4 py-2">LINE User ID</th>
                 <th className="px-4 py-2">ชื่อที่แสดงใน LINE</th>
                 <th className="px-4 py-2">ชื่อเล่น</th>
+                <th className="px-4 py-2">ชื่อ-นามสกุล</th>
                 <th className="px-4 py-2">เลขสมาชิก</th>
                 <th className="px-4 py-2">สังกัด</th>
                 <th className="px-4 py-2">บอทตอบอัตโนมัติ</th>
@@ -193,7 +211,8 @@ export default function LineUsersPanel() {
             </thead>
             <tbody>
               {users.map((user) => (
-                <tr key={user.id} className="border-t border-slate-100">
+                <Fragment key={user.id}>
+                <tr className="border-t border-slate-100">
                   <td
                     className="px-4 py-2 font-mono text-xs text-slate-500 whitespace-nowrap"
                     title={user.id}
@@ -214,10 +233,48 @@ export default function LineUsersPanel() {
                       user.nickname ?? "—"
                     )}
                   </td>
-                  <td className="px-4 py-2 whitespace-nowrap" title={user.fullName ?? undefined}>
-                    {user.memberNumber ?? "—"}
+                  <td className="px-4 py-2">
+                    {editingId === user.id ? (
+                      <input
+                        type="text"
+                        value={editFullName}
+                        onChange={(e) => setEditFullName(e.target.value)}
+                        placeholder="ชื่อ-นามสกุล"
+                        className="border border-slate-300 rounded px-2 py-1 text-sm w-full"
+                      />
+                    ) : (
+                      (user.fullName ?? "—")
+                    )}
                   </td>
-                  <td className="px-4 py-2">{user.unitName ?? "—"}</td>
+                  <td className="px-4 py-2 whitespace-nowrap">
+                    {editingId === user.id ? (
+                      <input
+                        type="text"
+                        value={editMemberNumber}
+                        onChange={(e) => setEditMemberNumber(e.target.value)}
+                        placeholder="เลขสมาชิก"
+                        className="border border-slate-300 rounded px-2 py-1 text-sm w-28"
+                      />
+                    ) : (
+                      (user.memberNumber ?? "—")
+                    )}
+                  </td>
+                  {/* Read-only on purpose: สังกัด lives in the roster, keyed by
+                      the member number. Typing it here would let this screen
+                      drift from the roster; filling in the number populates it. */}
+                  <td className="px-4 py-2">
+                    {user.unitName ? (
+                      user.unitName
+                    ) : !user.memberNumber ? (
+                      <span className="text-slate-400 text-xs">ยังไม่มีเลขสมาชิก</span>
+                    ) : !user.inRoster ? (
+                      <span className="text-amber-700 text-xs">
+                        ไม่พบเลขนี้ในทะเบียนสมาชิก — อาจพิมพ์ผิด
+                      </span>
+                    ) : (
+                      <span className="text-slate-400 text-xs">ทะเบียนไม่ได้ระบุสังกัด</span>
+                    )}
+                  </td>
                   <td className="px-4 py-2">
                     <button
                       type="button"
@@ -273,6 +330,24 @@ export default function LineUsersPanel() {
                     )}
                   </td>
                 </tr>
+                {editingId === user.id && (
+                  <tr className="bg-slate-50">
+                    <td colSpan={8} className="px-4 pb-3 text-xs">
+                      {editError && <p className="text-red-600 mb-1">{editError}</p>}
+                      <p className="text-slate-500">
+                        เลขสมาชิกที่เจ้าหน้าที่กรอกเองจะยังนับเป็น
+                        <strong> "ยังไม่ยืนยัน"</strong> — ธุรกรรมของสมาชิกคนนี้จะขึ้นเตือนต่อไป
+                        จนกว่าสมาชิกจะแจ้งชื่อ-เลขสมาชิกกับบอทเอง
+                        เพราะการที่เจ้าหน้าที่พิมพ์ให้ เป็นหลักฐานที่อ่อนกว่าสมาชิกยืนยันจากเครื่องตัวเอง
+                      </p>
+                      <p className="text-slate-400 mt-1">
+                        สังกัดแก้ที่นี่ไม่ได้ — ดึงมาจากทะเบียนสมาชิกโดยใช้เลขสมาชิก
+                        ใส่เลขสมาชิกให้ถูก แล้วสังกัดจะขึ้นเอง
+                      </p>
+                    </td>
+                  </tr>
+                )}
+                </Fragment>
               ))}
             </tbody>
           </table>
