@@ -76,6 +76,12 @@ export async function GET(request: NextRequest) {
   const data = rows.map((r) => ({
     ...r,
     unitName: r.memberNumber ? unitByMemberNumber.get(r.memberNumber) ?? null : null,
+    // Why สังกัด is blank, which a dash cannot say. "No member number yet" and
+    // "that number is not in the roster" need completely different actions —
+    // one is a member the bot never identified, the other is very likely a
+    // typo — and has() is what tells them apart, since a roster row can exist
+    // with no unit name of its own.
+    inRoster: r.memberNumber ? unitByMemberNumber.has(r.memberNumber) : false,
   }));
 
   return NextResponse.json({ data, total, page, pageSize });

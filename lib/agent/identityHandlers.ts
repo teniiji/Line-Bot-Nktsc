@@ -7,7 +7,12 @@
 // reason — neither one advances a transaction or a service request.
 import { prisma } from "../prisma";
 import { isPlaceholderText } from "../placeholderText";
-import { askForMissingIdentity, mergeIdentity, statedValue } from "../memberIdentity";
+import {
+  askForMissingIdentity,
+  memberNumberProblem,
+  mergeIdentity,
+  statedValue,
+} from "../memberIdentity";
 import { matchesIdentity } from "../memberLookup";
 import { isFeatureEnabled, MEMBER_LOOKUP_ENABLED } from "../featureFlags";
 import {
@@ -65,7 +70,10 @@ export async function submitMemberInfo(
   // the model to recognize the reply as belonging to it (see
   // submit_lookup_info's description). Reject deterministically rather than
   // trust the model to keep telling the two flows apart.
-  if (givenNumber !== null && /^\d{13}$/.test(givenNumber)) {
+  // The rule lives in lib/memberIdentity.ts so the dashboard applies exactly
+  // the same one; the message stays here because this audience is the model,
+  // which needs telling where to route the member instead.
+  if (givenNumber !== null && memberNumberProblem(givenNumber) !== null) {
     return "Error: this looks like a 13-digit เลขประจำตัวประชาชน (national ID number), not a เลขสมาชิก (member number) — cooperative member numbers are much shorter. If the member was actually trying to look up their own member number, use submit_lookup_info instead (it needs their name, national ID, and phone). If they really do have a member number, ask them to confirm it — don't save this value as-is.";
   }
 

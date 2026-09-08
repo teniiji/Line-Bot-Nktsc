@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { askForMissingIdentity, mergeIdentity, statedValue } from "../lib/memberIdentity";
+import {
+  askForMissingIdentity,
+  memberNumberProblem,
+  mergeIdentity,
+  statedValue,
+} from "../lib/memberIdentity";
 
 const nothingSaved = { fullName: null, memberNumber: null };
 
@@ -88,5 +93,35 @@ describe("askForMissingIdentity", () => {
     const text = askForMissingIdentity(mergeIdentity(nothingSaved, nothingSaved));
     expect(text).toContain("ชื่อ-นามสกุล");
     expect(text).toContain("เลขสมาชิก");
+  });
+});
+
+describe("memberNumberProblem", () => {
+  it("refuses a 13-digit national ID", () => {
+    // The mistake it exists for: a member answering the lookup flow's
+    // questions (name + national ID + phone) got them filed through
+    // submit_member_info, and the ID was saved as a member number. Staff
+    // reading an ID card copy can slip the same way, so both ask here.
+    expect(memberNumberProblem("1234567890123")).not.toBeNull();
+    expect(memberNumberProblem("1234567890123")).toContain("เลขประจำตัวประชาชน");
+  });
+
+  it("accepts the member numbers the cooperative actually issues", () => {
+    expect(memberNumberProblem("29252")).toBeNull();
+    expect(memberNumberProblem("30051")).toBeNull();
+    // สมาชิกสมทบ run in the 900000s.
+    expect(memberNumberProblem("900123")).toBeNull();
+  });
+
+  it("does not invent a shape rule beyond the one that is proven", () => {
+    // Member numbers look numeric in every sample seen, but rejecting an odd
+    // one would block a real member; a person can see and correct it, whereas
+    // a wrongly refused number just stops the work.
+    expect(memberNumberProblem("29252-1")).toBeNull();
+  });
+
+  it("does not refuse a 13-character value that is not all digits", () => {
+    // The rule is about national IDs specifically, not about length.
+    expect(memberNumberProblem("29252/2569-01")).toBeNull();
   });
 });
