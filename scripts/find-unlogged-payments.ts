@@ -119,6 +119,7 @@ async function main() {
           memberFullName: true,
           slipTransferTime: true,
           slipSenderAccount: true,
+          statementLineId: true,
         },
       }),
     ]);
@@ -147,6 +148,7 @@ async function main() {
       category: slip.category,
       transferTime: slip.slipTransferTime,
       senderAccount: slip.slipSenderAccount,
+      statementLineId: slip.statementLineId,
     }));
 
     totalDeposits += deposits.length;

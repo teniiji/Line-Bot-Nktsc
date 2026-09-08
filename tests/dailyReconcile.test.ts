@@ -23,10 +23,80 @@ const slip = (over: Partial<SlipRecord> = {}): SlipRecord => ({
   // before these were read, so it is the case that has to keep working.
   transferTime: null,
   senderAccount: null,
+  // Set only on the transactions staff recorded from a bank line themselves.
+  statementLineId: null,
   ...over,
 });
 
 const directory = new Map([["4131572885", "30051"]]);
+
+describe("reconcileDay, staff-recorded transactions", () => {
+  // Recording an unclaimed deposit from the daily view writes the line's id
+  // onto the transaction, so this pairing is the one thing here that is not
+  // an inference. It has to beat every guess, and it has to stay put.
+
+  it("pairs a recorded transaction with its own line and says who decided", () => {
+    const result = reconcileDay(
+      [deposit({ id: "line-a" })],
+      [slip({ statementLineId: "line-a" })],
+      new Map()
+    );
+    expect(result.matched).toHaveLength(1);
+    expect(result.matched[0].basis).toBe("staff");
+    expect(result.depositsWithoutSlip).toHaveLength(0);
+  });
+
+  it("never lets a recorded transaction drift onto a different line", () => {
+    // Two ฿40,000 transfers at 09:26 from one account — the real pair from
+    // 8 Sep. Staff recorded the first; the second must stay unclaimed rather
+    // than absorb the record for the first.
+    const result = reconcileDay(
+      [deposit({ id: "line-a", amount: 40000 }), deposit({ id: "line-b", amount: 40000 })],
+      [slip({ amount: 40000, statementLineId: "line-a" })],
+      new Map()
+    );
+    expect(result.matched).toHaveLength(1);
+    expect(result.matched[0].deposit.id).toBe("line-a");
+    expect(result.depositsWithoutSlip.map((d) => d.id)).toEqual(["line-b"]);
+  });
+
+  it("leaves the record unpaired when its line is not in this day", () => {
+    // Rather than falling back to matching by amount: the person said which
+    // line this was, and the honest answer to "that line is not here" is to
+    // show it as unmatched, not to pick another one.
+    const result = reconcileDay(
+      [deposit({ id: "line-b" })],
+      [slip({ statementLineId: "line-a" })],
+      directory
+    );
+    expect(result.matched).toHaveLength(0);
+    expect(result.slipsWithoutMoney).toHaveLength(1);
+    expect(result.depositsWithoutSlip).toHaveLength(1);
+  });
+
+  it("outranks a slip that fits the same line on amount alone", () => {
+    // The staff record claims its line first, and the guess falls through to
+    // whatever is left — which is what stops one payment being counted twice.
+    const result = reconcileDay(
+      [deposit({ id: "line-a" })],
+      [slip({ id: "s-guess" }), slip({ id: "s-recorded", statementLineId: "line-a" })],
+      new Map()
+    );
+    expect(result.matched).toHaveLength(1);
+    expect(result.matched[0].slip.id).toBe("s-recorded");
+    expect(result.slipsWithoutMoney.map((s) => s.id)).toEqual(["s-guess"]);
+  });
+
+  it("still counts the money once in the totals", () => {
+    const result = reconcileDay(
+      [deposit({ id: "line-a", amount: 29054 })],
+      [slip({ amount: 29054, statementLineId: "line-a" })],
+      new Map()
+    );
+    expect(result.totals.matchedAmount).toBe(29054);
+    expect(result.totals.depositAmount).toBe(29054);
+  });
+});
 
 describe("reconcileDay", () => {
   it("pairs a slip with its money when the directory knows the account", () => {

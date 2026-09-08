@@ -12,8 +12,12 @@
 //
 // What this cannot do is be certain, so every pair says how it was arrived
 // at, and the tab presents this as a list to read rather than a tick to
-// trust. Four kinds of evidence, strongest first:
+// trust. Five kinds of evidence, strongest first:
 //
+//   staff       — a person recorded this transaction from this exact bank
+//                 line in the daily view, so the pairing was never inferred.
+//                 Nothing outranks it and nothing overrides it: a linked
+//                 transaction pairs with its line and with no other
 //   account     — the statement named the paying account and the directory
 //                 says it belongs to the member who filed the slip
 //   slipAccount — the slip's own account, masked as the bank printed it,
@@ -65,11 +69,15 @@ export interface SlipRecord {
   // shows neither.
   transferTime: string | null;
   senderAccount: string | null;
+  // The bank line a person recorded this transaction from, when it was
+  // recorded that way rather than filed as a slip. null for every slip the
+  // bot logged, which is nearly all of them.
+  statementLineId: string | null;
 }
 
 // How the pair was arrived at, which is what decides whether staff need to
 // look at it. See the note at the top of this file for what each one means.
-export type MatchBasis = "account" | "slipAccount" | "time" | "amount";
+export type MatchBasis = "staff" | "account" | "slipAccount" | "time" | "amount";
 
 export interface MatchedPair {
   deposit: DepositLine;
@@ -141,6 +149,25 @@ export function reconcileDay(
     const owner = deposit.senderAccount ? accountOwners.get(deposit.senderAccount) : undefined;
 
     for (const slip of slips) {
+      // A transaction a person recorded from a bank line belongs to that line
+      // and to no other, whatever the amounts say. Checked before everything
+      // below because it is not evidence to be weighed against the rest — it
+      // is somebody having already answered the question this file exists to
+      // guess at.
+      if (slip.statementLineId) {
+        if (slip.statementLineId !== deposit.id) continue;
+        candidates.push({
+          deposit,
+          slip,
+          basis: "staff",
+          dayApart:
+            deposit.postedAt !== null && dayOf(deposit.postedAt) !== dayOf(slip.date),
+          minutesApart: minutesBetween(slip, deposit),
+          rank: 0,
+        });
+        continue;
+      }
+
       if (!sameAmount(deposit.amount, slip.amount)) continue;
 
       const dayApart =
@@ -163,7 +190,10 @@ export function reconcileDay(
       const minutesApart = minutesBetween(slip, deposit);
       const closeInTime = minutesApart !== null && minutesApart <= CLOSE_MINUTES;
 
-      const basis: MatchBasis = byAccount
+      // "staff" is not reachable here — it is decided above, from the link
+      // rather than from evidence — and excluding it is what lets the rank
+      // table below stay exhaustive.
+      const basis: Exclude<MatchBasis, "staff"> = byAccount
         ? "account"
         : slipAccountSays === "match"
           ? "slipAccount"
@@ -181,7 +211,10 @@ export function reconcileDay(
         // best-supported pairing claims it and the rest fall to the next
         // deposit — a known account beats the slip's own, which beats a clock,
         // which beats a bare amount; and the same day beats the next one.
-        rank: { account: 0, slipAccount: 2, time: 4, amount: 6 }[basis] + (dayApart ? 1 : 0),
+        // A staff-recorded link sits above all of these at rank 0, so it
+        // claims its line before any inference can take it.
+        rank:
+          { account: 2, slipAccount: 4, time: 6, amount: 8 }[basis] + (dayApart ? 1 : 0),
       });
     }
   }
