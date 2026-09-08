@@ -6,6 +6,22 @@ import ConfirmDialog from "@/components/ConfirmDialog";
 
 const SEARCH_DEBOUNCE_MS = 300;
 
+interface ImportResult {
+  read?: number;
+  imported?: number;
+  added?: number;
+  repointed?: number;
+  unchanged?: number;
+  blankRows?: number;
+  problemCount?: number;
+  problems?: { rowNumber: number; reason: string }[];
+  unknownMemberCount?: number;
+  unknownMembers?: string[];
+  roundsRematched?: number;
+  conflictCount?: number;
+  conflicts?: { accountNumber: string; memberNumbers: string[] }[];
+}
+
 // The directory behind "โอนเข้ามาแต่ไม่พบเจ้าของ". Most entries get added from
 // that table with one click; this panel is for seeing what has built up,
 // fixing a binding that went to the wrong member, and adding one ahead of
@@ -24,6 +40,10 @@ export default function MemberBankAccountsPanel() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editMember, setEditMember] = useState("");
   const [pendingDelete, setPendingDelete] = useState<MemberBankAccountEntry | null>(null);
+  // The result of a bulk import, kept on screen until the next one: it is a
+  // list of things to go and fix (rows with holes, member numbers the roster
+  // does not know), not a flash message.
+  const [importResult, setImportResult] = useState<ImportResult | null>(null);
 
   useEffect(() => {
     const timer = setTimeout(() => setSearch(searchInput.trim()), SEARCH_DEBOUNCE_MS);
@@ -81,6 +101,36 @@ export default function MemberBankAccountsPanel() {
     setPendingDelete(null);
     await fetch(`/api/member-bank-accounts/${id}`, { method: "DELETE" });
     await fetchEntries();
+  };
+
+  const importFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+
+    setBusy(true);
+    setError(null);
+    setImportResult(null);
+    try {
+      const form = new FormData();
+      form.append("file", file);
+      const res = await fetch("/api/member-bank-accounts/import", {
+        method: "POST",
+        body: form,
+      });
+      const body = await res.json();
+      if (!res.ok) {
+        setError(body.error || "นำเข้าไฟล์ไม่สำเร็จ");
+        // A refusal carries its reasons — which accounts are claimed twice —
+        // and those are the whole point of refusing, so they stay on screen.
+        if (body.conflicts || body.problems) setImportResult(body);
+        return;
+      }
+      setImportResult(body);
+      await fetchEntries();
+    } finally {
+      setBusy(false);
+    }
   };
 
   const unknownMembers = entries.filter((e) => !e.inRoster).length;
@@ -141,6 +191,92 @@ export default function MemberBankAccountsPanel() {
               <span className="text-xs text-amber-700">
                 มี {unknownMembers} รายการที่เลขสมาชิกไม่มีในทะเบียนสมาชิก — อาจพิมพ์ผิด
               </span>
+            )}
+          </div>
+
+          {/* Bulk import. The cooperative already keeps this mapping in a
+              file; before this the only way in was one row at a time. */}
+          <div className="px-4 py-3 border-b border-slate-100 bg-slate-50">
+            <div className="flex flex-wrap items-center gap-3">
+              <label className="text-sm px-3 py-1.5 border border-slate-300 bg-white rounded cursor-pointer hover:bg-slate-50">
+                นำเข้าจากไฟล์ Excel
+                <input
+                  type="file"
+                  accept=".xlsx,.xls"
+                  onChange={importFile}
+                  disabled={busy}
+                  className="hidden"
+                />
+              </label>
+              <p className="text-xs text-slate-500">
+                ไฟล์ที่มีคอลัมน์ <strong>เลขสมาชิก</strong> และ <strong>เลขบัญชี</strong> —
+                อยู่คอลัมน์ไหนก็ได้ ระบบหาจากชื่อหัวตารางเอง ·{" "}
+                <strong>เพิ่มทับของเดิม ไม่ลบ</strong> เลขบัญชีที่ผูกไว้แล้วและไม่มีในไฟล์จะไม่ถูกแตะ
+              </p>
+            </div>
+
+            {importResult && (
+              <div className="mt-3 text-xs space-y-1">
+                {importResult.imported !== undefined && (
+                  <p className="text-green-700">
+                    นำเข้า {importResult.imported} เลขบัญชี — เพิ่มใหม่ {importResult.added}
+                    {(importResult.repointed ?? 0) > 0 && (
+                      <span className="text-amber-700">
+                        {" "}
+                        · <strong>ย้ายเจ้าของ {importResult.repointed}</strong>
+                      </span>
+                    )}{" "}
+                    · เหมือนเดิม {importResult.unchanged}
+                    {(importResult.roundsRematched ?? 0) > 0 &&
+                      ` · คำนวณรอบเทียบ Statement ใหม่ ${importResult.roundsRematched} รอบ`}
+                  </p>
+                )}
+
+                {(importResult.conflictCount ?? 0) > 0 && (
+                  <div className="text-red-700">
+                    <p>
+                      เลขบัญชีที่ผูกกับสมาชิกคนละคนในไฟล์เดียวกัน ({importResult.conflictCount}):
+                    </p>
+                    <ul className="ml-4 list-disc">
+                      {importResult.conflicts?.map((c) => (
+                        <li key={c.accountNumber} className="font-mono">
+                          {c.accountNumber} → {c.memberNumbers.join(", ")}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+
+                {(importResult.problemCount ?? 0) > 0 && (
+                  <details className="text-amber-700">
+                    <summary className="cursor-pointer">
+                      แถวที่ข้ามไป {importResult.problemCount} แถว (กดดู)
+                    </summary>
+                    <ul className="ml-4 mt-1 list-disc">
+                      {importResult.problems?.map((p) => (
+                        <li key={p.rowNumber}>
+                          แถวราวๆ {p.rowNumber}: {p.reason}
+                        </li>
+                      ))}
+                      {(importResult.problemCount ?? 0) > (importResult.problems?.length ?? 0) && (
+                        <li className="text-slate-500">
+                          และอีก{" "}
+                          {(importResult.problemCount ?? 0) - (importResult.problems?.length ?? 0)}{" "}
+                          แถว
+                        </li>
+                      )}
+                    </ul>
+                  </details>
+                )}
+
+                {(importResult.unknownMemberCount ?? 0) > 0 && (
+                  <p className="text-amber-700">
+                    เลขสมาชิกที่ไม่มีในทะเบียนสมาชิก {importResult.unknownMemberCount} เลข
+                    (บันทึกให้แล้ว แต่ควรตรวจว่าพิมพ์ถูก):{" "}
+                    <span className="font-mono">{importResult.unknownMembers?.join(", ")}</span>
+                  </p>
+                )}
+              </div>
             )}
           </div>
 

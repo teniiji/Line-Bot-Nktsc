@@ -134,6 +134,34 @@ export async function rematchRoundsForAccount(accountNumber: string): Promise<nu
   return affected.length;
 }
 
+// The same thing after a bulk import, where calling the single-account
+// version per row would re-reconcile the same round thousands of times. The
+// rounds are collected first and each is recomputed once.
+export async function rematchRoundsForAccounts(accountNumbers: string[]): Promise<number> {
+  if (accountNumbers.length === 0) return 0;
+
+  // Postgres has a limit on bound parameters, and an import can carry the
+  // whole cooperative, so the lookup is chunked rather than sent as one
+  // enormous IN list.
+  const CHUNK = 1000;
+  const roundIds = new Set<string>();
+  for (let i = 0; i < accountNumbers.length; i += CHUNK) {
+    const found = await prisma.statementTransfer.findMany({
+      where: { accountNumber: { in: accountNumbers.slice(i, i + CHUNK) } },
+      select: { roundId: true },
+      distinct: ["roundId"],
+    });
+    for (const { roundId } of found) roundIds.add(roundId);
+  }
+
+  for (const roundId of roundIds) {
+    await applyDirectoryAccounts(roundId);
+    await rematchRoundTransfers(roundId);
+    await recomputeRoundPayments(roundId);
+  }
+  return roundIds.size;
+}
+
 // Fills in the account number for members whose sheet left it blank, from the
 // directory, when the directory knows exactly one account for them. With more
 // than one there is nothing to choose between, so the column stays blank —
