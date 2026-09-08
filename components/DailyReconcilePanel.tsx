@@ -1,7 +1,9 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { Fragment, useCallback, useEffect, useState } from "react";
 import { formatAmount, formatStatementDate, formatStatementTime } from "@/lib/format";
+import { CATEGORIES } from "@/lib/categories";
+import { accountCaveat, canBindAccount } from "@/lib/depositRecord";
 import { CHANNEL_LABELS } from "@/lib/statementLines";
 import {
   DailyDepositRow,
@@ -44,8 +46,8 @@ const Payer = ({ deposit }: { deposit: DailyDepositRow }) => (
 );
 
 // Why this pair was made, said plainly enough that a person can decide
-// whether to trust it. The four are genuinely different levels of evidence,
-// so they get four different labels rather than a tick.
+// whether to trust it. The five are genuinely different levels of evidence,
+// so they get five different labels rather than a tick.
 const MatchBasis = ({
   basis,
   minutesApart,
@@ -53,6 +55,16 @@ const MatchBasis = ({
   basis: DailyReconcileResult["matched"][number]["basis"];
   minutesApart: number | null;
 }) => {
+  if (basis === "staff") {
+    return (
+      <span
+        className="text-green-700"
+        title="เจ้าหน้าที่บันทึกรายการนี้จากเงินเข้าก้อนนี้โดยตรง ไม่ได้เดาจากยอดหรือเวลา"
+      >
+        เจ้าหน้าที่บันทึกเอง
+      </span>
+    );
+  }
   if (basis === "account") {
     return (
       <span className="text-green-700" title="เลขบัญชีผู้โอนตรงกับทะเบียนเลขบัญชีของสมาชิกคนนี้">
@@ -103,6 +115,17 @@ export default function DailyReconcilePanel() {
   const [account, setAccount] = useState("413");
   const [uploading, setUploading] = useState(false);
   const [uploadNotice, setUploadNotice] = useState<string | null>(null);
+  // Which unclaimed deposit has its form open, and which of the two answers
+  // it is being given. Only one at a time — the work is one payment, one
+  // phone call.
+  const [acting, setActing] = useState<{ id: string; kind: "bind" | "record" } | null>(null);
+  const [actMemberNumber, setActMemberNumber] = useState("");
+  // Starts unchosen on purpose. Defaulting to the first category would let a
+  // distracted click file a ฿90,000 payment as ซื้อหุ้น without anyone having
+  // decided that — the category is what routes the payment to a department.
+  const [actCategory, setActCategory] = useState<string>("");
+  const [saving, setSaving] = useState(false);
+  const [actionNotice, setActionNotice] = useState<string | null>(null);
 
   const fetchDay = useCallback(async (day: string) => {
     setLoading(true);
@@ -149,6 +172,82 @@ export default function DailyReconcilePanel() {
       await fetchDay(date);
     } finally {
       setUploading(false);
+    }
+  };
+
+  const closeForm = () => {
+    setActing(null);
+    setActMemberNumber("");
+    setActCategory("");
+  };
+
+  // "That account is นาง X's" — a fact about an account, so it goes to the
+  // directory and holds for every future transfer from it. Deliberately not
+  // combined with recording the payment: the same call often answers only one
+  // of the two, and pretending otherwise would file a transaction nobody
+  // asked for.
+  const bindAccount = async (accountNumber: string) => {
+    setSaving(true);
+    setError(null);
+    setActionNotice(null);
+    try {
+      const res = await fetch("/api/member-bank-accounts", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          accountNumber,
+          memberNumber: actMemberNumber.trim(),
+          note: "ระบุจากหน้าเงินเข้าประจำวัน",
+        }),
+      });
+      const body = await res.json();
+      if (!res.ok) {
+        setError(body.error || "ผูกบัญชีไม่สำเร็จ");
+        return;
+      }
+      setActionNotice(
+        `ผูกบัญชี ${body.accountNumber} เข้ากับ ${body.memberNumber} ${body.memberName ?? ""} แล้ว` +
+          (body.inRoster ? "" : " — ⚠️ ไม่พบเลขสมาชิกนี้ในทะเบียนสมาชิก ตรวจสอบอีกครั้ง") +
+          (body.rounds ? ` · จับคู่รอบเก็บไม่ได้ใหม่ ${body.rounds} รอบ` : "") +
+          " · ครั้งต่อไปรู้เองไม่ต้องระบุซ้ำ"
+      );
+      closeForm();
+      await fetchDay(date);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  // "That money was นาง X paying her หักไม่ได้" — a fact about this one
+  // payment, so it becomes a transaction. The amount and the date come from
+  // the stored bank line inside the route, not from here.
+  const recordDeposit = async (depositId: string) => {
+    setSaving(true);
+    setError(null);
+    setActionNotice(null);
+    try {
+      const res = await fetch(`/api/statement-lines/${depositId}/record`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          memberNumber: actMemberNumber.trim(),
+          category: actCategory,
+        }),
+      });
+      const body = await res.json();
+      if (!res.ok) {
+        setError(body.error || "บันทึกรายการไม่สำเร็จ");
+        return;
+      }
+      setActionNotice(
+        `บันทึก ${formatAmount(body.amount)} เป็น "${body.category}" ให้ ` +
+          `${body.memberNumber} ${body.memberFullName ?? ""} แล้ว` +
+          (body.inRoster ? "" : " — ⚠️ ไม่พบเลขสมาชิกนี้ในทะเบียนสมาชิก ตรวจสอบอีกครั้ง")
+      );
+      closeForm();
+      await fetchDay(date);
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -243,6 +342,10 @@ export default function DailyReconcilePanel() {
 
       {uploadNotice && (
         <p className="px-4 py-2 text-sm text-green-700 bg-green-50">{uploadNotice}</p>
+      )}
+
+      {actionNotice && (
+        <p className="px-4 py-2 text-sm text-green-700 bg-green-50">{actionNotice}</p>
       )}
 
       {error && <p className="px-4 py-3 text-sm text-red-600">{error}</p>}
@@ -346,10 +449,28 @@ export default function DailyReconcilePanel() {
           <Section
             title={`❓ เงินเข้าที่ไม่รู้ว่าใครโอน (${unknownPayer.length} รายการ)`}
             tone="text-amber-800"
-            note="เลขบัญชีผู้โอนไม่ตรงกับใครเลย ทั้งในทะเบียนเลขบัญชีและรายชื่อหักไม่ได้ทุกรอบ — เงินเข้ามาจริงแต่ยังไม่รู้ว่าของใคร กลุ่มนี้คือที่ต้องตามหา"
+            note={
+              "เลขบัญชีผู้โอนไม่ตรงกับใครเลย ทั้งในทะเบียนเลขบัญชีและรายชื่อหักไม่ได้ทุกรอบ — " +
+              "เงินเข้ามาจริงแต่ยังไม่รู้ว่าของใคร กลุ่มนี้คือที่ต้องตามหา · " +
+              'พอรู้แล้วบันทึกได้ตรงนี้เลย: "ระบุเจ้าของ" = จำเลขบัญชีไว้ใช้ครั้งต่อไป, ' +
+              '"บันทึกรายการ" = ลงเป็นรายการของสมาชิกเหมือนสลิปที่ส่งทางไลน์'
+            }
             empty={unknownPayer.length === 0}
           >
-            <DepositTable deposits={unknownPayer} />
+            <DepositTable
+              deposits={unknownPayer}
+              actions={{
+                acting,
+                setActing,
+                memberNumber: actMemberNumber,
+                setMemberNumber: setActMemberNumber,
+                category: actCategory,
+                setCategory: setActCategory,
+                saving,
+                onBind: bindAccount,
+                onRecord: recordDeposit,
+              }}
+            />
           </Section>
 
           {knownPayer.length > 0 && (
@@ -464,6 +585,10 @@ const SlipTable = ({ slips }: { slips: DailySlipRow[] }) => (
               >
                 ดูสลิป
               </a>
+            ) : slip.statementLineId ? (
+              // Not a missing file: this one never had a slip, staff recorded
+              // it from the statement. Saying so stops it reading as an error.
+              <span className="text-xs text-slate-500">เจ้าหน้าที่บันทึกเอง</span>
             ) : (
               <span className="text-slate-400">—</span>
             )}
@@ -474,7 +599,29 @@ const SlipTable = ({ slips }: { slips: DailySlipRow[] }) => (
   </table>
 );
 
-const DepositTable = ({ deposits }: { deposits: DailyDepositRow[] }) => (
+// What staff can do with an unclaimed deposit, and the forms behind the two
+// buttons. Everything here is optional: the table renders read-only when no
+// handlers are passed, which is what the "already know who paid, just no
+// slip" list wants.
+interface DepositActions {
+  acting: { id: string; kind: "bind" | "record" } | null;
+  setActing: (next: { id: string; kind: "bind" | "record" } | null) => void;
+  memberNumber: string;
+  setMemberNumber: (value: string) => void;
+  category: string;
+  setCategory: (value: string) => void;
+  saving: boolean;
+  onBind: (accountNumber: string) => void;
+  onRecord: (depositId: string) => void;
+}
+
+const DepositTable = ({
+  deposits,
+  actions,
+}: {
+  deposits: DailyDepositRow[];
+  actions?: DepositActions;
+}) => (
   <table className="w-full text-sm">
     <thead className="text-slate-500 text-left text-xs uppercase tracking-wide">
       <tr>
@@ -484,27 +631,151 @@ const DepositTable = ({ deposits }: { deposits: DailyDepositRow[] }) => (
         <th className="px-2 py-1.5 font-semibold">ช่องทาง</th>
         <th className="px-2 py-1.5 font-semibold">เข้าบัญชี</th>
         <th className="px-2 py-1.5 font-semibold">รายละเอียดในสเตทเมนต์</th>
+        {actions && <th className="px-2 py-1.5 font-semibold">ทำอะไรได้</th>}
       </tr>
     </thead>
     <tbody>
-      {deposits.map((deposit) => (
-        <tr key={deposit.id} className="border-t border-slate-100 hover:bg-slate-50">
-          <td className="px-2 py-1.5 whitespace-nowrap">
-            <Clock iso={deposit.postedAt} />
-          </td>
-          <td className="px-2 py-1.5 text-right">
-            <Money value={deposit.amount} className="font-medium" />
-          </td>
-          <td className="px-2 py-1.5">
-            <Payer deposit={deposit} />
-          </td>
-          <td className="px-2 py-1.5 text-slate-500 whitespace-nowrap">
-            {CHANNEL_LABELS[deposit.channel] ?? deposit.channel}
-          </td>
-          <td className="px-2 py-1.5 text-slate-500 whitespace-nowrap">{deposit.branch}</td>
-          <td className="px-2 py-1.5 font-mono text-xs text-slate-400">{deposit.description}</td>
-        </tr>
-      ))}
+      {deposits.map((deposit) => {
+        const open = actions?.acting?.id === deposit.id ? actions.acting.kind : null;
+        const caveat = accountCaveat(deposit.channel);
+
+        return (
+          <Fragment key={deposit.id}>
+            <tr className="border-t border-slate-100 hover:bg-slate-50">
+              <td className="px-2 py-1.5 whitespace-nowrap">
+                <Clock iso={deposit.postedAt} />
+              </td>
+              <td className="px-2 py-1.5 text-right">
+                <Money value={deposit.amount} className="font-medium" />
+              </td>
+              <td className="px-2 py-1.5">
+                <Payer deposit={deposit} />
+              </td>
+              <td className="px-2 py-1.5 text-slate-500 whitespace-nowrap">
+                {CHANNEL_LABELS[deposit.channel] ?? deposit.channel}
+              </td>
+              <td className="px-2 py-1.5 text-slate-500 whitespace-nowrap">{deposit.branch}</td>
+              <td className="px-2 py-1.5 font-mono text-xs text-slate-400">
+                {deposit.description}
+              </td>
+              {actions && (
+                <td className="px-2 py-1.5 whitespace-nowrap">
+                  <span className="inline-flex items-center gap-3 text-xs">
+                    {/* Offered whenever the statement named any digits at all.
+                        Where those digits are doubtful the button carries the
+                        reason rather than disappearing — the person on the
+                        phone knows more about the payment than the
+                        transaction code does. */}
+                    {canBindAccount(deposit) && (
+                      <button
+                        onClick={() => {
+                          actions.setActing({ id: deposit.id, kind: "bind" });
+                          actions.setMemberNumber("");
+                          actions.setCategory("");
+                        }}
+                        className={`hover:underline ${caveat ? "text-amber-700" : "text-slate-900"}`}
+                        title={caveat ?? "จำไว้ว่าเลขบัญชีนี้เป็นของสมาชิกคนนี้ ใช้ได้ทุกครั้งต่อไป"}
+                      >
+                        ระบุเจ้าของ{caveat && " ⚠️"}
+                      </button>
+                    )}
+                    <button
+                      onClick={() => {
+                        actions.setActing({ id: deposit.id, kind: "record" });
+                        actions.setMemberNumber("");
+                        actions.setCategory("");
+                      }}
+                      className="text-slate-900 hover:underline"
+                      title="บันทึกเงินก้อนนี้เป็นรายการของสมาชิก เหมือนที่สลิปทางไลน์ทำ"
+                    >
+                      บันทึกรายการ
+                    </button>
+                  </span>
+                </td>
+              )}
+            </tr>
+
+            {actions && open && (
+              <tr className="bg-slate-50 border-t border-slate-100">
+                <td colSpan={7} className="px-3 py-2.5">
+                  {open === "bind" && caveat && (
+                    <p className="text-xs text-amber-800 mb-2">⚠️ {caveat}</p>
+                  )}
+                  <div className="flex flex-wrap items-center gap-2 text-sm">
+                    <span className="text-slate-500">
+                      {open === "bind"
+                        ? `เลขบัญชี ${deposit.senderAccount} เป็นของสมาชิกเลข`
+                        : `${formatAmount(deposit.amount)} นี้ เป็นเงินของสมาชิกเลข`}
+                    </span>
+                    <input
+                      value={actions.memberNumber}
+                      onChange={(e) => actions.setMemberNumber(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Escape") actions.setActing(null);
+                        if (e.key === "Enter" && actions.memberNumber.trim()) {
+                          if (open === "bind" && deposit.senderAccount) {
+                            actions.onBind(deposit.senderAccount);
+                          } else if (open === "record" && actions.category) {
+                            actions.onRecord(deposit.id);
+                          }
+                        }
+                      }}
+                      placeholder="เลขสมาชิก"
+                      autoFocus
+                      className="border border-slate-300 rounded px-2 py-1 w-40 bg-white"
+                    />
+                    {open === "record" && (
+                      <>
+                        <span className="text-slate-500">จ่ายเป็น</span>
+                        <select
+                          value={actions.category}
+                          onChange={(e) => actions.setCategory(e.target.value)}
+                          className="border border-slate-300 rounded px-2 py-1 bg-white"
+                        >
+                          <option value="">— เลือก —</option>
+                          {CATEGORIES.map((c) => (
+                            <option key={c} value={c}>
+                              {c}
+                            </option>
+                          ))}
+                        </select>
+                      </>
+                    )}
+                    <button
+                      onClick={() => {
+                        if (open === "bind" && deposit.senderAccount) {
+                          actions.onBind(deposit.senderAccount);
+                        } else if (open === "record") {
+                          actions.onRecord(deposit.id);
+                        }
+                      }}
+                      disabled={
+                        actions.saving ||
+                        !actions.memberNumber.trim() ||
+                        (open === "record" && !actions.category)
+                      }
+                      className="px-3 py-1 rounded bg-slate-900 text-white disabled:opacity-40"
+                    >
+                      {actions.saving ? "กำลังบันทึก…" : "บันทึก"}
+                    </button>
+                    <button
+                      onClick={() => actions.setActing(null)}
+                      className="text-slate-500 hover:underline"
+                    >
+                      ยกเลิก
+                    </button>
+                  </div>
+                  <p className="text-xs text-slate-500 mt-2">
+                    {open === "bind"
+                      ? "ผูกเลขบัญชีไว้กับสมาชิก — ไม่ได้บันทึกเงินก้อนนี้เป็นรายการ ถ้าต้องการบันทึกด้วย ให้กด \"บันทึกรายการ\" อีกที"
+                      : "ยอดและวันที่ใช้ตามที่ธนาคารบันทึกไว้ ไม่ต้องพิมพ์เอง — ถ้าบันทึกผิด ลบได้ที่แท็บ \"รายการ\""}
+                  </p>
+                </td>
+              </tr>
+            )}
+          </Fragment>
+        );
+      })}
     </tbody>
   </table>
 );

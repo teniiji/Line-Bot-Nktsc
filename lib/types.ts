@@ -233,7 +233,8 @@ export interface DailyDepositRow {
   memberNumber: string | null;
 }
 
-// One slip a member filed through the bot.
+// One slip a member filed through the bot — or, when statementLineId is set,
+// a payment staff recorded from a bank line because no slip was ever sent.
 export interface DailySlipRow {
   id: string;
   amount: number;
@@ -246,6 +247,9 @@ export interface DailySlipRow {
   transferTime: string | null;
   senderAccount: string | null;
   slipImageUrl: string | null;
+  // The bank line a person recorded this from, when it was recorded that way.
+  // null for a slip the member sent, which is nearly all of them.
+  statementLineId: string | null;
 }
 
 // A statement line that is not a member paying in — the cooperative's own
@@ -264,13 +268,15 @@ export interface DailyReconcileResult {
   matched: {
     deposit: DailyDepositRow;
     slip: DailySlipRow;
-    // How the pair was arrived at, strongest first. "account" — the directory
-    // confirmed the payer. "slipAccount" — the account printed on the slip
-    // agrees with the one the bank named, which needs no directory.
-    // "time" — the amounts agree and the two clocks are within the hour.
-    // "amount" — the amounts agree and nothing else is known, which is a
-    // guess on a day holding more than one payment that size.
-    basis: "account" | "slipAccount" | "time" | "amount";
+    // How the pair was arrived at, strongest first. "staff" — a person
+    // recorded the transaction from this exact bank line, so the pairing was
+    // never inferred at all. "account" — the directory confirmed the payer.
+    // "slipAccount" — the account printed on the slip agrees with the one the
+    // bank named, which needs no directory. "time" — the amounts agree and
+    // the two clocks are within the hour. "amount" — the amounts agree and
+    // nothing else is known, which is a guess on a day holding more than one
+    // payment that size.
+    basis: "staff" | "account" | "slipAccount" | "time" | "amount";
     dayApart: boolean;
     // Minutes between the slip's clock and the bank's posting, when both are
     // known. null for every slip logged before the time was read.

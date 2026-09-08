@@ -51,6 +51,7 @@ export async function GET(request: NextRequest) {
         slipImageUrl: true,
         slipTransferTime: true,
         slipSenderAccount: true,
+        statementLineId: true,
       },
     }),
     prisma.memberBankAccount.findMany({ select: { accountNumber: true, memberNumber: true } }),
@@ -95,6 +96,7 @@ export async function GET(request: NextRequest) {
     category: slip.category,
     transferTime: slip.slipTransferTime,
     senderAccount: slip.slipSenderAccount,
+    statementLineId: slip.statementLineId,
   }));
 
   // Round lists first, then the directory over the top: a binding staff made
@@ -121,6 +123,9 @@ export async function GET(request: NextRequest) {
     transferTime: slip.transferTime,
     senderAccount: slip.senderAccount,
     slipImageUrl: slipImages.get(slip.id) ?? null,
+    // Staff-recorded transactions have no slip to look at, and saying so is
+    // what stops the "ดูสลิป" column reading as a missing file.
+    statementLineId: slip.statementLineId,
   });
 
   const describeDeposit = (deposit: DepositLine) => ({

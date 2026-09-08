@@ -80,6 +80,20 @@ model Expense {
   // how much of it can be matched does not need the slips re-read.
   slipTransferTime     String?
   slipSenderAccount    String?
+  // Set when staff recorded this transaction from a bank line in the daily
+  // view rather than from a slip a member sent: the StatementLine it came
+  // from. It is the only link between a transaction and the money behind it
+  // that is not a guess — everything else the daily reconciliation has to
+  // work with is an amount, a clock and a masked account number, which is why
+  // it labels every pair with how sure it is. Here a person said so outright,
+  // so that pairing is reported as its own basis rather than as "ยอดตรง".
+  //
+  // Unique because one bank line is one payment: two people working the same
+  // short list of unclaimed deposits, or one double-click, is refused by the
+  // database rather than producing two records of the same money.
+  //
+  // A plain column, no relation, per the convention in this schema.
+  statementLineId      String?  @unique
 
   @@index([date])
   @@index([category])
