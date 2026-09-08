@@ -30,6 +30,70 @@ const slip = (over: Partial<SlipRecord> = {}): SlipRecord => ({
 
 const directory = new Map([["4131572885", "30051"]]);
 
+describe("reconcileDay, member numbers written differently", () => {
+  // 8 Sep 2026, นางสาวภรณ์ทิพย์ เข็มศิริ. The money was in the statement and
+  // the slip was in the system; they refused to pair because the two records
+  // spelled her member number differently.
+  const HER_ACCOUNT = "9825072199";
+  const herDeposit = deposit({
+    id: "line-4200",
+    amount: 4200,
+    postedAt: new Date("2026-09-08T12:30:24.000Z"),
+    senderAccount: HER_ACCOUNT,
+    description: `TR fr ${HER_ACCOUNT}`,
+  });
+  const herSlip = slip({
+    amount: 4200,
+    date: new Date("2026-09-08T00:00:00.000Z"),
+    // As the slip was filed: with a leading zero.
+    memberNumber: "029262",
+    memberFullName: "นางสาวภรณ์ทิพย์ เข็มศิริ",
+    transferTime: "12:30",
+    senderAccount: "XXX-X-XX219-9",
+  });
+  // As the หักไม่ได้ sheet has it: without.
+  const sheet = new Map([[HER_ACCOUNT, "29262"]]);
+
+  it("pairs them, on the directory's own evidence", () => {
+    const result = reconcileDay([herDeposit], [herSlip], sheet);
+    expect(result.matched).toHaveLength(1);
+    expect(result.matched[0].basis).toBe("account");
+    expect(result.slipsWithoutMoney).toHaveLength(0);
+    expect(result.depositsWithoutSlip).toHaveLength(0);
+  });
+
+  it("still refuses a deposit that belongs to a genuinely different member", () => {
+    // The refusal is the point of the check and must survive the fix: money
+    // from somebody else's account is not this member's payment however well
+    // the amount fits.
+    const result = reconcileDay(
+      [herDeposit],
+      [herSlip],
+      new Map([[HER_ACCOUNT, "29252"]])
+    );
+    expect(result.matched).toHaveLength(0);
+    expect(result.slipsWithoutMoney).toHaveLength(1);
+  });
+
+  it("does not treat an unknown owner as agreement", () => {
+    // With nothing in the directory the pair still has to be earned — here by
+    // the account printed on the slip, not by the member number.
+    const result = reconcileDay([herDeposit], [herSlip], new Map());
+    expect(result.matched).toHaveLength(1);
+    expect(result.matched[0].basis).toBe("slipAccount");
+  });
+
+  it("does not refuse a slip that names no member at all", () => {
+    const result = reconcileDay(
+      [herDeposit],
+      [slip({ amount: 4200, memberNumber: null, senderAccount: null, transferTime: null })],
+      sheet
+    );
+    expect(result.matched).toHaveLength(1);
+    expect(result.matched[0].basis).toBe("amount");
+  });
+});
+
 describe("reconcileDay, staff-recorded transactions", () => {
   // Recording an unclaimed deposit from the daily view writes the line's id
   // onto the transaction, so this pairing is the one thing here that is not

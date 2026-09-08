@@ -17,6 +17,7 @@ import { DepositLine, SlipRecord, reconcileDay } from "../lib/dailyReconcile";
 import { CHANNEL_LABELS, OTHER_CHANNEL } from "../lib/statementLines";
 import { compareSlipAccount, normalizeAccountPattern, slipTimeMinutes } from "../lib/slipDetails";
 import { formatAmount } from "../lib/format";
+import { differentMembers, memberNumberKey, sameMember } from "../lib/memberNumber";
 
 const prisma = new PrismaClient();
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -186,17 +187,15 @@ async function main() {
       // shows up under "รู้ว่าใครโอน" with a member number that looks like
       // the same person written differently.
       const owner = deposit.senderAccount ? accountOwners.get(deposit.senderAccount) : undefined;
-      if (owner && slip.memberNumber && owner !== slip.memberNumber) {
+      if (differentMembers(owner, slip.memberNumber)) {
         console.log(
           `    ⛔ ถูกปฏิเสธ: ทะเบียนบอกว่าบัญชี ${deposit.senderAccount} เป็นของเลขสมาชิก ` +
             `"${owner}" แต่สลิปเป็นของ "${slip.memberNumber}"`
         );
         console.log(`       ที่มาของทะเบียน: ${ownerSource.get(deposit.senderAccount!)}`);
-        if (owner.replace(/^0+/, "") === slip.memberNumber.replace(/^0+/, "")) {
-          console.log(
-            `       ⚠️ สองเลขนี้ต่างกันแค่เลขศูนย์นำหน้า — เป็นคนเดียวกัน แต่ระบบเทียบแบบตรงตัว จึงมองว่าคนละคน`
-          );
-        }
+        console.log(
+          `       เทียบแบบตัดศูนย์นำหน้าแล้ว: "${memberNumberKey(owner)}" vs "${memberNumberKey(slip.memberNumber)}" — คนละคนจริง`
+        );
         continue;
       }
 
@@ -214,7 +213,7 @@ async function main() {
       // deposit to a better-supported slip, or it should have paired.
       const slipMinutes = slipTimeMinutes(slip.transferTime);
       const basis =
-        owner && slip.memberNumber && owner === slip.memberNumber
+        sameMember(owner, slip.memberNumber)
           ? "เลขบัญชีตรง"
           : verdict === "match"
             ? "บัญชีในสลิปตรง"
