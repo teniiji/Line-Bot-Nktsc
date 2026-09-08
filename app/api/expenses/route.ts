@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { statedMemberNumber } from "@/lib/memberIdentity";
 import { CATEGORIES } from "@/lib/categories";
 import { buildExpenseWhere } from "@/lib/expenseFilters";
 
@@ -100,10 +101,7 @@ export async function POST(request: NextRequest) {
   // Manual staff entry mirrors what the LINE agent records: identity is
   // "verified" only when the member number actually matches the imported
   // roster, not merely because staff typed it in.
-  const trimmedNumber =
-    typeof memberNumber === "string" && memberNumber.trim()
-      ? memberNumber.trim()
-      : null;
+  const trimmedNumber = statedMemberNumber(memberNumber);
   const rosterMatch = trimmedNumber
     ? await prisma.memberRoster.findUnique({
         where: { memberNumber: trimmedNumber },

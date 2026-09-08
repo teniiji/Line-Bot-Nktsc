@@ -3,6 +3,7 @@ import {
   askForMissingIdentity,
   memberNumberProblem,
   mergeIdentity,
+  statedMemberNumber,
   statedValue,
 } from "../lib/memberIdentity";
 
@@ -123,5 +124,34 @@ describe("memberNumberProblem", () => {
   it("does not refuse a 13-character value that is not all digits", () => {
     // The rule is about national IDs specifically, not about length.
     expect(memberNumberProblem("29252/2569-01")).toBeNull();
+  });
+});
+
+describe("statedMemberNumber", () => {
+  it("stores a stated number the one way the database holds it", () => {
+    // A member typing "029262" and a หักไม่ได้ sheet saying "29262" used to
+    // become two members: the reconciliation refused to pair her payment, and
+    // every roster lookup for the padded form found nothing, so her
+    // transactions were filed as unverified.
+    expect(statedMemberNumber("029262")).toBe("29262");
+    expect(statedMemberNumber("  029262 ")).toBe("29262");
+  });
+
+  it("leaves an ordinary number alone", () => {
+    expect(statedMemberNumber("29262")).toBe("29262");
+    expect(statedMemberNumber("900123")).toBe("900123");
+  });
+
+  it("still refuses a placeholder, exactly as statedValue does", () => {
+    // The rule this wraps must not weaken: "<UNKNOWN>" was once saved as if a
+    // real number, and canonicalising it would only have made it tidier.
+    expect(statedMemberNumber("<UNKNOWN>")).toBeNull();
+    expect(statedMemberNumber("ไม่ทราบ")).toBeNull();
+    expect(statedMemberNumber("")).toBeNull();
+    expect(statedMemberNumber(undefined)).toBeNull();
+  });
+
+  it("does not touch anything but leading zeros", () => {
+    expect(statedMemberNumber("29262-1")).toBe("29262-1");
   });
 });

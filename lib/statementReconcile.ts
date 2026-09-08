@@ -5,6 +5,8 @@
 // has paid can be tested directly — these are the numbers staff chase people
 // over, so getting them wrong is expensive.
 
+import { memberNumberKey } from "./memberNumber";
+
 export interface MaiDaiRow {
   memberNumber: string;
   name: string;
@@ -212,7 +214,9 @@ export function parseMaiDaiSheet(rows: unknown[][]): MaiDaiSheet {
   let awaitingAmount = 0;
 
   for (const row of rows) {
-    const memberNumber = String(row[0] ?? "").trim();
+    // Canonical from the moment it is read, so this sheet's spelling of a
+    // member number never has to be reconciled against anybody else's.
+    const memberNumber = memberNumberKey(String(row[0] ?? "")) ?? "";
     if (!memberNumber) continue;
 
     const collected = parseAmount(row[3]);

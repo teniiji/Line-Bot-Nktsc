@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import {
   MEMBER_NUMBER_TAKEN_ERROR,
   memberNumberProblem,
+  statedMemberNumber,
   statedValue,
 } from "@/lib/memberIdentity";
 
@@ -62,7 +63,7 @@ export async function PUT(
   }
 
   if (memberNumber !== undefined) {
-    const stated = statedValue(memberNumber);
+    const stated = statedMemberNumber(memberNumber);
     if (stated === null) {
       data.memberNumber = null;
     } else {

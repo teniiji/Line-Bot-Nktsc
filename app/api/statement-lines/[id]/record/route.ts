@@ -7,6 +7,7 @@ import {
   recordProblem,
 } from "@/lib/depositRecord";
 import { isMemberDeposit } from "@/lib/statementLines";
+import { memberNumberKey } from "@/lib/memberNumber";
 
 export const dynamic = "force-dynamic";
 
@@ -26,7 +27,7 @@ export async function POST(
   { params }: { params: { id: string } }
 ) {
   const body = await request.json().catch(() => ({}) as Record<string, unknown>);
-  const memberNumber = String(body.memberNumber ?? "").trim();
+  const memberNumber = memberNumberKey(String(body.memberNumber ?? "")) ?? "";
   const category = String(body.category ?? "").trim();
   const note = String(body.note ?? "").trim() || null;
 
