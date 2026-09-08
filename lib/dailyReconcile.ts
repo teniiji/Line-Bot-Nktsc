@@ -35,6 +35,7 @@
 // what does not add up.
 
 import { compareSlipAccount, slipTimeMinutes } from "./slipDetails";
+import { differentMembers, sameMember } from "./memberNumber";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -172,13 +173,16 @@ export function reconcileDay(
 
       const dayApart =
         deposit.postedAt !== null && dayOf(deposit.postedAt) !== dayOf(slip.date);
-      const byAccount = Boolean(owner && slip.memberNumber && owner === slip.memberNumber);
+      // Compared as members rather than as strings: the two numbers reach
+      // here from different sources that write them differently, and "29262"
+      // against "029262" is one member, not two. See lib/memberNumber.ts.
+      const byAccount = sameMember(owner, slip.memberNumber);
 
       // A deposit whose account is known to belong to somebody else is not
       // this member's payment however well the amount fits — silence beats a
       // confident wrong pairing here, because the whole point of the view is
       // to surface what does not add up.
-      if (owner && slip.memberNumber && owner !== slip.memberNumber) continue;
+      if (differentMembers(owner, slip.memberNumber)) continue;
 
       // The slip's own account says the same thing without needing the
       // directory, and it can say it the other way too: a slip whose visible
