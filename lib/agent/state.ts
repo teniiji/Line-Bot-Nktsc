@@ -7,6 +7,7 @@ import { prisma } from "../prisma";
 import { namesLikelyMatch } from "../nameMatch";
 import { CATEGORIES } from "../categories";
 import { LOAN_TYPES } from "../loanTypes";
+import type { RecentAction } from "../closingReply";
 import {
   isFeatureEnabled,
   ASK_MEMBER_INFO_ENABLED,
@@ -289,3 +290,46 @@ export async function loadPendingLookup(lineUserId: string): Promise<PendingLook
   return pending;
 }
 
+
+// How far back a "ขอบคุณค่ะ" can plausibly be thanking the bot for something
+// it did. Longer than the pending-transaction expiry on purpose: a member
+// often replies to the confirmation only when they next open LINE, and a
+// close that names the right subject an hour later is still right. Past this,
+// naming a subject would be a guess, and the bot says nothing specific
+// instead — see closingNote.
+const RECENT_ACTION_WINDOW_MS = 60 * 60 * 1000;
+
+// The last thing the bot finished for this member: a logged transaction or a
+// service request handed to staff, whichever is newer. Only loaded when the
+// incoming message is a bare acknowledgement, so it costs nothing on an
+// ordinary message.
+export async function loadRecentAction(lineUserId: string): Promise<RecentAction | null> {
+  const since = new Date(Date.now() - RECENT_ACTION_WINDOW_MS);
+  const [expense, request] = await Promise.all([
+    prisma.expense.findFirst({
+      where: { lineUserId, createdAt: { gte: since } },
+      orderBy: { createdAt: "desc" },
+      select: { createdAt: true, category: true, amount: true },
+    }),
+    prisma.serviceRequestLog.findFirst({
+      where: { lineUserId, createdAt: { gte: since } },
+      orderBy: { createdAt: "desc" },
+      select: { createdAt: true, documentType: true, requestType: true },
+    }),
+  ]);
+
+  const expenseIsNewer =
+    expense !== null &&
+    (request === null || expense.createdAt.getTime() >= request.createdAt.getTime());
+  if (expenseIsNewer) {
+    return { kind: "transaction", category: expense.category, amount: expense.amount };
+  }
+  if (request) {
+    return {
+      kind: "serviceRequest",
+      documentType: request.documentType,
+      requestType: request.requestType,
+    };
+  }
+  return null;
+}
