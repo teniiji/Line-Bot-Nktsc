@@ -10,6 +10,7 @@ import {
 } from "../departmentRouting";
 import { getCategoryDepartment } from "../categoryDepartments";
 import { formatAmount } from "../format";
+import { depositAccountLine } from "../depositNotice";
 import { NO_DOCUMENT } from "../documentTypes";
 import { isFeatureEnabled, departmentNotifyKey } from "../featureFlags";
 import type { LineUserInfo, PendingServiceInfo } from "./types";
@@ -316,7 +317,9 @@ export async function notifyTransactionForward(
       // this straight across to the bank statement, so the mask stays.
       expense.slipSenderAccount ? `\nบัญชีผู้โอน: ${expense.slipSenderAccount}` : ""
     }${
-      expense.depositAccountNumber ? `\nเลขที่บัญชีที่ฝาก: ${expense.depositAccountNumber}` : ""
+      // Said either way for a deposit — see lib/depositNotice.ts for why a
+      // missing account has to be stated rather than left as a blank space.
+      depositAccountLine(expense.category, expense.depositAccountNumber)
     }${
       expense.description ? `\nหมายเหตุ: ${expense.description}` : ""
     }\nชื่อ-นามสกุล: ${lineUser.fullName}\nเลขสมาชิก: ${lineUser.memberNumber}\nสถานะ: ${verifyMark}${
