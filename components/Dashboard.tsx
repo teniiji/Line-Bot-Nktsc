@@ -257,14 +257,14 @@ export default function Dashboard() {
             ),
           },
           {
-            id: "deductions",
-            label: "รายการหัก",
-            content: (
-              <div className="space-y-6">
-                <DeductionRoundsPanel />
-                <OrganizationUnitsPanel />
-              </div>
-            ),
+            id: "daily",
+            label: "เงินเข้าประจำวัน",
+            content: <DailyReconcilePanel />,
+          },
+          {
+            id: "service-requests",
+            label: "คำขอบริการ",
+            content: <ServiceRequestsPanel />,
           },
           {
             id: "statement",
@@ -277,33 +277,12 @@ export default function Dashboard() {
             ),
           },
           {
-            id: "daily",
-            label: "เงินเข้าประจำวัน",
-            content: <DailyReconcilePanel />,
-          },
-          {
-            id: "service-requests",
-            label: "คำขอบริการ",
-            content: <ServiceRequestsPanel />,
-          },
-          {
-            id: "contacts",
-            label: "ผู้รับผิดชอบ",
+            id: "deductions",
+            label: "รายการหัก",
             content: (
               <div className="space-y-6">
-                <LineGroupsPanel />
-                <ResponsibleContactsPanel />
-                <DepartmentContactsPanel />
-              </div>
-            ),
-          },
-          {
-            id: "knowledge",
-            label: "ฐานความรู้",
-            content: (
-              <div className="space-y-6">
-                <KnowledgePanel />
-                <FormLinksPanel />
+                <DeductionRoundsPanel />
+                <OrganizationUnitsPanel />
               </div>
             ),
           },
@@ -319,9 +298,30 @@ export default function Dashboard() {
             ),
           },
           {
+            id: "contacts",
+            label: "ผู้รับผิดชอบ",
+            content: (
+              <div className="space-y-6">
+                <LineGroupsPanel />
+                <ResponsibleContactsPanel />
+                <DepartmentContactsPanel />
+              </div>
+            ),
+          },
+          {
             id: "settings",
             label: "ตั้งค่าระบบ",
             content: <FeatureFlagsPanel />,
+          },
+          {
+            id: "knowledge",
+            label: "ฐานความรู้",
+            content: (
+              <div className="space-y-6">
+                <KnowledgePanel />
+                <FormLinksPanel />
+              </div>
+            ),
           },
         ]}
       />
