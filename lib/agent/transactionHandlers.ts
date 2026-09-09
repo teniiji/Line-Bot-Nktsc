@@ -104,28 +104,64 @@ export async function finalizeTransaction(
 }
 
 
+// The tool the model is forced to call answers exactly one question. Anything
+// else the member said in the same breath arrives here unsaved, and "ask the
+// user for X next" — all this used to say — reads as permission to drop it.
+//
+// That is what turned one ฿30,000 repayment into seven minutes and ten
+// messages: the member sent the slip and wrote "จ่ายหนี้นะคะ", and was asked
+// for the category twice afterwards; then wrote "ดำรงชีพ ATM น.ส.กาญจภัษฐ์ วงษ์สวรรค์",
+// had the name saved and the loan type dropped, and was asked for the loan
+// type twice more. Both answers were in messages the bot had already read.
+//
+// Order is not decoration: submit_loan_type refuses a transaction whose
+// category is not yet ชำระหนี้, so the category has to be banked first.
+export const CAPTURE_BEFORE_ASKING =
+  " IMPORTANT — before you ask for it, re-read the member's current message." +
+  " If it ALSO states the transaction category, call report_transaction with that category now, in this same turn." +
+  ` If it ALSO states the loan type (one of ${LOAN_TYPES.join(", ")}), call submit_loan_type` +
+  " — after report_transaction if the category came in the same message, since a loan type cannot attach to a transaction that is not ชำระหนี้ yet." +
+  " If it ALSO states the deposit account number, call submit_deposit_account." +
+  " Ask only for what is still genuinely unknown once you have done that, and NEVER ask the member for something they have already told you.";
+
 export function requirementMessage(next: Requirement): string {
   if (next === "member_info") {
-    return "Still missing: member full name and member number. Ask the user for their ชื่อ-นามสกุล and เลขสมาชิก next, in Thai. Do not log yet.";
+    return (
+      "Still missing: member full name and member number. Ask the user for their ชื่อ-นามสกุล and เลขสมาชิก next, in Thai. Do not log yet." +
+      CAPTURE_BEFORE_ASKING
+    );
   }
   if (next === "slip") {
-    return "Still missing: a photo of the transfer slip. Ask the user to send it next, in Thai. Do not log yet.";
+    return (
+      "Still missing: a photo of the transfer slip. Ask the user to send it next, in Thai. Do not log yet." +
+      CAPTURE_BEFORE_ASKING
+    );
   }
   if (next === "category") {
-    return `Still missing: which category this transaction is for — the slip showed no stated purpose. Ask the user directly, in Thai, listing the options: ${CATEGORIES.join(
-      ", "
-    )}. Do not guess. Do not log yet.`;
+    return (
+      `Still missing: which category this transaction is for — the slip showed no stated purpose. Ask the user directly, in Thai, listing the options: ${CATEGORIES.join(
+        ", "
+      )}. Do not guess. Do not log yet.` + CAPTURE_BEFORE_ASKING
+    );
   }
   if (next === "loan_type") {
-    return `Still missing: loan type for this ชำระหนี้ repayment. Ask the user to specify one of: ${LOAN_TYPES.join(
-      ", "
-    )}. Do not log yet.`;
+    return (
+      `Still missing: loan type for this ชำระหนี้ repayment. Ask the user to specify one of: ${LOAN_TYPES.join(
+        ", "
+      )}. Do not log yet.` + CAPTURE_BEFORE_ASKING
+    );
   }
   if (next === "deposit_account") {
-    return "Still missing: which cooperative account number this ฝากเงิน deposit is going into. Ask the user for it next, in Thai. Do not log yet.";
+    return (
+      "Still missing: which cooperative account number this ฝากเงิน deposit is going into. Ask the user for it next, in Thai. Do not log yet." +
+      CAPTURE_BEFORE_ASKING
+    );
   }
   if (next === "confirm_sender_name") {
-    return "Still missing: confirmation that this is genuinely the member's own transaction — the slip's sender name didn't match their registered name. Ask them to confirm next, in Thai. Do not log yet.";
+    return (
+      "Still missing: confirmation that this is genuinely the member's own transaction — the slip's sender name didn't match their registered name. Ask them to confirm next, in Thai. Do not log yet." +
+      CAPTURE_BEFORE_ASKING
+    );
   }
   return "";
 }
