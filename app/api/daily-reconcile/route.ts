@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { DepositLine, SlipRecord, reconcileDay } from "@/lib/dailyReconcile";
 import { OTHER_CHANNEL } from "@/lib/statementLines";
 import { statementLineStatus } from "@/lib/statementDayView";
+import { memberNumberKey } from "@/lib/memberNumber";
 
 export const dynamic = "force-dynamic";
 
@@ -149,9 +150,36 @@ export async function GET(request: NextRequest) {
   // count here is the count in the file, which is what makes "did it drop
   // something?" answerable at a glance.
   const slipByDeposit = new Map(result.matched.map((pair) => [pair.deposit.id, pair.slip]));
-  const statement = lines.map((line) => {
+  const resolved = lines.map((line) => {
     const slip = slipByDeposit.get(line.id) ?? null;
     const owner = line.senderAccount ? (accountOwners.get(line.senderAccount) ?? null) : null;
+    return { line, slip, owner, memberNumber: slip?.memberNumber ?? owner };
+  });
+
+  // A row whose payer was recognised only through the account directory has a
+  // member number and nothing else — the name lives in the roster, not on the
+  // bank line, so without this the column reads "27111" and staff have to look
+  // the number up somewhere else to know who to chase. The unit comes with it:
+  // chasing a payment means contacting whoever handles that unit.
+  const numbersOnPage = [
+    ...new Set(
+      resolved
+        .map((row) => memberNumberKey(row.memberNumber))
+        .filter((n): n is string => n !== null)
+    ),
+  ];
+  const rosterRows = numbersOnPage.length
+    ? await prisma.memberRoster.findMany({
+        where: { memberNumber: { in: numbersOnPage } },
+        select: { memberNumber: true, memberName: true, unitName: true },
+      })
+    : [];
+  const rosterByNumber = new Map(
+    rosterRows.map((row) => [memberNumberKey(row.memberNumber) ?? row.memberNumber, row])
+  );
+
+  const statement = resolved.map(({ line, slip, owner, memberNumber }) => {
+    const entry = rosterByNumber.get(memberNumberKey(memberNumber) ?? "") ?? null;
     return {
       id: line.id,
       postedAt: line.postedAt?.toISOString() ?? null,
@@ -170,8 +198,11 @@ export async function GET(request: NextRequest) {
         matched: slip !== null,
         ownerMemberNumber: owner,
       }),
-      memberNumber: slip?.memberNumber ?? owner,
-      memberName: slip?.memberFullName ?? null,
+      memberNumber,
+      // Roster name first, the slip's second: the roster is the cooperative's
+      // own record, while the name on a slip is whatever the member typed.
+      memberName: entry?.memberName ?? slip?.memberFullName ?? null,
+      unitName: entry?.unitName ?? null,
     };
   });
 

@@ -44,6 +44,19 @@ export const formatStatementTime = (iso: string | null): string => {
   return `${date.toLocaleTimeString("th-TH", TIME_PARTS)} น.`;
 };
 
+// The same clock reading with its seconds kept, for the one table that is
+// read straight across against the bank's own printout. Everywhere else the
+// minute is the useful unit and the seconds are noise; here they are how two
+// postings in the same minute are told apart, and how a row is found again in
+// the file. Same midnight guard: a export that carried no clock still shows
+// nothing rather than inventing "00:00:00".
+export const formatStatementTimeExact = (iso: string | null): string => {
+  if (!iso) return "";
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime()) || !carriesTime(date)) return "";
+  return `${date.toLocaleTimeString("th-TH", { ...TIME_PARTS, second: "2-digit" })} น.`;
+};
+
 // Both on one line, for CSV and for places too narrow to stack them.
 export const formatStatementDateTime = (iso: string | null): string => {
   const date = formatStatementDate(iso);
