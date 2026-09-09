@@ -30,6 +30,12 @@ export async function POST(
   const memberNumber = memberNumberKey(String(body.memberNumber ?? "")) ?? "";
   const category = String(body.category ?? "").trim();
   const note = String(body.note ?? "").trim() || null;
+  // Optional, and only used when the roster cannot supply one. Staff ringing
+  // round to place a payment learn the name along with the number, and a
+  // transaction filed with a number the roster does not have would otherwise
+  // be unnameable — and so unverifiable, which is exactly how a ฿1,800,000
+  // deposit got stuck in the review queue with nothing to click.
+  const statedName = String(body.memberName ?? "").trim() || null;
 
   const problem = recordProblem({ memberNumber, category });
   if (problem) {
@@ -82,7 +88,9 @@ export async function POST(
         // actually arrived and the daily view finds it there.
         date: line.postedAt,
         memberNumber,
-        memberFullName: rosterMatch?.memberName ?? null,
+        // The roster is canonical where it knows the member; the name staff
+        // typed is the fallback, not an override.
+        memberFullName: rosterMatch?.memberName ?? statedName,
         memberVerified: rosterMatch !== null,
         statementLineId: line.id,
       },

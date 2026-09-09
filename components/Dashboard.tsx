@@ -46,6 +46,11 @@ export default function Dashboard() {
   const [page, setPage] = useState(1);
   const [summary, setSummary] = useState<ExpenseSummary>(EMPTY_SUMMARY);
   const [loading, setLoading] = useState(true);
+  // Nothing here ever showed a failed request before: verify and delete threw
+  // their responses away, so a refused action looked exactly like a button
+  // that did nothing. A ฿1,800,000 deposit sat in the review queue because of
+  // it — the server was explaining the problem to no one.
+  const [actionError, setActionError] = useState<string | null>(null);
   const [editingExpense, setEditingExpense] = useState<Expense | null>(null);
   const [pendingDelete, setPendingDelete] = useState<Expense | null>(null);
   const [pendingVerify, setPendingVerify] = useState<Expense | null>(null);
@@ -141,7 +146,13 @@ export default function Dashboard() {
     if (!pendingDelete) return;
     const id = pendingDelete.id;
     setPendingDelete(null);
-    await fetch(`/api/expenses/${id}`, { method: "DELETE" });
+    setActionError(null);
+    const res = await fetch(`/api/expenses/${id}`, { method: "DELETE" });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      setActionError(body.error || "ลบรายการไม่สำเร็จ");
+      return;
+    }
     if (editingExpense?.id === id) setEditingExpense(null);
     await fetchExpenses();
   };
@@ -150,7 +161,13 @@ export default function Dashboard() {
     if (!pendingVerify) return;
     const id = pendingVerify.id;
     setPendingVerify(null);
-    await fetch(`/api/expenses/${id}/verify`, { method: "POST" });
+    setActionError(null);
+    const res = await fetch(`/api/expenses/${id}/verify`, { method: "POST" });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      setActionError(body.error || "ยืนยันตัวตนไม่สำเร็จ");
+      return;
+    }
     await fetchExpenses();
   };
 
@@ -183,6 +200,18 @@ export default function Dashboard() {
           แดชบอร์ดเจ้าหน้าที่ — ธุรกรรมสมาชิกผ่าน LINE Bot, คิวตรวจสอบตัวตน และทะเบียนคำขอบริการ
         </p>
       </header>
+
+      {actionError && (
+        <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800 whitespace-pre-line">
+          {actionError}
+          <button
+            onClick={() => setActionError(null)}
+            className="ml-3 text-red-600 hover:underline"
+          >
+            ปิด
+          </button>
+        </div>
+      )}
 
       <Tabs
         defaultTab="transactions"

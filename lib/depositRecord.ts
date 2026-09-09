@@ -112,6 +112,20 @@ export function describeDepositRecord(
   return parts.join(" · ");
 }
 
+// Said when staff try to confirm a member's identity on a transaction that
+// carries a member number the roster has never heard of.
+//
+// Confirming registers the member in MemberRoster, and a roster row needs a
+// name. When the number is not in the roster and the transaction has no name
+// of its own, there is nothing to register — and the two ways out are
+// different enough that the message has to name both: a mistyped number is
+// fixed on the transaction, a member genuinely missing from the roster is
+// fixed in the roster.
+export const NO_NAME_TO_VERIFY_ERROR =
+  "ยืนยันไม่ได้เพราะไม่รู้ชื่อสมาชิก — เลขสมาชิกนี้ไม่มีในทะเบียนสมาชิก และรายการนี้ก็ไม่มีชื่อติดมา\n" +
+  "• ถ้าเลขสมาชิกพิมพ์ผิด แก้ที่ปุ่ม \"แก้ไข\" ของรายการนี้\n" +
+  "• ถ้าเลขถูกแล้วแต่สมาชิกยังไม่อยู่ในทะเบียน ใส่ชื่อ-นามสกุลที่ปุ่ม \"แก้ไข\" แล้วกดยืนยันอีกครั้ง (ระบบจะเพิ่มเข้าทะเบียนให้)";
+
 // Said when somebody records the same bank line twice. It happens: two people
 // work the same short list, or one clicks twice. The database refuses it
 // (Expense.statementLineId is unique) and this is what the refusal means —

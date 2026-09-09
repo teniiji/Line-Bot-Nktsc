@@ -145,6 +145,10 @@ export default function DailyReconcilePanel() {
   // distracted click file a ฿90,000 payment as ซื้อหุ้น without anyone having
   // decided that — the category is what routes the payment to a department.
   const [actCategory, setActCategory] = useState<string>("");
+  // Only used when the roster does not know the number. Optional on purpose:
+  // most numbers are in the roster and the name comes from there, so making
+  // it required would tax every recording for the sake of the few.
+  const [actMemberName, setActMemberName] = useState("");
   const [saving, setSaving] = useState(false);
   const [actionNotice, setActionNotice] = useState<string | null>(null);
 
@@ -199,6 +203,7 @@ export default function DailyReconcilePanel() {
   const closeForm = () => {
     setActing(null);
     setActMemberNumber("");
+    setActMemberName("");
     setActCategory("");
   };
 
@@ -252,6 +257,7 @@ export default function DailyReconcilePanel() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           memberNumber: actMemberNumber.trim(),
+          memberName: actMemberName.trim(),
           category: actCategory,
         }),
       });
@@ -492,6 +498,8 @@ export default function DailyReconcilePanel() {
                 setActing,
                 memberNumber: actMemberNumber,
                 setMemberNumber: setActMemberNumber,
+                memberName: actMemberName,
+                setMemberName: setActMemberName,
                 category: actCategory,
                 setCategory: setActCategory,
                 saving,
@@ -621,6 +629,8 @@ interface DepositActions {
   setActing: (next: { id: string; kind: "bind" | "record" } | null) => void;
   memberNumber: string;
   setMemberNumber: (value: string) => void;
+  memberName: string;
+  setMemberName: (value: string) => void;
   category: string;
   setCategory: (value: string) => void;
   saving: boolean;
@@ -684,6 +694,7 @@ const DepositTable = ({
                         onClick={() => {
                           actions.setActing({ id: deposit.id, kind: "bind" });
                           actions.setMemberNumber("");
+                          actions.setMemberName("");
                           actions.setCategory("");
                         }}
                         className={`hover:underline ${caveat ? "text-amber-700" : "text-slate-900"}`}
@@ -696,6 +707,7 @@ const DepositTable = ({
                       onClick={() => {
                         actions.setActing({ id: deposit.id, kind: "record" });
                         actions.setMemberNumber("");
+                        actions.setMemberName("");
                         actions.setCategory("");
                       }}
                       className="text-slate-900 hover:underline"
@@ -739,6 +751,13 @@ const DepositTable = ({
                     />
                     {open === "record" && (
                       <>
+                        <input
+                          value={actions.memberName}
+                          onChange={(e) => actions.setMemberName(e.target.value)}
+                          placeholder="ชื่อ-นามสกุล (ใส่เมื่อไม่มีในทะเบียน)"
+                          title="ปล่อยว่างได้ถ้าเลขสมาชิกมีในทะเบียนอยู่แล้ว — ระบบจะใช้ชื่อจากทะเบียนเสมอ"
+                          className="border border-slate-300 rounded px-2 py-1 w-64 bg-white"
+                        />
                         <span className="text-slate-500">จ่ายเป็น</span>
                         <select
                           value={actions.category}
@@ -781,7 +800,7 @@ const DepositTable = ({
                   <p className="text-xs text-slate-500 mt-2">
                     {open === "bind"
                       ? "ผูกเลขบัญชีไว้กับสมาชิก — ไม่ได้บันทึกเงินก้อนนี้เป็นรายการ ถ้าต้องการบันทึกด้วย ให้กด \"บันทึกรายการ\" อีกที"
-                      : "ยอดและวันที่ใช้ตามที่ธนาคารบันทึกไว้ ไม่ต้องพิมพ์เอง — ถ้าบันทึกผิด ลบได้ที่แท็บ \"รายการ\""}
+                      : "ยอดและวันที่ใช้ตามที่ธนาคารบันทึกไว้ ไม่ต้องพิมพ์เอง · ชื่อใส่เฉพาะตอนที่เลขสมาชิกยังไม่มีในทะเบียน (ถ้ามีแล้วระบบใช้ชื่อจากทะเบียน) — ถ้าบันทึกผิด ลบได้ที่แท็บ \"รายการ\""}
                   </p>
                 </td>
               </tr>
