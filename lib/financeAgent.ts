@@ -10,12 +10,14 @@ import { getFormLinksData } from "./formLinks";
 import { stripDisallowedLinks } from "./links";
 import { tools } from "./agent/tools";
 import { buildSystemPrompt } from "./agent/prompts";
+import { isAcknowledgementOnly, closingNote } from "./closingReply";
 import {
   loadLineUser,
   loadAllPending,
   loadPendingServiceRequest,
   loadPendingLookup,
   loadDisabledRequirements,
+  loadRecentAction,
   computeNextRequirement,
   computeServiceRequirement,
   computeLookupRequirement,
@@ -49,6 +51,14 @@ function hasAttachmentContent(content: Anthropic.MessageParam["content"]): boole
   );
 }
 
+// The member's message as plain text, or null when anything else came with
+// it — a photo is never a bare "ขอบคุณค่ะ", whatever caption is attached.
+function plainTextOf(content: Anthropic.MessageParam["content"]): string | null {
+  if (typeof content === "string") return content;
+  if (content.some((block) => block.type !== "text")) return null;
+  return content.map((block) => (block.type === "text" ? block.text : "")).join(" ");
+}
+
 export async function runFinanceAgent(
   userContent: Anthropic.MessageParam["content"],
   lineUserId: string,
@@ -56,7 +66,13 @@ export async function runFinanceAgent(
   slipImageHash: string | null = null,
   slipIsPdf: boolean = false
 ): Promise<FinanceAgentReply> {
-  const [lineUser, queuedPending, pendingService, pendingLookup, knowledgeText, formLinksData, disabledRequirements] =
+  // Decided before the loads so the recent-action lookup joins them in the
+  // same round trip instead of adding a second one — and is skipped entirely
+  // on every ordinary message, which is nearly all of them.
+  const messageText = plainTextOf(userContent);
+  const isAcknowledgement = messageText !== null && isAcknowledgementOnly(messageText);
+
+  const [lineUser, queuedPending, pendingService, pendingLookup, knowledgeText, formLinksData, disabledRequirements, recentAction] =
     await Promise.all([
       loadLineUser(lineUserId),
       loadAllPending(lineUserId),
@@ -65,6 +81,7 @@ export async function runFinanceAgent(
       getKnowledgeText(),
       getFormLinksData(),
       loadDisabledRequirements(),
+      isAcknowledgement ? loadRecentAction(lineUserId) : Promise.resolve(null),
     ]);
 
   // The caller kicks off the Blob upload before calling this function but
@@ -83,6 +100,14 @@ export async function runFinanceAgent(
   // tells the model not to answer as though only one slip had arrived.
   const pending = queuedPending[0] ?? null;
 
+  // A pending flow outranks a sign-off: "ขอบคุณค่ะ" while the bot is still
+  // waiting for a slip is politeness mid-conversation, not the end of one,
+  // and the flow note has to keep the floor.
+  const closing =
+    isAcknowledgement && !pending && !pendingService && !pendingLookup
+      ? closingNote(true, recentAction)
+      : "";
+
   const { base, dynamic } = buildSystemPrompt(
     lineUser,
     pending,
@@ -91,7 +116,8 @@ export async function runFinanceAgent(
     knowledgeText,
     formLinksData.text,
     disabledRequirements,
-    queuedPending.length
+    queuedPending.length,
+    closing
   );
   // A cache breakpoint on the static base block caches everything before it
   // in the request (all tool definitions + this base system prompt), since
