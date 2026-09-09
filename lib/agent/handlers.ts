@@ -35,6 +35,8 @@ import {
   type SetNicknameInput,
   type SubmitLookupInfoInput,
 } from "./identityHandlers";
+import { prisma } from "../prisma";
+import { declineReplyInstruction } from "../declineReply";
 import type { ToolContext } from "./types";
 
 export * from "./transactionHandlers";
@@ -89,7 +91,15 @@ export async function executeTool(
         typeof (input as { reason?: unknown })?.reason === "string"
           ? (input as { reason: string }).reason
           : "unspecified";
-      return `Declined: ${reason}. Explain this to the user in your reply without inventing extra details.`;
+      // Whether to ask for a slip is decided by whether one is actually
+      // being waited for, not by the fact that a picture arrived. See
+      // lib/declineReply.ts — a member who photographed an envelope was
+      // asked to send a slip they never had.
+      const awaiting = await prisma.pendingTransaction.findFirst({
+        where: { lineUserId: ctx.lineUserId, hasSlip: false },
+        select: { id: true },
+      });
+      return declineReplyInstruction({ reason, awaitingSlip: awaiting !== null });
     }
     return `Unknown tool: ${name}`;
   } catch (err) {

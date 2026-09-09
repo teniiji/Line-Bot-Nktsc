@@ -152,7 +152,7 @@ export const tools: Anthropic.Tool[] = [
   {
     name: "decline_unreadable_image",
     description:
-      "Use only for an image or PDF that genuinely isn't a bank/wallet transaction slip and isn't one of the known supporting-document types either (a random unrelated photo, or a slip whose own text explicitly says the transaction failed/is pending/was cancelled). For a payslip, ID card copy, house registration copy, or marriage certificate, use flag_supporting_document instead — those aren't declined, they're routed to ask what the user needs. Call this instead of replying with plain text — your reply text afterward explains why to the user.",
+      "Use only for an image or PDF that genuinely isn't a bank/wallet transaction slip and isn't one of the known supporting-document types either (a random unrelated photo, or a slip whose own text explicitly says the transaction failed/is pending/was cancelled). For a payslip, ID card copy, house registration copy, or marriage certificate, use flag_supporting_document instead — those aren't declined, they're routed to ask what the user needs. Call this instead of replying with plain text — the tool result tells you what your reply must do. Note it does NOT always mean asking for a slip: when nothing is waiting for one, an everyday photo (an envelope, a letter, a screenshot) means saying what you see and asking what the member needs, because they may never have been trying to send a payment at all.",
     input_schema: {
       type: "object",
       properties: {
