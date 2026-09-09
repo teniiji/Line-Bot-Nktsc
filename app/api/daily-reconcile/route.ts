@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { DepositLine, SlipRecord, reconcileDay } from "@/lib/dailyReconcile";
 import { OTHER_CHANNEL } from "@/lib/statementLines";
+import { statementLineStatus } from "@/lib/statementDayView";
 
 export const dynamic = "force-dynamic";
 
@@ -143,10 +144,42 @@ export async function GET(request: NextRequest) {
       : null,
   });
 
+  // The same day again, in the bank's order rather than by conclusion — see
+  // lib/statementDayView.ts. Every stored line appears exactly once, so the
+  // count here is the count in the file, which is what makes "did it drop
+  // something?" answerable at a glance.
+  const slipByDeposit = new Map(result.matched.map((pair) => [pair.deposit.id, pair.slip]));
+  const statement = lines.map((line) => {
+    const slip = slipByDeposit.get(line.id) ?? null;
+    const owner = line.senderAccount ? (accountOwners.get(line.senderAccount) ?? null) : null;
+    return {
+      id: line.id,
+      postedAt: line.postedAt?.toISOString() ?? null,
+      // The bank's own columns, so a person can read straight across from the
+      // statement they printed.
+      txnCode: line.txnCode,
+      description: line.description,
+      amount: line.amount,
+      balance: line.balance,
+      account: line.account,
+      branch: line.branch,
+      channel: line.channel,
+      senderAccount: line.senderAccount,
+      status: statementLineStatus({
+        isMemberDeposit: line.channel !== OTHER_CHANNEL,
+        matched: slip !== null,
+        ownerMemberNumber: owner,
+      }),
+      memberNumber: slip?.memberNumber ?? owner,
+      memberName: slip?.memberFullName ?? null,
+    };
+  });
+
   const unclaimedSlips = result.slipsWithoutMoney.filter((slip) => sameDay(slip.date));
 
   return NextResponse.json({
     date: dateParam,
+    statement,
     matched: result.matched.map((pair) => ({
       deposit: describeDeposit(pair.deposit),
       slip: describeSlip(pair.slip),

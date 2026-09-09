@@ -263,8 +263,30 @@ export interface DailyOtherLineRow {
   branch: string;
 }
 
+// One line of the bank's statement, as the bank wrote it, plus the
+// conclusion the daily reconciliation reached about it. Every stored line of
+// the day appears here exactly once — see lib/statementDayView.ts.
+export interface DailyStatementRow {
+  id: string;
+  postedAt: string | null;
+  txnCode: string;
+  description: string;
+  amount: number;
+  balance: number | null;
+  account: string;
+  branch: string;
+  channel: string;
+  senderAccount: string | null;
+  status: "matched" | "knownPayer" | "unknownPayer" | "notMemberMoney";
+  memberNumber: string | null;
+  memberName: string | null;
+}
+
 export interface DailyReconcileResult {
   date: string;
+  // The whole day in the bank's order, for reading against the statement
+  // itself rather than by what the system concluded.
+  statement: DailyStatementRow[];
   matched: {
     deposit: DailyDepositRow;
     slip: DailySlipRow;
