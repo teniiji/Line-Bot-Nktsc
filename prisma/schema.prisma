@@ -296,6 +296,13 @@ model LineUser {
   // stops mattering once it's in the past — nothing needs to clear it back
   // to null on expiry, only on the next successful lookup.
   lookupLockedUntil DateTime?
+  // The last reply the bot sent this member, and when — the only memory it
+  // has of its own side of the conversation. Read back within a short window
+  // (lib/recentReply.ts) so a member who sends two messages a second apart is
+  // not answered twice with the same words. Truncated on write; never read
+  // for anything but that note.
+  lastReplyText     String?
+  lastReplyAt       DateTime?
   createdAt         DateTime  @default(now())
   updatedAt         DateTime  @updatedAt
 }

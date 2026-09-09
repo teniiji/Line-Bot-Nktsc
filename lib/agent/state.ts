@@ -8,6 +8,7 @@ import { namesLikelyMatch } from "../nameMatch";
 import { CATEGORIES } from "../categories";
 import { LOAN_TYPES } from "../loanTypes";
 import type { RecentAction } from "../closingReply";
+import { quoteReply, type PreviousReply } from "../recentReply";
 import {
   isFeatureEnabled,
   ASK_MEMBER_INFO_ENABLED,
@@ -332,4 +333,30 @@ export async function loadRecentAction(lineUserId: string): Promise<RecentAction
     };
   }
   return null;
+}
+
+// What the bot last said to this member. Its only memory of its own side of
+// the conversation — see lib/recentReply.ts.
+export async function loadPreviousReply(lineUserId: string): Promise<PreviousReply | null> {
+  const user = await prisma.lineUser.findUnique({
+    where: { id: lineUserId },
+    select: { lastReplyText: true, lastReplyAt: true },
+  });
+  if (!user?.lastReplyText || !user.lastReplyAt) return null;
+  return { text: user.lastReplyText, at: user.lastReplyAt };
+}
+
+// Called after a reply actually reaches LINE, never before: a reply the
+// member never saw must not be quoted back to the model as one they are
+// looking at. Best-effort — failing to remember what was said is not a reason
+// to fail the request that already succeeded.
+export async function recordReply(lineUserId: string, text: string): Promise<void> {
+  await prisma.lineUser
+    .update({
+      where: { id: lineUserId },
+      data: { lastReplyText: quoteReply(text), lastReplyAt: new Date() },
+    })
+    .catch((err) => {
+      console.error("[state] could not record the last reply:", err);
+    });
 }

@@ -9,6 +9,7 @@ import { runFinanceAgent } from "@/lib/financeAgent";
 import {
   PENDING_TRANSACTION_EXPIRY_MS,
   PENDING_TRANSACTION_RETENTION_MS,
+  recordReply,
 } from "@/lib/agent/state";
 import { ensureLineUser } from "@/lib/lineUsers";
 import {
@@ -371,6 +372,9 @@ async function handleEvent(event: webhook.Event, origin: string): Promise<void> 
       replyToken: event.replyToken,
       messages: [{ type: "text", text: replyText, ...(quickReply ? { quickReply } : {}) }],
     });
+    // Only once it has actually gone out: a reply the member never received
+    // must not be quoted back to the model as one they are looking at.
+    await recordReply(lineUserId, replyText);
   } catch (err) {
     console.error("[line/webhook] LINE reply error:", err);
   }
