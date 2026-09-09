@@ -5,11 +5,13 @@ import { formatAmount, formatStatementDate, formatStatementTime } from "@/lib/fo
 import { CATEGORIES } from "@/lib/categories";
 import { accountCaveat, canBindAccount } from "@/lib/depositRecord";
 import { CHANNEL_LABELS } from "@/lib/statementLines";
+import { STATUS_LABELS } from "@/lib/statementDayView";
 import {
   DailyDepositRow,
   DailyOtherLineRow,
   DailyReconcileResult,
   DailySlipRow,
+  DailyStatementRow,
 } from "@/lib/types";
 
 const todayISO = () => new Date().toISOString().slice(0, 10);
@@ -130,6 +132,7 @@ export default function DailyReconcilePanel() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [showOther, setShowOther] = useState(false);
+  const [showStatement, setShowStatement] = useState(false);
   const [showKnown, setShowKnown] = useState(false);
   // Uploading right here rather than sending staff to the round tab: checking
   // one day's money has nothing to do with the month-end round.
@@ -408,6 +411,34 @@ export default function DailyReconcilePanel() {
             </span>
           </div>
 
+          {/* Placed before the findings, because the first question a person
+              checking the bank's own printout asks is "is everything here?" —
+              and the sections below, sorted by conclusion and half of them
+              collapsed, cannot answer it. */}
+          <div className="px-4 py-3 border-t border-slate-100">
+            <button
+              onClick={() => setShowStatement((v) => !v)}
+              className="text-sm text-slate-700 hover:underline font-medium"
+            >
+              {showStatement ? "▾" : "▸"} 📄 รายการทั้งหมดในสเตทเมนต์วันนี้ (
+              {data.statement.length} รายการ)
+            </button>
+            <p className="text-xs text-slate-500 mt-1">
+              ทุกบรรทัดของวันนี้ เรียงตามเวลาแบบเดียวกับไฟล์ของธนาคาร พร้อมบอกว่าแต่ละบรรทัด
+              ตกอยู่ในกลุ่มไหนด้านล่าง — ใช้ไล่ทีละบรรทัดกับสเตทเมนต์ที่ปริ้นมาได้เลย
+              <strong>
+                {" "}
+                จำนวนนี้คือจำนวนบรรทัดในไฟล์ทั้งหมด ไม่มีรายการไหนหายไป
+              </strong>{" "}
+              (กลุ่มด้านล่างแบ่งตามข้อสรุป บางกลุ่มพับไว้ เลยดูเหมือนมีน้อยกว่าความเป็นจริง)
+            </p>
+            {showStatement && (
+              <div className="overflow-x-auto mt-2">
+                <StatementTable rows={data.statement} />
+              </div>
+            )}
+          </div>
+
           <Section
             title={`✅ ตรงกัน (${data.matched.length} รายการ)`}
             tone="text-green-800"
@@ -552,6 +583,70 @@ export default function DailyReconcilePanel() {
     </section>
   );
 }
+
+// The day in the bank's order, with the conclusion the tab reached about each
+// line. See lib/statementDayView.ts — the sections above are sorted by
+// conclusion, which is what makes a twenty-line day look like a six-line one.
+const StatusTag = ({ status }: { status: DailyStatementRow["status"] }) => {
+  const tone =
+    status === "matched"
+      ? "text-green-700"
+      : status === "unknownPayer"
+        ? "text-amber-800"
+        : status === "knownPayer"
+          ? "text-sky-700"
+          : "text-slate-400";
+  return <span className={`text-xs ${tone}`}>{STATUS_LABELS[status]}</span>;
+};
+
+const StatementTable = ({ rows }: { rows: DailyStatementRow[] }) => (
+  <table className="w-full text-sm">
+    <thead className="text-slate-500 text-left text-xs uppercase tracking-wide">
+      <tr>
+        <th className="px-2 py-1.5 font-semibold">เวลา</th>
+        <th className="px-2 py-1.5 font-semibold">รหัส</th>
+        <th className="px-2 py-1.5 font-semibold">รายละเอียด</th>
+        <th className="px-2 py-1.5 font-semibold text-right">ยอด</th>
+        <th className="px-2 py-1.5 font-semibold text-right">คงเหลือ</th>
+        <th className="px-2 py-1.5 font-semibold">บัญชี</th>
+        <th className="px-2 py-1.5 font-semibold">สมาชิก</th>
+        <th className="px-2 py-1.5 font-semibold">สถานะ</th>
+      </tr>
+    </thead>
+    <tbody>
+      {rows.map((row) => (
+        <tr key={row.id} className="border-t border-slate-100 hover:bg-slate-50">
+          <td className="px-2 py-1.5 whitespace-nowrap">
+            <Clock iso={row.postedAt} />
+          </td>
+          <td className="px-2 py-1.5 font-mono text-xs text-slate-500">{row.txnCode}</td>
+          <td className="px-2 py-1.5 font-mono text-xs text-slate-500">{row.description}</td>
+          <td className="px-2 py-1.5 text-right">
+            <Money
+              value={row.amount}
+              className={row.status === "notMemberMoney" ? "text-slate-500" : "font-medium"}
+            />
+          </td>
+          {/* The bank's running balance, which is what a person ties out
+              against when they are checking the file line by line. */}
+          <td className="px-2 py-1.5 num text-right text-slate-400 whitespace-nowrap">
+            {row.balance === null ? "—" : formatAmount(row.balance)}
+          </td>
+          <td className="px-2 py-1.5 text-slate-500 whitespace-nowrap">{row.branch}</td>
+          <td className="px-2 py-1.5 whitespace-nowrap">
+            {row.memberName ?? (row.memberNumber ? "" : <span className="text-slate-300">—</span>)}
+            {row.memberNumber && (
+              <span className="num text-xs text-slate-400"> {row.memberNumber}</span>
+            )}
+          </td>
+          <td className="px-2 py-1.5 whitespace-nowrap">
+            <StatusTag status={row.status} />
+          </td>
+        </tr>
+      ))}
+    </tbody>
+  </table>
+);
 
 const Section = ({
   title,
