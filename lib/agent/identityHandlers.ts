@@ -25,8 +25,27 @@ import {
   loadDisabledRequirements,
 } from "./state";
 import { forwardServiceRequest } from "./forwarding";
-import { finalizeTransaction, requirementMessage } from "./transactionHandlers";
+import {
+  finalizeTransaction,
+  requirementMessage,
+  CAPTURE_BEFORE_ASKING,
+} from "./transactionHandlers";
 import type { LineUserInfo, Requirement, ToolContext } from "./types";
+import type { IdentityMerge } from "../memberIdentity";
+
+// While a transaction waits on identity, the runner forces submit_member_info
+// as the only tool the model may call — so a message like "ดำรงชีพ ATM
+// น.ส.กาญจภัษฐ์ วงษ์สวรรค์" reaches this tool and nothing else. Saying only
+// "ask for the member number" back to the model loses the loan type sitting
+// in the very same sentence, and that member was then asked for it twice
+// more. The carry-over instruction is appended only when a transaction is
+// actually waiting: it names transaction tools, which mean nothing to a
+// member identifying themselves for a service request.
+async function askForIdentity(merged: IdentityMerge, lineUserId: string): Promise<string> {
+  const message = askForMissingIdentity(merged);
+  const waiting = await loadAllPending(lineUserId);
+  return waiting.length > 0 ? message + CAPTURE_BEFORE_ASKING : message;
+}
 export type SubmitMemberInfoInput = {
   fullName?: unknown;
   memberNumber?: unknown;
@@ -57,7 +76,7 @@ export async function submitMemberInfo(
   );
 
   if (merged.missing === "both") {
-    return askForMissingIdentity(merged);
+    return await askForIdentity(merged, ctx.lineUserId);
   }
 
   const fullName = merged.fullName ?? "";
@@ -116,7 +135,7 @@ export async function submitMemberInfo(
   // for exactly the piece still outstanding and says the other is already on
   // record — never for both again.
   if (merged.missing !== null) {
-    return askForMissingIdentity(merged);
+    return await askForIdentity(merged, ctx.lineUserId);
   }
 
   // Link this LINE account to the roster row the first time a known member
