@@ -1,7 +1,12 @@
 "use client";
 
 import { Fragment, useCallback, useEffect, useState } from "react";
-import { formatAmount, formatStatementDate, formatStatementTime } from "@/lib/format";
+import {
+  formatAmount,
+  formatStatementDate,
+  formatStatementTime,
+  formatStatementTimeExact,
+} from "@/lib/format";
 import { CATEGORIES } from "@/lib/categories";
 import { accountCaveat, canBindAccount } from "@/lib/depositRecord";
 import { CHANNEL_LABELS } from "@/lib/statementLines";
@@ -28,6 +33,14 @@ const Money = ({ value, className = "" }: { value: number; className?: string })
 
 const Clock = ({ iso }: { iso: string | null }) => {
   const time = formatStatementTime(iso);
+  return <span className="num text-slate-500">{time || formatStatementDate(iso)}</span>;
+};
+
+// The same, with the seconds kept. Only the statement table uses it: that is
+// the one read line by line against the bank's printout, where the seconds
+// separate two postings in the same minute.
+const ExactClock = ({ iso }: { iso: string | null }) => {
+  const time = formatStatementTimeExact(iso);
   return <span className="num text-slate-500">{time || formatStatementDate(iso)}</span>;
 };
 
@@ -599,6 +612,30 @@ const StatusTag = ({ status }: { status: DailyStatementRow["status"] }) => {
   return <span className={`text-xs ${tone}`}>{STATUS_LABELS[status]}</span>;
 };
 
+// Who a statement line belongs to: the name on top, and beneath it the unit
+// and member number that say which office to contact and which record to open.
+// A number with no name means the account directory recognised the payer but
+// the roster has no row for that number — worth seeing as it stands rather
+// than blanking the cell.
+const Member = ({
+  name,
+  number,
+  unitName,
+}: {
+  name: string | null;
+  number: string | null;
+  unitName: string | null;
+}) => {
+  if (!name && !number) return <span className="text-slate-300">—</span>;
+  const below = [unitName, number].filter(Boolean).join(" · ");
+  return (
+    <span className="block leading-tight">
+      <span className="block">{name ?? <span className="text-slate-400">ไม่พบในทะเบียน</span>}</span>
+      {below && <span className="num block text-xs text-slate-400">{below}</span>}
+    </span>
+  );
+};
+
 const StatementTable = ({ rows }: { rows: DailyStatementRow[] }) => (
   <table className="w-full text-sm">
     <thead className="text-slate-500 text-left text-xs uppercase tracking-wide">
@@ -617,7 +654,7 @@ const StatementTable = ({ rows }: { rows: DailyStatementRow[] }) => (
       {rows.map((row) => (
         <tr key={row.id} className="border-t border-slate-100 hover:bg-slate-50">
           <td className="px-2 py-1.5 whitespace-nowrap">
-            <Clock iso={row.postedAt} />
+            <ExactClock iso={row.postedAt} />
           </td>
           <td className="px-2 py-1.5 font-mono text-xs text-slate-500">{row.txnCode}</td>
           <td className="px-2 py-1.5 font-mono text-xs text-slate-500">{row.description}</td>
@@ -634,10 +671,11 @@ const StatementTable = ({ rows }: { rows: DailyStatementRow[] }) => (
           </td>
           <td className="px-2 py-1.5 text-slate-500 whitespace-nowrap">{row.branch}</td>
           <td className="px-2 py-1.5 whitespace-nowrap">
-            {row.memberName ?? (row.memberNumber ? "" : <span className="text-slate-300">—</span>)}
-            {row.memberNumber && (
-              <span className="num text-xs text-slate-400"> {row.memberNumber}</span>
-            )}
+            <Member
+              name={row.memberName}
+              number={row.memberNumber}
+              unitName={row.unitName}
+            />
           </td>
           <td className="px-2 py-1.5 whitespace-nowrap">
             <StatusTag status={row.status} />

@@ -3,6 +3,7 @@ import {
   formatStatementDate,
   formatStatementDateTime,
   formatStatementTime,
+  formatStatementTimeExact,
 } from "../lib/format";
 
 describe("formatStatementDate", () => {
@@ -34,6 +35,36 @@ describe("formatStatementTime", () => {
   it("stays empty when the export carried no time", () => {
     expect(formatStatementTime("2026-08-31T00:00:00.000Z")).toBe("");
     expect(formatStatementTime(null)).toBe("");
+  });
+});
+
+describe("formatStatementTimeExact", () => {
+  it("keeps the seconds the bank printed", () => {
+    // The statement table is read line by line against the bank's own
+    // printout, where two postings can share a minute.
+    expect(formatStatementTimeExact("2026-08-31T14:32:07.000Z")).toBe("14:32:07 น.");
+    expect(formatStatementTimeExact("2026-08-31T09:05:00.000Z")).toBe("09:05:00 น.");
+  });
+
+  it("does not slide the reading into another timezone", () => {
+    // Same reason as the date: statement timestamps hold the bank's wall
+    // clock in UTC, so they are read back in UTC.
+    expect(formatStatementTimeExact("2026-08-31T23:50:41.000Z")).toBe("23:50:41 น.");
+  });
+
+  it("stays empty when the export carried no time at all", () => {
+    // Exact midnight means a date with no clock reading — showing
+    // "00:00:00 น." would invent a precision the bank never supplied.
+    expect(formatStatementTimeExact("2026-08-31T00:00:00.000Z")).toBe("");
+    expect(formatStatementTimeExact(null)).toBe("");
+    expect(formatStatementTimeExact("ไม่ใช่เวลา")).toBe("");
+  });
+
+  it("agrees with the minute-only form on everything but the seconds", () => {
+    const iso = "2026-08-31T14:32:07.000Z";
+    expect(formatStatementTimeExact(iso).startsWith(formatStatementTime(iso).replace(" น.", ""))).toBe(
+      true
+    );
   });
 });
 

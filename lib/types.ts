@@ -279,7 +279,11 @@ export interface DailyStatementRow {
   senderAccount: string | null;
   status: "matched" | "knownPayer" | "unknownPayer" | "notMemberMoney";
   memberNumber: string | null;
+  // Joined in from MemberRoster by memberNumber, falling back to the name on
+  // the paired slip. Both null for a line nobody has been matched to.
   memberName: string | null;
+  // The member's unit, which is who staff contact about an unclaimed payment.
+  unitName: string | null;
 }
 
 export interface DailyReconcileResult {
