@@ -9,8 +9,10 @@ import { getKnowledgeText } from "./knowledge";
 import { getFormLinksData } from "./formLinks";
 import { stripDisallowedLinks } from "./links";
 import { tools } from "./agent/tools";
+import { forcedToolChoice, toolsForMessage } from "./agent/toolChoice";
 import { buildSystemPrompt } from "./agent/prompts";
 import { isAcknowledgementOnly, closingNote } from "./closingReply";
+import { recentReplyNote } from "./recentReply";
 import {
   loadLineUser,
   loadAllPending,
@@ -18,6 +20,7 @@ import {
   loadPendingLookup,
   loadDisabledRequirements,
   loadRecentAction,
+  loadPreviousReply,
   computeNextRequirement,
   computeServiceRequirement,
   computeLookupRequirement,
@@ -72,7 +75,7 @@ export async function runFinanceAgent(
   const messageText = plainTextOf(userContent);
   const isAcknowledgement = messageText !== null && isAcknowledgementOnly(messageText);
 
-  const [lineUser, queuedPending, pendingService, pendingLookup, knowledgeText, formLinksData, disabledRequirements, recentAction] =
+  const [lineUser, queuedPending, pendingService, pendingLookup, knowledgeText, formLinksData, disabledRequirements, recentAction, previousReply] =
     await Promise.all([
       loadLineUser(lineUserId),
       loadAllPending(lineUserId),
@@ -82,6 +85,7 @@ export async function runFinanceAgent(
       getFormLinksData(),
       loadDisabledRequirements(),
       isAcknowledgement ? loadRecentAction(lineUserId) : Promise.resolve(null),
+      loadPreviousReply(lineUserId),
     ]);
 
   // The caller kicks off the Blob upload before calling this function but
@@ -108,6 +112,10 @@ export async function runFinanceAgent(
       ? closingNote(true, recentAction)
       : "";
 
+  // What the bot said a moment ago, so two messages typed in the same breath
+  // do not get two answers saying the same thing.
+  const previousNote = recentReplyNote(previousReply, new Date());
+
   const { base, dynamic } = buildSystemPrompt(
     lineUser,
     pending,
@@ -117,7 +125,8 @@ export async function runFinanceAgent(
     formLinksData.text,
     disabledRequirements,
     queuedPending.length,
-    closing
+    closing,
+    previousNote
   );
   // A cache breakpoint on the static base block caches everything before it
   // in the request (all tool definitions + this base system prompt), since
@@ -135,48 +144,35 @@ export async function runFinanceAgent(
   // buildInitialUserMessage adds a second cache breakpoint on a slip
   // attachment so the loop's later calls read the image from cache.
   const messages: Anthropic.MessageParam[] = [buildInitialUserMessage(userContent)];
+  // A tool that can only be about a picture is not offered on a message that
+  // has none — see toolsForMessage.
+  const availableTools = toolsForMessage(tools, hasAttachmentContent(userContent));
 
   for (let turn = 0; turn < MAX_TOOL_TURNS; turn++) {
-    // The model tends to respond with plain text instead of calling a tool
-    // when it wants to ask something. Force the specific tool the pending
-    // transaction is waiting on so a text reply naming member info / loan
-    // type is never silently dropped as a bare text response. Images
-    // always need vision judgement (real slip vs. not), so those force
-    // "any" tool rather than a single named one.
-    let toolChoice: Anthropic.ToolChoice | undefined;
-    const next = pending ? computeNextRequirement(lineUser, pending, disabledRequirements) : null;
+    // Which tool call, if any, this turn is required to make — see
+    // lib/agent/toolChoice.ts for why turn 0 is forced and why only the
+    // member-number lookup is pinned to one named tool.
+    const next = pending
+      ? computeNextRequirement(lineUser, pending, disabledRequirements)
+      : null;
     const serviceNext =
       !pending && pendingService ? computeServiceRequirement(lineUser, pendingService) : null;
     const lookupNext =
       !pending && !pendingService && pendingLookup
         ? computeLookupRequirement(pendingLookup)
         : null;
-    if (turn === 0 && next === "member_info" && !hasAttachmentContent(userContent)) {
-      toolChoice = { type: "tool", name: "submit_member_info" };
-    } else if (turn === 0 && next === "category" && !hasAttachmentContent(userContent)) {
-      toolChoice = { type: "tool", name: "report_transaction" };
-    } else if (turn === 0 && next === "loan_type" && !hasAttachmentContent(userContent)) {
-      toolChoice = { type: "tool", name: "submit_loan_type" };
-    } else if (turn === 0 && next === "deposit_account" && !hasAttachmentContent(userContent)) {
-      toolChoice = { type: "tool", name: "submit_deposit_account" };
-    } else if (turn === 0 && next === "confirm_sender_name" && !hasAttachmentContent(userContent)) {
-      toolChoice = { type: "tool", name: "confirm_transaction_sender" };
-    } else if (turn === 0 && serviceNext === "purpose" && !hasAttachmentContent(userContent)) {
-      toolChoice = { type: "tool", name: "submit_service_purpose" };
-    } else if (turn === 0 && serviceNext === "member_info" && !hasAttachmentContent(userContent)) {
-      toolChoice = { type: "tool", name: "submit_member_info" };
-    } else if (turn === 0 && serviceNext === "phone" && !hasAttachmentContent(userContent)) {
-      toolChoice = { type: "tool", name: "submit_contact_phone" };
-    } else if (turn === 0 && lookupNext !== null && !hasAttachmentContent(userContent)) {
-      toolChoice = { type: "tool", name: "submit_lookup_info" };
-    } else if (turn === 0 && hasAttachmentContent(userContent)) {
-      toolChoice = { type: "any" };
-    }
+    const toolChoice = forcedToolChoice({
+      turn,
+      hasAttachment: hasAttachmentContent(userContent),
+      next,
+      serviceNext,
+      lookupNext,
+    });
     const response = await anthropic.messages.create({
       model,
       max_tokens: 1024,
       system,
-      tools,
+      tools: availableTools,
       messages,
       ...(toolChoice ? { tool_choice: toolChoice } : {}),
     });
