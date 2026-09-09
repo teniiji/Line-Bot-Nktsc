@@ -17,6 +17,11 @@ import { classifyRecipient } from "../recipientCheck";
 import { isFeatureEnabled, TRANSACTIONS_ENABLED } from "../featureFlags";
 import { startsNewPayment } from "../pendingSlip";
 import {
+  isRepeatOfLogged,
+  ALREADY_LOGGED_INSTRUCTION,
+  REPEAT_WINDOW_MS,
+} from "../repeatReport";
+import {
   loadAllPending,
   loadLineUser,
   loadPending,
@@ -289,6 +294,27 @@ export async function reportTransaction(
   // a member may have more than one payment waiting.
   const queued = await loadAllPending(ctx.lineUserId);
   const active = queued[0] ?? null;
+
+  // Nothing is waiting, so this call would open a brand-new row. That is the
+  // right thing for a new payment and the wrong thing for the message right
+  // after a confirmation, which is how a finished transaction was being
+  // re-opened as a slipless phantom — see lib/repeatReport.ts.
+  if (!active) {
+    const recent = await prisma.expense.findFirst({
+      where: {
+        lineUserId: ctx.lineUserId,
+        createdAt: { gte: new Date(Date.now() - REPEAT_WINDOW_MS) },
+      },
+      orderBy: { createdAt: "desc" },
+      select: { amount: true, category: true, createdAt: true },
+    });
+    const repeat = isRepeatOfLogged(
+      { amount: parsedAmount, category: parsedCategory, hasSlip: ctx.hasSlipImage },
+      recent,
+      new Date()
+    );
+    if (repeat) return ALREADY_LOGGED_INSTRUCTION;
+  }
 
   // A different slip arriving while one is still unanswered is a second
   // payment, not a correction to the first. It used to overwrite it, and the
