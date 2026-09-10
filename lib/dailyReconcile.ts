@@ -129,6 +129,31 @@ function minutesBetween(slip: SlipRecord, deposit: DepositLine): number | null {
   return Math.abs(postedMinutes + dayShift - slipMinutes);
 }
 
+// Drops a link to a bank line that no longer exists.
+//
+// The link is a row id. Re-uploading a statement used to delete its rows and
+// write them again under new ids, so every link made before
+// lib/statementLineMerge.ts stopped that points at an id nothing answers to.
+//
+// Such a slip is worse off than one that was never linked at all: the link is
+// still truthy, so the rule below refuses every deposit it is offered and the
+// slip never falls through to the ordinary evidence. The transaction sits in
+// "มีสลิปแต่ไม่เจอเงินเข้า" while the money it was recorded from sits in
+// "รู้เจ้าของ ไม่มีสลิป" — one payment on two lists that exist to say nobody
+// has dealt with it, and a person rings a member who paid weeks ago.
+//
+// Deciding this needs the ids that exist, not the ids in the window being
+// reconciled: a slip at the edge of the range is linked to a line just
+// outside it, and reading that as dead would let it be inferred onto somebody
+// else's payment.
+export function honourLiveLinks(slips: SlipRecord[], liveLineIds: Set<string>): SlipRecord[] {
+  return slips.map((slip) =>
+    slip.statementLineId && !liveLineIds.has(slip.statementLineId)
+      ? { ...slip, statementLineId: null }
+      : slip
+  );
+}
+
 interface Candidate {
   deposit: DepositLine;
   slip: SlipRecord;

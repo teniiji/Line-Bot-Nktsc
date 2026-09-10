@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { DepositLine, SlipRecord, reconcileDay } from "@/lib/dailyReconcile";
+import { DepositLine, SlipRecord, honourLiveLinks, reconcileDay } from "@/lib/dailyReconcile";
 import { OTHER_CHANNEL } from "@/lib/statementLines";
 import { statementLineStatus } from "@/lib/statementDayView";
 import { memberNumberKey } from "@/lib/memberNumber";
@@ -114,7 +114,7 @@ export async function GET(request: NextRequest) {
   // Slips outside the window itself only count when they pair with money
   // inside it; on their own they belong to their own day's view, not this one.
   const inRange = (date: Date) => date >= start && date < end;
-  const slipRecords: SlipRecord[] = slips.map((slip) => ({
+  const linkedSlips: SlipRecord[] = slips.map((slip) => ({
     id: slip.id,
     amount: slip.amount,
     date: slip.date,
@@ -125,6 +125,30 @@ export async function GET(request: NextRequest) {
     senderAccount: slip.slipSenderAccount,
     statementLineId: slip.statementLineId,
   }));
+
+  // A link to a bank line that is no longer stored is dropped rather than
+  // honoured — see honourLiveLinks for the pair of lists it otherwise strands
+  // a payment on. Asked of the database rather than of this window's lines,
+  // because a link pointing outside the window is still a live link.
+  const linkedIds = [
+    ...new Set(
+      linkedSlips
+        .map((slip) => slip.statementLineId)
+        .filter((id): id is string => id !== null)
+    ),
+  ];
+  const inWindow = new Set(lines.map((line) => line.id));
+  const unknownIds = linkedIds.filter((id) => !inWindow.has(id));
+  const liveElsewhere = unknownIds.length
+    ? await prisma.statementLine.findMany({
+        where: { id: { in: unknownIds } },
+        select: { id: true },
+      })
+    : [];
+  const slipRecords = honourLiveLinks(
+    linkedSlips,
+    new Set([...inWindow, ...liveElsewhere.map((line) => line.id)])
+  );
 
   // Round lists first, then the directory over the top: a binding staff made
   // by hand is the more deliberate statement of who an account belongs to, so
@@ -139,6 +163,10 @@ export async function GET(request: NextRequest) {
 
   const result = reconcileDay(deposits, slipRecords, accountOwners);
   const slipImages = new Map(slips.map((slip) => [slip.id, slip.slipImageUrl]));
+  // As stored, not as reconciled: a dropped link still means a person
+  // recorded this from the statement, and the column that says so is
+  // answering "why is there no image", which is as true as it ever was.
+  const recordedFromLine = new Map(slips.map((slip) => [slip.id, slip.statementLineId]));
 
   const describeSlip = (slip: SlipRecord) => ({
     id: slip.id,
@@ -152,7 +180,7 @@ export async function GET(request: NextRequest) {
     slipImageUrl: slipImages.get(slip.id) ?? null,
     // Staff-recorded transactions have no slip to look at, and saying so is
     // what stops the "ดูสลิป" column reading as a missing file.
-    statementLineId: slip.statementLineId,
+    statementLineId: recordedFromLine.get(slip.id) ?? null,
   });
 
   const describeDeposit = (deposit: DepositLine) => ({
