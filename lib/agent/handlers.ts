@@ -99,6 +99,12 @@ export async function executeTool(
         where: { lineUserId: ctx.lineUserId, hasSlip: false },
         select: { id: true },
       });
+      // Asking a member what they need is worth doing once. The next photo of
+      // the same album cannot answer it, so the caller withholds a repeat
+      // rather than rewording one — see lib/replyKind.ts. A decline that asks
+      // for a slip the member is genuinely mid-way through sending is not
+      // that: it is about this attempt, and every attempt deserves an answer.
+      if (awaiting === null) ctx.noteReplyKind("asked-what-they-need");
       return declineReplyInstruction({ reason, awaitingSlip: awaiting !== null });
     }
     return `Unknown tool: ${name}`;

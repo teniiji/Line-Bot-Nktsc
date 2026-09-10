@@ -1,3 +1,5 @@
+import type { ReplyKind } from "../replyKind";
+
 // Shared types for the finance agent, split out of lib/financeAgent.ts so
 // the state/prompts/forwarding/handlers modules can all reference them
 // without importing each other.
@@ -57,6 +59,10 @@ export type Requirement =
 // evidence of whether a slip was shown; use hasSlipImage for that.
 export type ToolContext = {
   lineUserId: string;
+  // Called by a tool whose reply can have nothing to add the second time, so
+  // the caller can withhold it rather than send a reworded repeat. See
+  // lib/replyKind.ts.
+  noteReplyKind: (kind: ReplyKind) => void;
   slipImageUrl: string | null;
   slipImageHash: string | null;
   hasSlipImage: boolean;
@@ -91,5 +97,10 @@ export type PendingLookupInfo = {
 export type LookupRequirement = "full_name" | "national_id" | "phone" | null;
 
 
-export type FinanceAgentReply = { text: string; quickReplies: string[] };
+export type FinanceAgentReply = {
+  text: string;
+  quickReplies: string[];
+  // What this reply is, when it is a kind that can repeat itself into noise.
+  replyKind: ReplyKind;
+};
 

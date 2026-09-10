@@ -9,8 +9,10 @@ import { runFinanceAgent } from "@/lib/financeAgent";
 import {
   PENDING_TRANSACTION_EXPIRY_MS,
   PENDING_TRANSACTION_RETENTION_MS,
+  loadLastReplyKind,
   recordReply,
 } from "@/lib/agent/state";
+import { repeatsLastReply, type ReplyKind } from "@/lib/replyKind";
 import { ensureLineUser } from "@/lib/lineUsers";
 import {
   GROUP_JOIN_NOTICE,
@@ -325,6 +327,7 @@ async function handleEvent(event: webhook.Event, origin: string): Promise<void> 
 
   let replyText: string;
   let quickReplies: string[] = [];
+  let replyKind: ReplyKind = null;
   try {
     // Independent of building the message content — run concurrently
     // instead of adding its (usually skipped, but occasionally a real LINE
@@ -343,9 +346,32 @@ async function handleEvent(event: webhook.Event, origin: string): Promise<void> 
     );
     replyText = result.text;
     quickReplies = result.quickReplies;
+    replyKind = result.replyKind;
   } catch (err) {
     console.error("[line/webhook] finance agent error:", err);
     replyText = "ขอโทษค่ะ เกิดข้อผิดพลาด ลองใหม่อีกครั้งนะคะ";
+  }
+
+  // Some replies have nothing to add the second time. A member sending an
+  // album gets one event per photo, each its own run of the agent, and the
+  // question "what would you like help with?" cannot be answered by the next
+  // photo in the same album — asking it four more times in four different
+  // wordings is what the member actually saw. See lib/replyKind.ts.
+  //
+  // Not recorded either: the window stays anchored to the message the member
+  // is really looking at, rather than being pushed forward by replies that
+  // were never sent.
+  if (replyKind !== null) {
+    const previous = await loadLastReplyKind(lineUserId).catch((err) => {
+      // Never a reason to withhold a reply — not knowing what was said last
+      // means sending this one, which is the behaviour that existed before.
+      console.error("[line/webhook] could not read the last reply kind:", err);
+      return null;
+    });
+    if (repeatsLastReply(previous, replyKind, new Date())) {
+      console.log(`[line/webhook] staying silent — already said (${replyKind})`);
+      return;
+    }
   }
 
   // Attach tappable buttons for pick-one prompts (category, loan type) so
@@ -374,7 +400,7 @@ async function handleEvent(event: webhook.Event, origin: string): Promise<void> 
     });
     // Only once it has actually gone out: a reply the member never received
     // must not be quoted back to the model as one they are looking at.
-    await recordReply(lineUserId, replyText);
+    await recordReply(lineUserId, replyText, replyKind);
   } catch (err) {
     console.error("[line/webhook] LINE reply error:", err);
   }

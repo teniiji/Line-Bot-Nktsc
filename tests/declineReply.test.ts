@@ -56,3 +56,35 @@ describe("declineReplyInstruction, a slip is genuinely awaited", () => {
     expect(text).toContain("say briefly what the picture actually shows");
   });
 });
+
+describe("declineReplyInstruction, what it must never claim", () => {
+  // One of the five runs over one album told the member the photo had been
+  // sent before. It had not — they were five different photographs, and this
+  // instruction is written for a run that can see none of the others.
+  const instruction = declineReplyInstruction({ reason: "งานพิธี", awaitingSlip: false });
+
+  it("forbids calling the picture a repeat", () => {
+    expect(instruction).toContain("NEVER say or imply that this picture was sent before");
+  });
+
+  it("forbids guessing at the occasion", () => {
+    expect(instruction).toContain("do not guess at why they sent it");
+  });
+
+  it("gives the member somewhere to go", () => {
+    // An open question with no way forward is what left them stuck.
+    expect(instruction).toContain("staff can see");
+  });
+
+  it("asks for it short", () => {
+    expect(instruction).toContain("two or three sentences");
+  });
+
+  it("leaves the awaiting-slip case alone", () => {
+    // A member genuinely mid-way through sending a slip is asked for it, and
+    // every attempt still gets an answer.
+    const awaiting = declineReplyInstruction({ reason: "เบลอ", awaitingSlip: true });
+    expect(awaiting).toContain("ask them to send the transfer slip");
+    expect(awaiting).not.toContain("NEVER say or imply");
+  });
+});

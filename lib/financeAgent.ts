@@ -29,6 +29,7 @@ import {
 import { executeTool } from "./agent/handlers";
 import { buildInitialUserMessage } from "./agent/messages";
 import type { FinanceAgentReply, ToolContext } from "./agent/types";
+import type { ReplyKind } from "./replyKind";
 
 export type { FinanceAgentReply } from "./agent/types";
 
@@ -148,6 +149,10 @@ export async function runFinanceAgent(
   // has none — see toolsForMessage.
   const availableTools = toolsForMessage(tools, hasAttachmentContent(userContent));
 
+  // Set by a tool whose reply can repeat itself into noise, and read by the
+  // caller to decide whether to send this one at all — see lib/replyKind.ts.
+  let replyKind: ReplyKind = null;
+
   for (let turn = 0; turn < MAX_TOOL_TURNS; turn++) {
     // Which tool call, if any, this turn is required to make — see
     // lib/agent/toolChoice.ts for why turn 0 is forced and why only the
@@ -225,6 +230,7 @@ export async function runFinanceAgent(
           formLinksData.hosts
         ),
         quickReplies: await computeQuickReplies(lineUserId),
+        replyKind,
       };
     }
 
@@ -232,6 +238,9 @@ export async function runFinanceAgent(
 
     const ctx: ToolContext = {
       lineUserId,
+      noteReplyKind: (kind) => {
+        replyKind = kind;
+      },
       slipImageUrl: await resolveSlipImageUrl(),
       slipImageHash,
       hasSlipImage: hasAttachmentContent(userContent),
@@ -269,6 +278,7 @@ export async function runFinanceAgent(
       formLinksData.hosts
     ),
     quickReplies: await computeQuickReplies(lineUserId),
+    replyKind,
   };
 }
 
