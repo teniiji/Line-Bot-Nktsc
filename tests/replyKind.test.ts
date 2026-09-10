@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { REPEAT_SILENCE_WINDOW_MS, repeatsLastReply } from "../lib/replyKind";
+import { REPEAT_SILENCE_WINDOW_MS, alwaysSilent, repeatsLastReply } from "../lib/replyKind";
 
 const at = (msAgo: number) => new Date(Date.now() - msAgo);
 const NOW = new Date();
@@ -66,5 +66,23 @@ describe("repeatsLastReply", () => {
     expect(
       repeatsLastReply({ kind: "asked-what-they-need", at: at(2 * 60 * 1000) }, "asked-what-they-need", new Date())
     ).toBe(true);
+  });
+});
+
+describe("alwaysSilent", () => {
+  it("sends nothing at all when the question was staff's to answer", () => {
+    // She asked whether she could pay on Monday, being on official duty in
+    // Khon Kaen until Friday. Nobody in this system can decide that, and the
+    // bot answered with ten lines of phone numbers instead.
+    expect(alwaysSilent("left-to-staff")).toBe(true);
+  });
+
+  it("does not silence a reply that is merely a repeat", () => {
+    // That one is worth sending the first time.
+    expect(alwaysSilent("asked-what-they-need")).toBe(false);
+  });
+
+  it("does not silence an ordinary reply", () => {
+    expect(alwaysSilent(null)).toBe(false);
   });
 });

@@ -31,12 +31,24 @@ const ATTACHMENT_ONLY_TOOLS = new Set([
   "flag_supporting_document",
 ]);
 
+// Silence is for a member who asked something nobody here can answer. It is
+// never the answer to a half-finished piece of work: a slip waiting on a
+// member number, a service request waiting on a phone number. Withheld
+// outright while any of those is running, because the first turn of such a
+// message is forced to call *some* tool, and this one would end the
+// conversation by leaving it unanswered.
+const IDLE_ONLY_TOOLS = new Set(["leave_to_staff"]);
+
 export function toolsForMessage<T extends { name: string }>(
   all: readonly T[],
-  hasAttachment: boolean
+  hasAttachment: boolean,
+  flowInProgress: boolean = false
 ): T[] {
-  if (hasAttachment) return [...all];
-  return all.filter((tool) => !ATTACHMENT_ONLY_TOOLS.has(tool.name));
+  return all.filter(
+    (tool) =>
+      (hasAttachment || !ATTACHMENT_ONLY_TOOLS.has(tool.name)) &&
+      (!flowInProgress || !IDLE_ONLY_TOOLS.has(tool.name))
+  );
 }
 
 export interface TurnState {
