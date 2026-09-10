@@ -211,6 +211,12 @@ export default function MemberBankAccountsPanel() {
               file; before this the only way in was one row at a time. */}
           <div className="px-4 py-3 border-b border-slate-100 bg-slate-50">
             <div className="flex flex-wrap items-center gap-3">
+              <a
+                href="/api/member-bank-accounts/template"
+                className="text-sm px-3 py-1.5 border border-slate-300 bg-white rounded hover:bg-slate-50"
+              >
+                ดาวน์โหลดไฟล์ตัวอย่าง
+              </a>
               <label className="text-sm px-3 py-1.5 border border-slate-300 bg-white rounded cursor-pointer hover:bg-slate-50">
                 นำเข้าจากไฟล์ Excel
                 <input

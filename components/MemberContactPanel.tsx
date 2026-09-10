@@ -268,6 +268,14 @@ export default function MemberContactPanel() {
         )}
 
         <span className="ml-auto flex items-center gap-2">
+          {/* A plain link: the file is built by the route, so nothing runs
+              on the client and ExcelJS never reaches the browser bundle. */}
+          <a
+            href="/api/member-roster/template"
+            className="px-3 py-1.5 border border-slate-300 rounded bg-white hover:bg-slate-50 whitespace-nowrap"
+          >
+            ดาวน์โหลดไฟล์ตัวอย่าง
+          </a>
           <label className="px-3 py-1.5 border border-slate-300 rounded bg-white cursor-pointer hover:bg-slate-50 whitespace-nowrap">
             {importing ? "กำลังอ่าน…" : "นำเข้าจากไฟล์"}
             <input
