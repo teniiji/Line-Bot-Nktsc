@@ -5,6 +5,24 @@ import { MemberRosterEntry } from "@/lib/types";
 import ConfirmDialog from "@/components/ConfirmDialog";
 import { downloadMemberRosterCsv } from "@/lib/csv";
 
+// What the import route reports back. Kept on screen until the next import:
+// it is a list of things to go and fix in the spreadsheet, not a flash
+// message.
+interface ImportResult {
+  read?: number;
+  imported?: number;
+  added?: number;
+  updated?: number;
+  filledNationalId?: number;
+  filledPhone?: number;
+  blankRows?: number;
+  columns?: { unit: boolean; nationalId: boolean; phone: boolean };
+  problems?: { rowNumber: number; reason: string }[];
+  problemCount?: number;
+  conflicts?: { memberNumber: string; names: string[] }[];
+  conflictCount?: number;
+}
+
 const PAGE_SIZE = 20;
 const SEARCH_DEBOUNCE_MS = 300;
 
@@ -15,6 +33,13 @@ export default function MemberContactPanel() {
   const [searchInput, setSearchInput] = useState("");
   const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(false);
+  // "What is missing" is the question this panel is usually opened to answer.
+  const [missing, setMissing] = useState("");
+  const [linked, setLinked] = useState("");
+  const [unit, setUnit] = useState("");
+  const [units, setUnits] = useState<string[]>([]);
+  const [importing, setImporting] = useState(false);
+  const [importResult, setImportResult] = useState<ImportResult | null>(null);
 
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editNationalId, setEditNationalId] = useState("");
@@ -30,7 +55,7 @@ export default function MemberContactPanel() {
 
   useEffect(() => {
     setPage(1);
-  }, [search]);
+  }, [search, missing, linked, unit]);
 
   const fetchMembers = useCallback(async () => {
     setLoading(true);
@@ -39,12 +64,18 @@ export default function MemberContactPanel() {
       page: String(page),
       pageSize: String(PAGE_SIZE),
     });
+    if (missing) params.set("missing", missing);
+    if (linked) params.set("linked", linked);
+    if (unit) params.set("unit", unit);
     const res = await fetch(`/api/member-roster?${params.toString()}`);
     const data = await res.json();
     setMembers(data.data);
     setTotal(data.total);
+    // The dropdown's options come back with the page, so a unit that appears
+    // after an import is selectable without a reload.
+    setUnits(data.units ?? []);
     setLoading(false);
-  }, [page, search]);
+  }, [page, search, missing, linked, unit]);
 
   useEffect(() => {
     fetchMembers();
@@ -111,6 +142,32 @@ export default function MemberContactPanel() {
     );
   };
 
+  const importFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    setImporting(true);
+    setError(null);
+    setImportResult(null);
+    try {
+      const form = new FormData();
+      form.append("file", file);
+      const res = await fetch("/api/member-roster/import", { method: "POST", body: form });
+      const body = await res.json();
+      if (!res.ok) {
+        setError(body.error || "นำเข้าไม่สำเร็จ");
+        // A refusal carries its reasons — which rows, which member numbers —
+        // and those are the whole point of reading it.
+        setImportResult(body);
+        return;
+      }
+      setImportResult(body);
+      await fetchMembers();
+    } finally {
+      setImporting(false);
+    }
+  };
+
   return (
     <div className="bg-white rounded-lg shadow">
       <div className="flex items-center justify-between gap-3 px-4 py-3 border-b border-slate-100">
@@ -124,6 +181,13 @@ export default function MemberContactPanel() {
             ส่วนคอลัมน์ "เชื่อมต่อ LINE" บอกว่าเลขสมาชิกนี้ผูกกับบัญชี LINE ไหนอยู่ — ถ้าสมาชิกแจ้งว่า
             บอทตอบว่า "เลขสมาชิกนี้ผูกกับบัญชี LINE อื่นแล้ว" (เช่น เปลี่ยนเครื่อง/เปลี่ยนบัญชี LINE
             หรือค้างจาก LINE OA ช่องเดิม) ให้กด "ปลด" แล้วสมาชิกจะผูกใหม่ได้เองในข้อความถัดไป
+          </p>
+          <p className="text-xs text-slate-500 mt-1">
+            <strong>นำเข้าจากไฟล์</strong> ได้เลย — ระบบหาคอลัมน์จาก<strong>ชื่อหัวตาราง</strong>
+            (เลขสมาชิก, ชื่อ, สังกัด, เลขบัตรประชาชน, เบอร์โทร) อยู่คอลัมน์ไหนก็ได้ ไม่ยึดตำแหน่ง ·
+            <strong>เพิ่มและอัปเดตเท่านั้น ไม่ลบใคร</strong> คนที่ไม่มีในไฟล์จะไม่ถูกแตะ ·
+            ช่องที่ไฟล์ไม่มีจะไม่ทับข้อมูลเดิม · เลขบัตรที่ไม่ครบ 13 หลักหรือเบอร์ที่ผิดรูปแบบจะถูกข้ามและรายงานให้ดู
+            ไม่เดาแทน · <strong>ไม่แตะการเชื่อมต่อ LINE เด็ดขาด</strong> เพราะเป็นสิ่งที่ระบบใช้กันการสวมสิทธิ์
           </p>
           <p className="text-xs text-amber-700 mt-1">
             🔒 ตอนเปิดดูทั้งทะเบียน <strong>เลขบัตรประชาชนจะถูกซ่อนไว้ เหลือ 4 ตัวท้าย</strong> —
@@ -150,8 +214,136 @@ export default function MemberContactPanel() {
         </div>
       </div>
 
+      <div className="flex flex-wrap items-center gap-2 px-4 py-2.5 border-b border-slate-100 text-sm">
+        <select
+          value={unit}
+          onChange={(e) => setUnit(e.target.value)}
+          className="border border-slate-300 rounded px-2 py-1.5 bg-white max-w-[16rem]"
+        >
+          <option value="">ทุกสังกัด</option>
+          {units.map((name) => (
+            <option key={name} value={name}>
+              {name}
+            </option>
+          ))}
+        </select>
+        <select
+          value={missing}
+          onChange={(e) => setMissing(e.target.value)}
+          className="border border-slate-300 rounded px-2 py-1.5 bg-white"
+        >
+          <option value="">ข้อมูลครบ/ไม่ครบ ก็ได้</option>
+          <option value="nationalId">ยังไม่มีเลขบัตรประชาชน</option>
+          <option value="phone">ยังไม่มีเบอร์โทร</option>
+        </select>
+        <select
+          value={linked}
+          onChange={(e) => setLinked(e.target.value)}
+          className="border border-slate-300 rounded px-2 py-1.5 bg-white"
+        >
+          <option value="">เชื่อม LINE หรือไม่ก็ได้</option>
+          <option value="yes">เชื่อม LINE แล้ว</option>
+          <option value="no">ยังไม่เชื่อม LINE</option>
+        </select>
+        {(unit || missing || linked) && (
+          <button
+            onClick={() => {
+              setUnit("");
+              setMissing("");
+              setLinked("");
+            }}
+            className="text-slate-500 hover:underline"
+          >
+            ล้างตัวกรอง
+          </button>
+        )}
+
+        <span className="ml-auto flex items-center gap-2">
+          <label className="px-3 py-1.5 border border-slate-300 rounded bg-white cursor-pointer hover:bg-slate-50 whitespace-nowrap">
+            {importing ? "กำลังอ่าน…" : "นำเข้าจากไฟล์"}
+            <input
+              type="file"
+              accept=".xlsx,.xls"
+              onChange={importFile}
+              disabled={importing}
+              className="hidden"
+            />
+          </label>
+        </span>
+      </div>
+
       {error && (
         <p className="text-sm text-red-600 bg-red-50 rounded px-3 py-2 mx-4 mt-3">{error}</p>
+      )}
+
+      {importResult && (
+        <div className="mx-4 mt-3 rounded border border-slate-200 bg-slate-50 px-3 py-2 text-sm">
+          {importResult.imported !== undefined && (
+            <p>
+              อ่านได้ <strong className="num">{importResult.read}</strong> แถว · เพิ่มใหม่{" "}
+              <strong className="num">{importResult.added}</strong> · อัปเดต{" "}
+              <strong className="num">{importResult.updated}</strong> คน
+              {importResult.filledNationalId ? (
+                <>
+                  {" "}
+                  · เติมเลขบัตรให้{" "}
+                  <strong className="num">{importResult.filledNationalId}</strong> คน
+                </>
+              ) : null}
+              {importResult.filledPhone ? (
+                <>
+                  {" "}
+                  · เติมเบอร์โทรให้ <strong className="num">{importResult.filledPhone}</strong> คน
+                </>
+              ) : null}
+            </p>
+          )}
+          {/* Said plainly, because "why did nothing get filled in" is
+              otherwise unanswerable from the screen. */}
+          {importResult.columns && (
+            <p className="text-xs text-slate-500 mt-1">
+              คอลัมน์ที่พบในไฟล์: ชื่อ, เลขสมาชิก
+              {importResult.columns.unit ? ", สังกัด" : ""}
+              {importResult.columns.nationalId ? ", เลขบัตรประชาชน" : ""}
+              {importResult.columns.phone ? ", เบอร์โทร" : ""}
+              {!importResult.columns.nationalId && !importResult.columns.phone
+                ? " — ไฟล์นี้ไม่มีคอลัมน์เลขบัตรและเบอร์โทร จึงไม่ได้เติมสองช่องนั้น"
+                : ""}
+            </p>
+          )}
+          {importResult.conflictCount ? (
+            <div className="mt-2">
+              <p className="text-red-700">
+                เลขสมาชิกซ้ำแต่คนละชื่อ {importResult.conflictCount} เลข:
+              </p>
+              <ul className="list-disc ml-5 text-xs text-red-700">
+                {importResult.conflicts?.map((c) => (
+                  <li key={c.memberNumber}>
+                    {c.memberNumber} — {c.names.join(" / ")}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
+          {importResult.problemCount ? (
+            <div className="mt-2">
+              <p className="text-amber-700">
+                แถวที่มีปัญหา {importResult.problemCount} แถว
+                {importResult.problemCount > (importResult.problems?.length ?? 0)
+                  ? ` (แสดง ${importResult.problems?.length} แถวแรก)`
+                  : ""}
+                :
+              </p>
+              <ul className="list-disc ml-5 text-xs text-amber-700">
+                {importResult.problems?.map((p) => (
+                  <li key={`${p.rowNumber}-${p.reason}`}>
+                    แถว {p.rowNumber}: {p.reason}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
+        </div>
       )}
 
       {loading ? (
