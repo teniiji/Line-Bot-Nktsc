@@ -11,6 +11,7 @@ import { CATEGORIES } from "@/lib/categories";
 import { accountCaveat, canBindAccount } from "@/lib/depositRecord";
 import { CHANNEL_LABELS } from "@/lib/statementLines";
 import { STATUS_LABELS } from "@/lib/statementDayView";
+import { branchesIn, summariseByAccount } from "@/lib/dailyAccountSummary";
 import {
   depositHaystack,
   filterBy,
@@ -182,6 +183,8 @@ export default function DailyReconcilePanel() {
   const [from, setFrom] = useState(todayISO);
   const [to, setTo] = useState(todayISO);
   const [search, setSearch] = useState("");
+  // "" is both accounts together, which is how the tab has always opened.
+  const [branch, setBranch] = useState("");
   const [data, setData] = useState<DailyReconcileResult | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -342,20 +345,44 @@ export default function DailyReconcilePanel() {
     setTo(shiftDay(to, days));
   };
 
+  // The two accounts are different people's work and different statements to
+  // tie out against, so the day is reported per account and can be narrowed
+  // to one. Derived from the day itself rather than a hardcoded 413/447, so a
+  // third account would appear rather than vanish.
+  const day = {
+    matched: data?.matched ?? [],
+    depositsWithoutSlip: data?.depositsWithoutSlip ?? [],
+    otherLines: data?.otherLines ?? [],
+  };
+  const branches = branchesIn(day);
+  const perAccount = summariseByAccount(day);
+  const inBranch = <T extends { branch: string }>(rows: T[]) =>
+    branch ? rows.filter((r) => r.branch === branch) : rows;
+
   // Money nobody claimed, split by whether anything knows who paid it.
-  const unknownPayer = (data?.depositsWithoutSlip ?? []).filter((d) => !d.memberNumber);
-  const knownPayer = (data?.depositsWithoutSlip ?? []).filter((d) => d.memberNumber);
+  const claimable = inBranch(data?.depositsWithoutSlip ?? []);
+  const unknownPayer = claimable.filter((d) => !d.memberNumber);
+  const knownPayer = claimable.filter((d) => d.memberNumber);
 
   // One box over every section, not one per table: a person looking for
   // member 26018 does not know which of the five conclusions their payment
   // ended up under — that is usually the whole reason they are looking.
   // Filtered here rather than server-side, so it answers as you type.
-  const statementRows = filterStatementRows(data?.statement ?? [], search);
-  const matchedRows = filterBy(data?.matched ?? [], search, matchedPairHaystack);
+  const statementRows = filterStatementRows(
+    branch ? (data?.statement ?? []).filter((r) => r.branch === branch) : (data?.statement ?? []),
+    search
+  );
+  const matchedRows = filterBy(
+    branch ? day.matched.filter((p) => p.deposit.branch === branch) : day.matched,
+    search,
+    matchedPairHaystack
+  );
+  // Slips are never filtered by account: a slip with no money behind it has
+  // no account by definition — that is what makes it unmatched.
   const unmatchedSlips = filterBy(data?.slipsWithoutMoney ?? [], search, slipHaystack);
   const unknownRows = filterBy(unknownPayer, search, depositHaystack);
   const knownRows = filterBy(knownPayer, search, depositHaystack);
-  const otherRows = filterBy(data?.otherLines ?? [], search, otherLineHaystack);
+  const otherRows = filterBy(inBranch(data?.otherLines ?? []), search, otherLineHaystack);
   const searching = search.trim().length > 0;
   const totalHits =
     statementRows.length +
@@ -458,6 +485,18 @@ export default function DailyReconcilePanel() {
           not know which of the five conclusions it landed under — not knowing
           is usually why they are looking. */}
       <div className="flex flex-wrap items-center gap-2 px-4 py-2.5 border-b border-slate-100 text-sm">
+        <select
+          value={branch}
+          onChange={(e) => setBranch(e.target.value)}
+          className="border border-slate-300 rounded-md px-2 py-1.5 bg-white"
+        >
+          <option value="">ทุกบัญชี</option>
+          {branches.map((name) => (
+            <option key={name} value={name}>
+              {name}
+            </option>
+          ))}
+        </select>
         <input
           type="search"
           value={search}
@@ -546,6 +585,66 @@ export default function DailyReconcilePanel() {
               />
             </span>
           </div>
+
+          {/* The two accounts are reconciled separately, against two
+              different statements, so the day is reported per account before
+              it is reported as a whole. */}
+          {perAccount.length > 1 && (
+            <div className="px-4 py-3 border-t border-slate-100">
+              <h3 className="text-sm font-semibold">📊 แยกตามบัญชีสหกรณ์</h3>
+              <div className="overflow-x-auto mt-2">
+                <table className="w-full text-sm">
+                  <thead className="text-slate-500 text-left text-xs uppercase tracking-wide">
+                    <tr>
+                      <th className="px-2 py-1.5 font-semibold">บัญชี</th>
+                      <th className="px-2 py-1.5 font-semibold text-right">เงินเข้า</th>
+                      <th className="px-2 py-1.5 font-semibold text-right">ยอดรวม</th>
+                      <th className="px-2 py-1.5 font-semibold text-right">ตรงกับสลิป</th>
+                      <th className="px-2 py-1.5 font-semibold text-right">ยังไม่มีสลิป</th>
+                      <th className="px-2 py-1.5 font-semibold text-right">รายการอื่น</th>
+                      <th className="px-2 py-1.5"></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {perAccount.map((a) => (
+                      <tr key={a.branch} className="border-t border-slate-100 hover:bg-slate-50">
+                        <td className="px-2 py-1.5 font-medium whitespace-nowrap">{a.branch}</td>
+                        <td className="px-2 py-1.5 num text-right">{a.depositCount}</td>
+                        <td className="px-2 py-1.5 text-right">
+                          <Money value={a.depositAmount} className="font-semibold text-green-700" />
+                        </td>
+                        <td className="px-2 py-1.5 num text-right text-slate-500">
+                          {a.matchedCount}
+                        </td>
+                        {/* The number that is actually somebody's job today. */}
+                        <td className="px-2 py-1.5 text-right whitespace-nowrap">
+                          <span className={a.unclaimedCount > 0 ? "text-amber-700" : "text-slate-400"}>
+                            <span className="num">{a.unclaimedCount}</span>
+                            {a.unclaimedCount > 0 && (
+                              <span className="text-xs"> · <Money value={a.unclaimedAmount} /></span>
+                            )}
+                          </span>
+                        </td>
+                        <td className="px-2 py-1.5 num text-right text-slate-400">{a.otherCount}</td>
+                        <td className="px-2 py-1.5 text-right whitespace-nowrap">
+                          <button
+                            onClick={() => setBranch(branch === a.branch ? "" : a.branch)}
+                            className="text-xs text-slate-600 hover:underline"
+                          >
+                            {branch === a.branch ? "เลิกกรอง" : "ดูเฉพาะบัญชีนี้"}
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <p className="text-xs text-slate-500 mt-1">
+                สลิปไม่ได้แยกตามบัญชี — สลิปเป็นของสมาชิก ไม่ใช่ของบัญชี และ
+                <strong>สลิปที่ยังไม่เจอเงินเข้าก็ยังไม่มีบัญชีปลายทาง</strong> นั่นคือสาเหตุที่มันยังจับคู่ไม่ได้
+              </p>
+            </div>
+          )}
 
           {/* Placed before the findings, because the first question a person
               checking the bank's own printout asks is "is everything here?" —
