@@ -221,14 +221,7 @@ export default function Dashboard() {
             label: "ธุรกรรม",
             content: (
               <div className="space-y-6">
-                <SummaryCards summary={summary} />
-
                 <PendingTransactionsPanel />
-
-                <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                  <CategoryChart data={summary.byCategory} />
-                  <TrendChart data={summary.monthlyTrend} />
-                </div>
 
                 <ExpenseFilters filters={filters} onChange={setFilters} />
 
@@ -253,6 +246,19 @@ export default function Dashboard() {
                   onSave={handleSave}
                   onCancelEdit={() => setEditingExpense(null)}
                 />
+
+                {/* The totals and the charts sit under the work rather than
+                    over it. The tab opens on what somebody came to do —
+                    the payments waiting, the list, the filters — and the
+                    figures are what you scroll to when you want them, not
+                    a screenful to get past first. They answer to the same
+                    filters as the list above them. */}
+                <SummaryCards summary={summary} />
+
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                  <CategoryChart data={summary.byCategory} />
+                  <TrendChart data={summary.monthlyTrend} />
+                </div>
               </div>
             ),
           },
