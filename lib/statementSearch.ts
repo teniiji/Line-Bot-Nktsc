@@ -13,6 +13,8 @@
 
 import { formatAmount, formatStatementDate, formatStatementTimeExact } from "./format";
 import { STATUS_LABELS, type StatementLineStatus } from "./statementDayView";
+import { CHANNEL_LABELS } from "./statementLines";
+import type { DailyDepositRow, DailyOtherLineRow, DailySlipRow } from "./types";
 
 export interface SearchableStatementRow {
   postedAt: string | null;
@@ -68,4 +70,79 @@ export function filterStatementRows<T extends SearchableStatementRow>(
 ): T[] {
   if (!query.trim()) return [...rows];
   return rows.filter((row) => matchesStatementSearch(row, query));
+}
+
+
+// Every word has to match, not any of them — see matchesStatementSearch. The
+// same rule for every section, because a search box that behaves differently
+// depending on which table it is over is worse than none.
+export function matchesTerms(haystack: string, query: string): boolean {
+  const terms = query.trim().toLowerCase().split(/\s+/).filter(Boolean);
+  if (terms.length === 0) return true;
+  return terms.every((term) => haystack.includes(term));
+}
+
+export function filterBy<T>(
+  rows: readonly T[],
+  query: string,
+  haystackOf: (row: T) => string
+): T[] {
+  if (!query.trim()) return [...rows];
+  return rows.filter((row) => matchesTerms(haystackOf(row).toLowerCase(), query));
+}
+
+// The amount twice in each of these, for the same reason as the statement
+// rows: as typed and as displayed.
+const amountForms = (amount: number) => [String(amount), formatAmount(amount)];
+
+export function depositHaystack(row: DailyDepositRow): string {
+  return [
+    formatStatementDate(row.postedAt),
+    formatStatementTimeExact(row.postedAt),
+    ...amountForms(row.amount),
+    row.memberNumber ?? "",
+    row.senderAccount ?? "",
+    CHANNEL_LABELS[row.channel] ?? row.channel,
+    row.branch,
+    row.description,
+  ]
+    .join(" ")
+    .toLowerCase();
+}
+
+export function slipHaystack(row: DailySlipRow): string {
+  return [
+    formatStatementDate(row.date),
+    row.transferTime ?? "",
+    ...amountForms(row.amount),
+    row.memberNumber ?? "",
+    row.memberFullName ?? "",
+    row.category ?? "",
+    row.senderAccount ?? "",
+  ]
+    .join(" ")
+    .toLowerCase();
+}
+
+export function otherLineHaystack(row: DailyOtherLineRow): string {
+  return [
+    formatStatementDate(row.postedAt),
+    formatStatementTimeExact(row.postedAt),
+    ...amountForms(row.amount),
+    row.txnCode,
+    row.description,
+    row.branch,
+  ]
+    .join(" ")
+    .toLowerCase();
+}
+
+// A matched row shows both halves, so both halves are searchable: the member
+// name only exists on the slip, and the bank's description only on the
+// deposit, and a person searching does not know or care which is which.
+export function matchedPairHaystack(pair: {
+  deposit: DailyDepositRow;
+  slip: DailySlipRow;
+}): string {
+  return `${depositHaystack(pair.deposit)} ${slipHaystack(pair.slip)}`;
 }

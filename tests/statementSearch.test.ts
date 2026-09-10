@@ -119,3 +119,126 @@ describe("filterStatementRows", () => {
     expect(rows).toEqual(before);
   });
 });
+
+// The other four sections of the tab. One box searches all of them, so each
+// shape needs its own haystack — a person looking for member 26018 does not
+// know which conclusion their payment landed under, which is usually the
+// whole reason they are looking.
+import {
+  depositHaystack,
+  filterBy,
+  matchedPairHaystack,
+  matchesTerms,
+  otherLineHaystack,
+  slipHaystack,
+} from "../lib/statementSearch";
+import type { DailyDepositRow, DailyOtherLineRow, DailySlipRow } from "../lib/types";
+
+const deposit = (over: Partial<DailyDepositRow> = {}): DailyDepositRow => ({
+  id: "d1",
+  amount: 173000,
+  postedAt: "2026-09-08T07:01:59.000Z",
+  senderAccount: "4131355035",
+  channel: "transfer",
+  branch: "หนองคาย",
+  description: "TR fr 4131355035",
+  memberNumber: null,
+  ...over,
+});
+
+const slip = (over: Partial<DailySlipRow> = {}): DailySlipRow => ({
+  id: "s1",
+  amount: 1800000,
+  date: "2026-09-04T00:00:00.000Z",
+  memberNumber: "26018",
+  memberFullName: "นางการดี ดวงสีมา",
+  category: "ฝากเงิน",
+  transferTime: null,
+  senderAccount: null,
+  slipImageUrl: null,
+  statementLineId: "x1",
+  ...over,
+});
+
+const otherLine = (over: Partial<DailyOtherLineRow> = {}): DailyOtherLineRow => ({
+  id: "o1",
+  amount: -8,
+  postedAt: "2026-09-09T08:04:23.000Z",
+  txnCode: "BPSFE",
+  description: "BP Fee-1000012738769",
+  branch: "หนองคาย",
+  ...over,
+});
+
+describe("the other sections' haystacks", () => {
+  it("finds a deposit by its paying account, amount, channel or date", () => {
+    const hay = depositHaystack(deposit());
+    for (const term of ["4131355035", "173000", "หนองคาย", "2569"]) {
+      expect(matchesTerms(hay, term), term).toBe(true);
+    }
+  });
+
+  it("finds a slip by the member's name or number", () => {
+    const hay = slipHaystack(slip());
+    expect(matchesTerms(hay, "26018")).toBe(true);
+    expect(matchesTerms(hay, "การดี")).toBe(true);
+    expect(matchesTerms(hay, "ฝากเงิน")).toBe(true);
+    expect(matchesTerms(hay, "1,800,000")).toBe(true);
+  });
+
+  it("finds an other-line by its bank code", () => {
+    const hay = otherLineHaystack(otherLine());
+    expect(matchesTerms(hay, "BPSFE".toLowerCase())).toBe(true);
+    expect(matchesTerms(hay, "1000012738769")).toBe(true);
+  });
+
+  it("searches both halves of a matched pair", () => {
+    // The member name only exists on the slip and the bank's description only
+    // on the deposit; somebody searching does not know or care which is which.
+    const hay = matchedPairHaystack({ deposit: deposit(), slip: slip() });
+    expect(matchesTerms(hay, "การดี")).toBe(true);
+    expect(matchesTerms(hay, "4131355035")).toBe(true);
+  });
+
+  it("keeps the same all-terms-must-match rule as the statement table", () => {
+    // A box that behaves differently depending on which table it is over is
+    // worse than none.
+    const hay = depositHaystack(deposit());
+    expect(matchesTerms(hay, "173000 หนองคาย")).toBe(true);
+    expect(matchesTerms(hay, "173000 บึงกาฬ")).toBe(false);
+    expect(matchesTerms(hay, "")).toBe(true);
+  });
+
+  it("survives rows where every optional field is missing", () => {
+    const bare = deposit({
+      postedAt: null,
+      senderAccount: null,
+      memberNumber: null,
+      description: "",
+    });
+    expect(matchesTerms(depositHaystack(bare), "")).toBe(true);
+    expect(matchesTerms(depositHaystack(bare), "4131355035")).toBe(false);
+
+    // Clearing senderAccount alone does not hide the number: the bank prints
+    // it in the description too, and that is the column staff read.
+    const noAccountField = deposit({ senderAccount: null });
+    expect(matchesTerms(depositHaystack(noAccountField), "4131355035")).toBe(true);
+    const bareSlip = slip({ memberNumber: null, memberFullName: null, category: null });
+    expect(matchesTerms(slipHaystack(bareSlip), "การดี")).toBe(false);
+  });
+});
+
+describe("filterBy", () => {
+  const rows = [deposit(), deposit({ id: "d2", senderAccount: "4131152517", amount: 8000 })];
+
+  it("narrows to the matching rows and keeps their order", () => {
+    const found = filterBy(rows, "4131152517", depositHaystack);
+    expect(found).toHaveLength(1);
+    expect(found[0].id).toBe("d2");
+  });
+
+  it("returns everything on a blank query and nothing on a miss", () => {
+    expect(filterBy(rows, "   ", depositHaystack)).toHaveLength(2);
+    expect(filterBy(rows, "ไม่มีอะไรตรง", depositHaystack)).toHaveLength(0);
+  });
+});
