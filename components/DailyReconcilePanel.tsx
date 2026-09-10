@@ -40,9 +40,22 @@ const Clock = ({ iso }: { iso: string | null }) => {
 // The same, with the seconds kept. Only the statement table uses it: that is
 // the one read line by line against the bank's printout, where the seconds
 // separate two postings in the same minute.
-const ExactClock = ({ iso }: { iso: string | null }) => {
+//
+// Over more than one day the date has to come with it. The rows are ordered
+// by the full timestamp, so across days the times read 11:12, then 20:12,
+// then 07:01 — which looks like a sorting fault rather than a new day, and
+// two postings from the same payer account on different days read as one
+// duplicated line.
+const ExactClock = ({ iso, withDate = false }: { iso: string | null; withDate?: boolean }) => {
   const time = formatStatementTimeExact(iso);
-  return <span className="num text-slate-500">{time || formatStatementDate(iso)}</span>;
+  if (!time) return <span className="num text-slate-500">{formatStatementDate(iso)}</span>;
+  if (!withDate) return <span className="num text-slate-500">{time}</span>;
+  return (
+    <span className="num block leading-tight text-slate-500">
+      <span className="block text-xs text-slate-400">{formatStatementDate(iso)}</span>
+      <span className="block">{time}</span>
+    </span>
+  );
 };
 
 // Who a payment came from, as far as anything knows. The account number is
@@ -532,7 +545,7 @@ export default function DailyReconcilePanel() {
                   </p>
                 ) : (
                   <div className="overflow-x-auto mt-2">
-                    <StatementTable rows={statementRows} />
+                    <StatementTable rows={statementRows} showDate={from !== to} />
                   </div>
                 )}
               </>
@@ -723,11 +736,19 @@ const Member = ({
   );
 };
 
-const StatementTable = ({ rows }: { rows: DailyStatementRow[] }) => (
+const StatementTable = ({
+  rows,
+  showDate = false,
+}: {
+  rows: DailyStatementRow[];
+  // Only when the window spans more than one day: repeating the same date on
+  // every row of a single day is noise in a column that is read constantly.
+  showDate?: boolean;
+}) => (
   <table className="w-full text-sm">
     <thead className="text-slate-500 text-left text-xs uppercase tracking-wide">
       <tr>
-        <th className="px-2 py-1.5 font-semibold">เวลา</th>
+        <th className="px-2 py-1.5 font-semibold">{showDate ? "วันที่ / เวลา" : "เวลา"}</th>
         <th className="px-2 py-1.5 font-semibold">รหัส</th>
         <th className="px-2 py-1.5 font-semibold">รายละเอียด</th>
         <th className="px-2 py-1.5 font-semibold text-right">ยอด</th>
@@ -741,7 +762,7 @@ const StatementTable = ({ rows }: { rows: DailyStatementRow[] }) => (
       {rows.map((row) => (
         <tr key={row.id} className="border-t border-slate-100 hover:bg-slate-50">
           <td className="px-2 py-1.5 whitespace-nowrap">
-            <ExactClock iso={row.postedAt} />
+            <ExactClock iso={row.postedAt} withDate={showDate} />
           </td>
           <td className="px-2 py-1.5 font-mono text-xs text-slate-500">{row.txnCode}</td>
           <td className="px-2 py-1.5 font-mono text-xs text-slate-500">{row.description}</td>
