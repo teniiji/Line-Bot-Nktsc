@@ -9,23 +9,48 @@ export const dynamic = "force-dynamic";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
-// One day's money in against the slips members sent that day.
+// Inclusive on both ends, so this allows 32 calendar days.
+const MAX_RANGE_DAYS = 31;
+
+// The money in over a span of days, against the slips members sent for it.
+//
+// Usually one day — the tab is a daily job — but staff chasing a payment do
+// not always know which day it landed on, so the window is a range. A single
+// date is the same thing with from and to equal, and is still accepted on its
+// own for that reason.
 //
 // Statement timestamps hold the bank's wall clock in UTC (see
 // parseStatementDate) and slip dates are stored as plain days, so the window
 // is built in UTC too — reading either in the server's timezone would shift
 // the boundary and move payments made near midnight into the wrong day.
 export async function GET(request: NextRequest) {
-  const dateParam = request.nextUrl.searchParams.get("date") ?? "";
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(dateParam)) {
+  const params = request.nextUrl.searchParams;
+  const dateParam = params.get("date") ?? "";
+  const fromParam = params.get("from") || dateParam;
+  const toParam = params.get("to") || dateParam;
+  const isDay = (value: string) => /^\d{4}-\d{2}-\d{2}$/.test(value);
+  if (!isDay(fromParam) || !isDay(toParam)) {
     return NextResponse.json({ error: "ต้องระบุวันที่ (YYYY-MM-DD)" }, { status: 400 });
   }
 
-  const start = new Date(`${dateParam}T00:00:00.000Z`);
-  if (Number.isNaN(start.getTime())) {
+  const start = new Date(`${fromParam}T00:00:00.000Z`);
+  const lastDay = new Date(`${toParam}T00:00:00.000Z`);
+  if (Number.isNaN(start.getTime()) || Number.isNaN(lastDay.getTime())) {
     return NextResponse.json({ error: "วันที่ไม่ถูกต้อง" }, { status: 400 });
   }
-  const end = new Date(start.getTime() + DAY_MS);
+  if (lastDay < start) {
+    return NextResponse.json({ error: "วันเริ่มต้นต้องไม่เกินวันสิ้นสุด" }, { status: 400 });
+  }
+  // Bounded because the pairing compares every deposit against every slip in
+  // the window: a mistyped year would otherwise ask for a decade of both.
+  // A month is the working unit here, so a month is the cap.
+  if (lastDay.getTime() - start.getTime() > MAX_RANGE_DAYS * DAY_MS) {
+    return NextResponse.json(
+      { error: `เลือกช่วงได้ครั้งละไม่เกิน ${MAX_RANGE_DAYS + 1} วัน` },
+      { status: 400 }
+    );
+  }
+  const end = new Date(lastDay.getTime() + DAY_MS);
 
   // Slips reach a day either side, because a member who transfers late in the
   // evening is posted by the bank the next morning — and because members
@@ -86,9 +111,9 @@ export async function GET(request: NextRequest) {
       description: line.description,
     }));
 
-  // Slips outside the day itself only count when they pair with money on it;
-  // on their own they belong to their own day's view, not this one.
-  const sameDay = (date: Date) => date >= start && date < end;
+  // Slips outside the window itself only count when they pair with money
+  // inside it; on their own they belong to their own day's view, not this one.
+  const inRange = (date: Date) => date >= start && date < end;
   const slipRecords: SlipRecord[] = slips.map((slip) => ({
     id: slip.id,
     amount: slip.amount,
@@ -168,18 +193,37 @@ export async function GET(request: NextRequest) {
         .filter((n): n is string => n !== null)
     ),
   ];
-  const rosterRows = numbersOnPage.length
-    ? await prisma.memberRoster.findMany({
-        where: { memberNumber: { in: numbersOnPage } },
-        select: { memberNumber: true, memberName: true, unitName: true },
-      })
-    : [];
+  const [rosterRows, loggedNames] = numbersOnPage.length
+    ? await Promise.all([
+        prisma.memberRoster.findMany({
+          where: { memberNumber: { in: numbersOnPage } },
+          select: { memberNumber: true, memberName: true, unitName: true },
+        }),
+        // The roster is imported from the cooperative's own list and does not
+        // carry everyone — a number it has never heard of used to render as
+        // nothing but the number. But a member who has ever filed a slip
+        // through the bot told it their name at the time, and that is on the
+        // transaction. Most recent first, one row per member.
+        prisma.expense.findMany({
+          where: { memberNumber: { in: numbersOnPage }, memberFullName: { not: null } },
+          orderBy: { createdAt: "desc" },
+          distinct: ["memberNumber"],
+          select: { memberNumber: true, memberFullName: true },
+        }),
+      ])
+    : [[], []];
   const rosterByNumber = new Map(
     rosterRows.map((row) => [memberNumberKey(row.memberNumber) ?? row.memberNumber, row])
   );
+  const loggedNameByNumber = new Map(
+    loggedNames
+      .filter((row) => row.memberNumber && row.memberFullName)
+      .map((row) => [memberNumberKey(row.memberNumber) ?? "", row.memberFullName as string])
+  );
 
   const statement = resolved.map(({ line, slip, owner, memberNumber }) => {
-    const entry = rosterByNumber.get(memberNumberKey(memberNumber) ?? "") ?? null;
+    const key = memberNumberKey(memberNumber) ?? "";
+    const entry = rosterByNumber.get(key) ?? null;
     return {
       id: line.id,
       postedAt: line.postedAt?.toISOString() ?? null,
@@ -199,17 +243,24 @@ export async function GET(request: NextRequest) {
         ownerMemberNumber: owner,
       }),
       memberNumber,
-      // Roster name first, the slip's second: the roster is the cooperative's
-      // own record, while the name on a slip is whatever the member typed.
-      memberName: entry?.memberName ?? slip?.memberFullName ?? null,
+      // Roster first — it is the cooperative's own record. Then the name off
+      // whatever this member last filed through the bot, which is the only
+      // thing that knows a number the roster has never carried. The paired
+      // slip is last and usually the same row as the one above it.
+      memberName:
+        entry?.memberName ?? loggedNameByNumber.get(key) ?? slip?.memberFullName ?? null,
       unitName: entry?.unitName ?? null,
     };
   });
 
-  const unclaimedSlips = result.slipsWithoutMoney.filter((slip) => sameDay(slip.date));
+  const unclaimedSlips = result.slipsWithoutMoney.filter((slip) => inRange(slip.date));
 
   return NextResponse.json({
-    date: dateParam,
+    // `date` stays the first day of the window, so a caller that only ever
+    // asked for one still reads the field it always read.
+    date: fromParam,
+    from: fromParam,
+    to: toParam,
     statement,
     matched: result.matched.map((pair) => ({
       deposit: describeDeposit(pair.deposit),
