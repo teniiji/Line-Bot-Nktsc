@@ -11,6 +11,7 @@ import { CATEGORIES } from "@/lib/categories";
 import { accountCaveat, canBindAccount } from "@/lib/depositRecord";
 import { CHANNEL_LABELS } from "@/lib/statementLines";
 import { STATUS_LABELS } from "@/lib/statementDayView";
+import { filterStatementRows } from "@/lib/statementSearch";
 import {
   DailyDepositRow,
   DailyOtherLineRow,
@@ -140,7 +141,11 @@ const MatchBasis = ({
 };
 
 export default function DailyReconcilePanel() {
-  const [date, setDate] = useState(todayISO);
+  // A range, defaulting to the single day this tab has always shown. Staff
+  // chasing a payment do not always know which day it landed on.
+  const [from, setFrom] = useState(todayISO);
+  const [to, setTo] = useState(todayISO);
+  const [search, setSearch] = useState("");
   const [data, setData] = useState<DailyReconcileResult | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -168,10 +173,10 @@ export default function DailyReconcilePanel() {
   const [saving, setSaving] = useState(false);
   const [actionNotice, setActionNotice] = useState<string | null>(null);
 
-  const fetchDay = useCallback(async (day: string) => {
+  const fetchDay = useCallback(async (start: string, end: string) => {
     setLoading(true);
     setError(null);
-    const res = await fetch(`/api/daily-reconcile?date=${day}`);
+    const res = await fetch(`/api/daily-reconcile?from=${start}&to=${end}`);
     const body = await res.json();
     setLoading(false);
     if (!res.ok) {
@@ -183,8 +188,8 @@ export default function DailyReconcilePanel() {
   }, []);
 
   useEffect(() => {
-    fetchDay(date);
-  }, [date, fetchDay]);
+    fetchDay(from, to);
+  }, [from, to, fetchDay]);
 
   const uploadStatement = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -210,7 +215,7 @@ export default function DailyReconcilePanel() {
           : "";
       setUploadNotice(`บัญชี ${body.account} ${body.branch}: อ่านได้ ${body.lines} รายการ${covers}`);
       // Reloads the day on screen, which is the one the person came to look at.
-      await fetchDay(date);
+      await fetchDay(from, to);
     } finally {
       setUploading(false);
     }
@@ -254,7 +259,7 @@ export default function DailyReconcilePanel() {
           " · ครั้งต่อไปรู้เองไม่ต้องระบุซ้ำ"
       );
       closeForm();
-      await fetchDay(date);
+      await fetchDay(from, to);
     } finally {
       setSaving(false);
     }
@@ -288,11 +293,23 @@ export default function DailyReconcilePanel() {
           (body.inRoster ? "" : " — ⚠️ ไม่พบเลขสมาชิกนี้ในทะเบียนสมาชิก ตรวจสอบอีกครั้ง")
       );
       closeForm();
-      await fetchDay(date);
+      await fetchDay(from, to);
     } finally {
       setSaving(false);
     }
   };
+
+  // Both ends move together, so the arrows still step through days at
+  // whatever width the range is set to.
+  const shiftRange = (days: number) => {
+    setFrom(shiftDay(from, days));
+    setTo(shiftDay(to, days));
+  };
+
+  // Filtered here rather than server-side: the rows are already loaded, and a
+  // filter that answers as you type is what makes it usable for "where is
+  // that ฿30,000".
+  const statementRows = filterStatementRows(data?.statement ?? [], search);
 
   // Money nobody claimed, split by whether anything knows who paid it.
   const unknownPayer = (data?.depositsWithoutSlip ?? []).filter((d) => !d.memberNumber);
@@ -307,7 +324,7 @@ export default function DailyReconcilePanel() {
         <h2 className="font-semibold">เงินเข้าประจำวัน (เทียบกับสลิปที่ส่งมาทางไลน์)</h2>
         <p className="text-xs text-slate-500 mt-1">
           เทียบ <strong>เงินที่เข้าบัญชีสหกรณ์วันนั้น</strong> กับ{" "}
-          <strong>สลิปที่สมาชิกส่งเข้าบอท</strong> วันเดียวกัน เพื่อจับ 2 อย่าง:
+          <strong>สลิปที่สมาชิกส่งเข้าบอท</strong> ในช่วงเดียวกัน เพื่อจับ 2 อย่าง:
           สลิปที่ไม่มีเงินเข้าจริง และเงินที่เข้ามาโดยไม่มีใครแจ้ง —{" "}
           <strong>อัปโหลด Statement ได้ที่นี่เลย ไม่ต้องสร้างรอบเก็บไม่ได้</strong>{" "}
           (ไฟล์ที่เคยอัปในแท็บ "เทียบ Statement" ก็ใช้ได้ ไม่ต้องอัปซ้ำ)
@@ -327,31 +344,63 @@ export default function DailyReconcilePanel() {
 
       <div className="flex flex-wrap items-center gap-2 px-4 py-3 border-b border-slate-100 text-sm">
         <button
-          onClick={() => setDate(shiftDay(date, -1))}
+          onClick={() => shiftRange(-1)}
           className="px-2 py-1.5 border border-slate-200 rounded-md hover:bg-slate-50"
         >
           ← วันก่อน
         </button>
         <input
           type="date"
-          value={date}
-          onChange={(e) => e.target.value && setDate(e.target.value)}
+          value={from}
+          onChange={(e) => {
+            const value = e.target.value;
+            if (!value) return;
+            setFrom(value);
+            // Dragging the start past the end is a mistake, not a request for
+            // an empty range — carry the end along instead of erroring.
+            if (value > to) setTo(value);
+          }}
+          className="border border-slate-300 rounded-md px-3 py-1.5"
+        />
+        <span className="text-slate-400">ถึง</span>
+        <input
+          type="date"
+          value={to}
+          onChange={(e) => {
+            const value = e.target.value;
+            if (!value) return;
+            setTo(value);
+            if (value < from) setFrom(value);
+          }}
           className="border border-slate-300 rounded-md px-3 py-1.5"
         />
         <button
-          onClick={() => setDate(shiftDay(date, 1))}
+          onClick={() => shiftRange(1)}
           className="px-2 py-1.5 border border-slate-200 rounded-md hover:bg-slate-50"
         >
           วันถัดไป →
         </button>
         <button
-          onClick={() => setDate(todayISO())}
+          onClick={() => {
+            setFrom(todayISO());
+            setTo(todayISO());
+          }}
           className="px-3 py-1.5 border border-slate-200 rounded-md hover:bg-slate-50"
         >
           วันนี้
         </button>
+        <button
+          onClick={() => {
+            setFrom(shiftDay(todayISO(), -6));
+            setTo(todayISO());
+          }}
+          className="px-3 py-1.5 border border-slate-200 rounded-md hover:bg-slate-50"
+        >
+          7 วันล่าสุด
+        </button>
         <span className="ml-auto text-slate-500">
-          {formatStatementDate(`${date}T00:00:00.000Z`)}
+          {formatStatementDate(`${from}T00:00:00.000Z`)}
+          {from !== to && ` – ${formatStatementDate(`${to}T00:00:00.000Z`)}`}
         </span>
       </div>
 
@@ -397,10 +446,11 @@ export default function DailyReconcilePanel() {
         <p className="text-slate-500 text-sm py-10 text-center">กำลังโหลด…</p>
       ) : !data ? null : !data.loaded ? (
         <p className="text-slate-500 text-sm py-10 text-center px-4">
-          ยังไม่มี Statement ที่ครอบคลุมวันนี้ — อัปโหลดไฟล์ของวันนี้ได้ที่แถบด้านบน
+          ยังไม่มี Statement ที่ครอบคลุม{from === to ? "วันนี้" : "ช่วงที่เลือก"} —
+          อัปโหลดไฟล์ได้ที่แถบด้านบน
           <br />
           <span className="text-xs text-slate-400">
-            (ต่างจาก "วันนี้ไม่มีเงินเข้า" — ระบบยังไม่มีข้อมูลของวันนี้เลย)
+            (ต่างจาก "ไม่มีเงินเข้า" — ระบบยังไม่มีข้อมูลของช่วงนี้เลย)
           </span>
         </p>
       ) : (
@@ -433,11 +483,11 @@ export default function DailyReconcilePanel() {
               onClick={() => setShowStatement((v) => !v)}
               className="text-sm text-slate-700 hover:underline font-medium"
             >
-              {showStatement ? "▾" : "▸"} 📄 รายการทั้งหมดในสเตทเมนต์วันนี้ (
-              {data.statement.length} รายการ)
+              {showStatement ? "▾" : "▸"} 📄 รายการทั้งหมดในสเตทเมนต์
+              {from === to ? "วันนี้" : "ช่วงนี้"} ({data.statement.length} รายการ)
             </button>
             <p className="text-xs text-slate-500 mt-1">
-              ทุกบรรทัดของวันนี้ เรียงตามเวลาแบบเดียวกับไฟล์ของธนาคาร พร้อมบอกว่าแต่ละบรรทัด
+              ทุกบรรทัดในช่วงที่เลือก เรียงตามเวลาแบบเดียวกับไฟล์ของธนาคาร พร้อมบอกว่าแต่ละบรรทัด
               ตกอยู่ในกลุ่มไหนด้านล่าง — ใช้ไล่ทีละบรรทัดกับสเตทเมนต์ที่ปริ้นมาได้เลย
               <strong>
                 {" "}
@@ -446,9 +496,46 @@ export default function DailyReconcilePanel() {
               (กลุ่มด้านล่างแบ่งตามข้อสรุป บางกลุ่มพับไว้ เลยดูเหมือนมีน้อยกว่าความเป็นจริง)
             </p>
             {showStatement && (
-              <div className="overflow-x-auto mt-2">
-                <StatementTable rows={data.statement} />
-              </div>
+              <>
+                <div className="flex flex-wrap items-center gap-2 mt-2 text-sm">
+                  <input
+                    type="search"
+                    value={search}
+                    onChange={(e) => setSearch(e.target.value)}
+                    placeholder="ค้นหา: ชื่อ, เลขสมาชิก, สังกัด, ยอด, เลขบัญชี, เวลา, รหัส…"
+                    className="border border-slate-300 rounded-md px-3 py-1.5 w-full sm:w-96"
+                  />
+                  {search && (
+                    <>
+                      <span className="text-slate-500">
+                        เจอ{" "}
+                        <strong className="num text-slate-900">{statementRows.length}</strong> จาก{" "}
+                        <span className="num">{data.statement.length}</span> รายการ
+                      </span>
+                      <button
+                        onClick={() => setSearch("")}
+                        className="text-slate-500 hover:underline"
+                      >
+                        ล้าง
+                      </button>
+                    </>
+                  )}
+                </div>
+                {/* Said plainly rather than shown as an empty table: "no
+                    results" and "nothing in the file" look identical
+                    otherwise, and only one of them is fixed by clearing the
+                    box. */}
+                {search && statementRows.length === 0 ? (
+                  <p className="text-sm text-slate-500 py-6 text-center">
+                    ไม่มีบรรทัดไหนตรงกับ &ldquo;{search}&rdquo; ในช่วงวันที่เลือก —
+                    ลองขยายช่วงวันที่ หรือค้นด้วยคำที่สั้นลง
+                  </p>
+                ) : (
+                  <div className="overflow-x-auto mt-2">
+                    <StatementTable rows={statementRows} />
+                  </div>
+                )}
+              </>
             )}
           </div>
 
