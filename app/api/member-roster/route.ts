@@ -48,6 +48,30 @@ export async function GET(request: NextRequest) {
   if (missing === "phone") filters.push({ OR: [{ phone: null }, { phone: "" }] });
   if (linked === "yes") filters.push({ NOT: { lineUserId: null } });
   if (linked === "no") filters.push({ lineUserId: null });
+  // A binding whose LINE account no longer exists. Every id in the roster
+  // became meaningless the day the cooperative moved to a new OA — a LINE
+  // userId is scoped to the channel that issued it — and a stale one does not
+  // merely fail to help: the impersonation guard sees a binding that does not
+  // match the account the member is messaging from and refuses their
+  // transaction. That is the outage the 20260728120000_clear_stale_line_links
+  // migration had to clean up. Finding them needs a difference between two
+  // tables that have no relation between them (see the schema's convention),
+  // so it is computed rather than expressed as a where clause.
+  if (linked === "stale") {
+    const [bound, known] = await Promise.all([
+      prisma.memberRoster.findMany({
+        where: { NOT: { lineUserId: null } },
+        select: { lineUserId: true },
+      }),
+      prisma.lineUser.findMany({ select: { id: true } }),
+    ]);
+    const knownIds = new Set(known.map((row) => row.id));
+    const staleIds = bound
+      .map((row) => row.lineUserId)
+      .filter((id): id is string => Boolean(id) && !knownIds.has(id as string));
+    // An empty IN matches nothing, which is the right answer: no stale links.
+    filters.push({ lineUserId: { in: staleIds } });
+  }
 
   const where = filters.length > 0 ? { AND: filters } : {};
 
@@ -91,14 +115,37 @@ export async function GET(request: NextRequest) {
     else accountsByMember.set(entry.memberNumber, [entry.accountNumber]);
   }
 
-  const data = rows.map((row) => ({
+  // Which LINE account each binding points at, so the row can name it instead
+  // of only saying that one exists — and so a binding pointing at nothing can
+  // say so, which is the one case that needs acting on.
+  const boundIds = rows
+    .map((row) => row.lineUserId)
+    .filter((id): id is string => Boolean(id));
+  const lineUsers = boundIds.length
+    ? await prisma.lineUser.findMany({
+        where: { id: { in: boundIds } },
+        select: { id: true, displayName: true, nickname: true },
+      })
+    : [];
+  const lineUserById = new Map(lineUsers.map((row) => [row.id, row]));
+
+  const data = rows.map((row) => {
+    const account = row.lineUserId ? (lineUserById.get(row.lineUserId) ?? null) : null;
+    return {
     ...row,
     nationalId: browsing ? maskNationalId(row.nationalId) : row.nationalId,
     // Said explicitly so the panel can label a masked value as masked rather
     // than let it read as what is stored.
     nationalIdMasked: browsing && Boolean(row.nationalId),
     bankAccounts: accountsByMember.get(row.memberNumber) ?? [],
-  }));
+    // The nickname the member set through the bot wins over the LINE profile
+    // name: staff who know a member as "ครูแดง" are looking for that.
+    lineDisplayName: account ? (account.nickname ?? account.displayName) : null,
+    // False for a binding that points at an account this app has no record
+    // of — see the stale filter above.
+    lineAccountExists: row.lineUserId === null ? false : account !== null,
+    };
+  });
 
   // Every unit on file, for the dropdown. Distinct over one indexed-enough
   // column and small — there are tens of units, not thousands — so it is

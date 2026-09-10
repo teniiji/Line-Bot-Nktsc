@@ -67,6 +67,17 @@ export interface MemberRosterEntry {
   // Every bank account bound to this member, so "who is this and what do they
   // transfer from" is one lookup instead of two panels in two tabs.
   bankAccounts: string[];
+  // Which LINE account the binding above points at — the member's nickname if
+  // they set one through the bot, otherwise their LINE profile name. null when
+  // nothing is bound, and also when the binding points at an account this app
+  // has no record of.
+  lineDisplayName: string | null;
+  // False when lineUserId names an account that no longer exists here. A LINE
+  // userId is scoped to the OA channel that issued it, so every binding made
+  // under an earlier channel is now a lock on the member rather than a
+  // convenience — the impersonation guard refuses their transactions until
+  // staff clear it.
+  lineAccountExists: boolean;
 }
 
 export interface ServiceRequestLogEntry {

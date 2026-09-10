@@ -138,7 +138,11 @@ export default function MemberContactPanel() {
       return;
     }
     setMembers((prev) =>
-      prev.map((m) => (m.id === body.id ? { ...m, lineUserId: body.lineUserId } : m))
+      prev.map((m) =>
+        m.id === body.id
+          ? { ...m, lineUserId: body.lineUserId, lineDisplayName: null, lineAccountExists: false }
+          : m
+      )
     );
   };
 
@@ -178,9 +182,13 @@ export default function MemberContactPanel() {
             เลขบัตรประชาชนได้ทันทีเมื่อสมาชิกโทรแจ้ง ข้อมูลนี้ใช้ยืนยันตัวตนก่อนแจ้งเลขสมาชิกทาง
             LINE เท่านั้น คอลัมน์ <strong>"เลขบัญชีที่ผูกไว้"</strong> คือทะเบียนเลขบัญชีเดียวกับที่แท็บ
             "เทียบ Statement" ดึงมาแสดงให้ตรงนี้ด้วย จะได้ไม่ต้องเปิดสองแท็บ
-            ส่วนคอลัมน์ "เชื่อมต่อ LINE" บอกว่าเลขสมาชิกนี้ผูกกับบัญชี LINE ไหนอยู่ — ถ้าสมาชิกแจ้งว่า
-            บอทตอบว่า "เลขสมาชิกนี้ผูกกับบัญชี LINE อื่นแล้ว" (เช่น เปลี่ยนเครื่อง/เปลี่ยนบัญชี LINE
-            หรือค้างจาก LINE OA ช่องเดิม) ให้กด "ปลด" แล้วสมาชิกจะผูกใหม่ได้เองในข้อความถัดไป
+            ส่วนคอลัมน์ "เชื่อมต่อ LINE" บอกว่าเลขสมาชิกนี้ผูกกับบัญชี LINE ไหนอยู่
+            <strong>พร้อมชื่อบัญชีนั้น</strong> — ถ้าสมาชิกแจ้งว่าบอทตอบว่า
+            "เลขสมาชิกนี้ผูกกับบัญชี LINE อื่นแล้ว" (เช่น เปลี่ยนเครื่อง/เปลี่ยนบัญชี LINE
+            หรือค้างจาก LINE OA ช่องเดิม) ให้กด "ปลด" แล้วสมาชิกจะผูกใหม่ได้เองในข้อความถัดไป ·
+            แถวที่ขึ้น <strong>"⚠️ ผูกค้าง"</strong> คือผูกไว้กับบัญชีที่ระบบไม่รู้จักแล้ว
+            สมาชิกคนนั้น<strong>บันทึกรายการไม่ได้จนกว่าจะกดปลด</strong> — กรองหาทั้งหมดได้จากช่อง
+            "เชื่อม LINE" ด้านล่าง
           </p>
           <p className="text-xs text-slate-500 mt-1">
             <strong>นำเข้าจากไฟล์</strong> ได้เลย — ระบบหาคอลัมน์จาก<strong>ชื่อหัวตาราง</strong>
@@ -244,6 +252,7 @@ export default function MemberContactPanel() {
           <option value="">เชื่อม LINE หรือไม่ก็ได้</option>
           <option value="yes">เชื่อม LINE แล้ว</option>
           <option value="no">ยังไม่เชื่อม LINE</option>
+          <option value="stale">⚠️ ผูกค้าง (ไม่พบบัญชี)</option>
         </select>
         {(unit || missing || linked) && (
           <button
@@ -420,12 +429,36 @@ export default function MemberContactPanel() {
                       </span>
                     )}
                   </td>
-                  <td className="px-4 py-2 whitespace-nowrap">
-                    {member.lineUserId ? (
+                  <td className="px-4 py-2">
+                    {!member.lineUserId ? (
+                      <span className="text-slate-400 text-xs">ยังไม่เชื่อม</span>
+                    ) : (
                       <span className="inline-flex items-center gap-2">
-                        <span className="inline-block px-2 py-0.5 rounded-full text-xs border bg-green-50 text-green-700 border-green-200">
-                          เชื่อมแล้ว
-                        </span>
+                        {member.lineAccountExists ? (
+                          <span className="inline-flex flex-col leading-tight">
+                            <span className="inline-block px-2 py-0.5 rounded-full text-xs border bg-green-50 text-green-700 border-green-200 self-start">
+                              เชื่อมแล้ว
+                            </span>
+                            {member.lineDisplayName && (
+                              <span className="text-xs text-slate-500 mt-0.5">
+                                {member.lineDisplayName}
+                              </span>
+                            )}
+                          </span>
+                        ) : (
+                          /* The case worth acting on: a binding pointing at an
+                             account this app has no record of. Until it is
+                             cleared the member cannot record anything — the
+                             impersonation guard refuses them. */
+                          <span className="inline-flex flex-col leading-tight">
+                            <span className="inline-block px-2 py-0.5 rounded-full text-xs border bg-amber-50 text-amber-800 border-amber-200 self-start">
+                              ⚠️ ผูกค้าง
+                            </span>
+                            <span className="text-xs text-amber-700 mt-0.5">
+                              ไม่พบบัญชีนี้ — สมาชิกบันทึกรายการไม่ได้
+                            </span>
+                          </span>
+                        )}
                         <button
                           onClick={() => setPendingUnlink(member)}
                           className="text-red-600 hover:underline text-xs py-1"
@@ -433,8 +466,6 @@ export default function MemberContactPanel() {
                           ปลด
                         </button>
                       </span>
-                    ) : (
-                      <span className="text-slate-400 text-xs">ยังไม่เชื่อม</span>
                     )}
                   </td>
                   <td className="px-4 py-2 whitespace-nowrap text-right space-x-3">
