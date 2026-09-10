@@ -11,7 +11,8 @@ import { CATEGORIES } from "@/lib/categories";
 import { accountCaveat, canBindAccount } from "@/lib/depositRecord";
 import { CHANNEL_LABELS } from "@/lib/statementLines";
 import { STATUS_LABELS } from "@/lib/statementDayView";
-import { branchesIn, summariseByAccount } from "@/lib/dailyAccountSummary";
+import { STATEMENT_ACCOUNTS } from "@/lib/statementReconcile";
+import { branchesIn, missingBranches, summariseByAccount } from "@/lib/dailyAccountSummary";
 import { bankFromDescription } from "@/lib/thaiBanks";
 import {
   depositHaystack,
@@ -375,6 +376,7 @@ export default function DailyReconcilePanel() {
   };
   const branches = branchesIn(day);
   const perAccount = summariseByAccount(day);
+  const absentBranches = missingBranches(day, Object.values(STATEMENT_ACCOUNTS));
   const inBranch = <T extends { branch: string }>(rows: T[]) =>
     branch ? rows.filter((r) => r.branch === branch) : rows;
 
@@ -604,6 +606,21 @@ export default function DailyReconcilePanel() {
               />
             </span>
           </div>
+
+          {/* One account in the range is not a reason to say nothing. It
+              usually means the other account's statement has not been
+              uploaded this far, and every total above is then one account's
+              money reading as the whole day's. */}
+          {perAccount.length === 1 && absentBranches.length > 0 && (
+            <div className="px-4 py-2 border-t border-slate-100 text-sm bg-amber-50 text-amber-800">
+              ⚠️ ช่วงนี้มีรายการเฉพาะบัญชี <strong>{perAccount[0].branch}</strong> —{" "}
+              <strong>{absentBranches.join(" และ ")}</strong> ไม่มีรายการเลย
+              <span className="text-xs">
+                {" "}
+                (Statement ของบัญชีนั้นอาจยังไม่ครอบคลุมช่วงนี้ — ตัวเลขด้านบนจึงเป็นของบัญชีเดียว)
+              </span>
+            </div>
+          )}
 
           {/* The two accounts are reconciled separately, against two
               different statements, so the day is reported per account before
