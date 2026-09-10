@@ -303,6 +303,10 @@ model LineUser {
   // for anything but that note.
   lastReplyText     String?
   lastReplyAt       DateTime?
+  // What that reply was, when it was a kind that can have nothing to add the
+  // second time — see lib/replyKind.ts. Null for every other reply, and for
+  // everything sent before this column existed.
+  lastReplyKind     String?
   createdAt         DateTime  @default(now())
   updatedAt         DateTime  @updatedAt
 }

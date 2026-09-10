@@ -9,6 +9,7 @@ import { CATEGORIES } from "../categories";
 import { LOAN_TYPES } from "../loanTypes";
 import type { RecentAction } from "../closingReply";
 import { quoteReply, type PreviousReply } from "../recentReply";
+import type { LastReply, ReplyKind } from "../replyKind";
 import {
   isFeatureEnabled,
   ASK_MEMBER_INFO_ENABLED,
@@ -350,13 +351,30 @@ export async function loadPreviousReply(lineUserId: string): Promise<PreviousRep
 // member never saw must not be quoted back to the model as one they are
 // looking at. Best-effort — failing to remember what was said is not a reason
 // to fail the request that already succeeded.
-export async function recordReply(lineUserId: string, text: string): Promise<void> {
+export async function recordReply(
+  lineUserId: string,
+  text: string,
+  kind: ReplyKind = null
+): Promise<void> {
   await prisma.lineUser
     .update({
       where: { id: lineUserId },
-      data: { lastReplyText: quoteReply(text), lastReplyAt: new Date() },
+      data: { lastReplyText: quoteReply(text), lastReplyAt: new Date(), lastReplyKind: kind },
     })
     .catch((err) => {
       console.error("[state] could not record the last reply:", err);
     });
+}
+
+// The same row, read for what the reply was rather than what it said. Kept
+// apart from loadPreviousReply because the two answer different questions and
+// the caller asking this one has already decided to reply — it is asking
+// whether to send it.
+export async function loadLastReplyKind(lineUserId: string): Promise<LastReply | null> {
+  const user = await prisma.lineUser.findUnique({
+    where: { id: lineUserId },
+    select: { lastReplyKind: true, lastReplyAt: true },
+  });
+  if (!user?.lastReplyKind || !user.lastReplyAt) return null;
+  return { kind: user.lastReplyKind as ReplyKind, at: user.lastReplyAt };
 }

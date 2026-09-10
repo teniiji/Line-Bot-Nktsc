@@ -47,11 +47,20 @@ export function declineReplyInstruction({ reason, awaitingSlip }: DeclineContext
     `${base} Nothing this member has said indicates they were trying to send a transfer slip — ` +
     "there is no transaction in progress waiting for one. So in your reply, in Thai: " +
     "(1) say plainly what the picture actually shows, in the member's own terms; " +
-    "(2) ask what they would like to do or what they need help with. " +
+    "(2) ask what they would like to do or what they need help with, and say that staff can see " +
+    "this chat and will follow up — an open question with no way forward leaves them stuck. " +
+    "Keep it to two or three sentences. " +
     "DO NOT ask them to send a transfer slip, and DO NOT say the picture is not a slip as though " +
     "sending one were the expected next step — they may never have intended to send a payment at " +
     "all, and asking for a slip they do not have leaves them stuck. " +
-    "Do not invent details you cannot see in the image. " +
+    "Do not invent details you cannot see in the image, and do not guess at why they sent it or " +
+    "what occasion it shows. " +
+    // A member sending an album gets one run of this per photo, and one of
+    // those runs told them the picture had been sent before. It had not:
+    // they were five different photographs. Nothing here can see the earlier
+    // ones anyway — the duplicate check is on slip bytes, and covers slips.
+    "NEVER say or imply that this picture was sent before, is a repeat, or has already been " +
+    "seen — you cannot see the member's earlier images and have no basis for saying so. " +
     "If they answer with something the cooperative handles, continue with the right tool for it."
   );
 }
