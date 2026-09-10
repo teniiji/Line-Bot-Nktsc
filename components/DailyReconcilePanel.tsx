@@ -12,6 +12,7 @@ import { accountCaveat, canBindAccount } from "@/lib/depositRecord";
 import { CHANNEL_LABELS } from "@/lib/statementLines";
 import { STATUS_LABELS } from "@/lib/statementDayView";
 import { branchesIn, summariseByAccount } from "@/lib/dailyAccountSummary";
+import { bankFromDescription } from "@/lib/thaiBanks";
 import {
   depositHaystack,
   filterBy,
@@ -78,6 +79,24 @@ const ExactClock = ({ iso, withDate = false }: { iso: string | null; withDate?: 
     <span className="num block leading-tight text-slate-500">
       <span className="block text-xs text-slate-400">{formatStatementDate(iso)}</span>
       <span className="block">{time}</span>
+    </span>
+  );
+};
+
+// The bank's own text for a line, with the paying bank spelled out when the
+// line names one. A counter deposit arrives as "014-8592630385": the three
+// digits are the paying bank's interbank code, so the line already says which
+// bank the member used — it just says it in a form nobody reads at a glance,
+// and "which bank did you pay from" is the question staff ring to ask.
+//
+// The raw text stays exactly as the bank wrote it, because it is what a
+// person ties out against the printout; the name is added beside it.
+const StatementDetail = ({ description }: { description: string }) => {
+  const bank = bankFromDescription(description);
+  return (
+    <span>
+      <span className="font-mono text-xs text-slate-400">{description}</span>
+      {bank && <span className="text-xs text-slate-600"> · ธ.{bank.name}</span>}
     </span>
   );
 };
@@ -908,7 +927,9 @@ const StatementTable = ({
             <ExactClock iso={row.postedAt} withDate={showDate} />
           </td>
           <td className="px-2 py-1.5 font-mono text-xs text-slate-500">{row.txnCode}</td>
-          <td className="px-2 py-1.5 font-mono text-xs text-slate-500">{row.description}</td>
+          <td className="px-2 py-1.5">
+            <StatementDetail description={row.description} />
+          </td>
           <td className="px-2 py-1.5 text-right">
             <Money
               value={row.amount}
@@ -1065,8 +1086,8 @@ const DepositTable = ({
                 {CHANNEL_LABELS[deposit.channel] ?? deposit.channel}
               </td>
               <td className="px-2 py-1.5 text-slate-500 whitespace-nowrap">{deposit.branch}</td>
-              <td className="px-2 py-1.5 font-mono text-xs text-slate-400">
-                {deposit.description}
+              <td className="px-2 py-1.5">
+                <StatementDetail description={deposit.description} />
               </td>
               {actions && (
                 <td className="px-2 py-1.5 whitespace-nowrap">
@@ -1230,7 +1251,9 @@ const OtherTable = ({
               />
             </td>
             <td className="px-2 py-1.5 font-mono text-xs">{line.txnCode}</td>
-            <td className="px-2 py-1.5 text-slate-500">{line.description}</td>
+            <td className="px-2 py-1.5">
+              <StatementDetail description={line.description} />
+            </td>
             <td className="px-2 py-1.5 text-slate-500 whitespace-nowrap">{line.branch}</td>
           </tr>
         ))}
