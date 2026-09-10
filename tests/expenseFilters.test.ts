@@ -27,20 +27,70 @@ describe("buildExpenseWhere", () => {
     expect(buildExpenseWhere(params({ verified: "yes" }))).toEqual({});
   });
 
-  it("builds a date range from from/to", () => {
+  it("builds a date range that includes the whole of the last day", () => {
+    // These assertions used to say lte: 2026-07-31T00:00:00Z — midnight at
+    // the *start* of the last day — which is what the code did, so they
+    // passed while the range dropped a day.
     const where = buildExpenseWhere(
       params({ from: "2026-07-01", to: "2026-07-31" })
-    ) as { date: { gte: Date; lte: Date } };
-    expect(where.date.gte).toEqual(new Date("2026-07-01"));
-    expect(where.date.lte).toEqual(new Date("2026-07-31"));
+    ) as { date: { gte: Date; lt: Date } };
+    expect(where.date.gte).toEqual(new Date("2026-07-01T00:00:00.000Z"));
+    expect(where.date.lt).toEqual(new Date("2026-08-01T00:00:00.000Z"));
+  });
+
+  it("finds a transaction logged during the last day of the range", () => {
+    // The whole bug, as a question about one payment: ฿200,000 at 10:31 on
+    // the last day of the range.
+    const { date } = buildExpenseWhere(params({ from: "2026-09-01", to: "2026-09-10" })) as {
+      date: { gte: Date; lt: Date };
+    };
+    const logged = new Date("2026-09-10T10:31:00.000Z");
+    expect(logged >= date.gte && logged < date.lt).toBe(true);
+  });
+
+  it("finds today's transactions when both ends are today", () => {
+    // "วันนี้" matched nothing at all: from and to were the same instant, so
+    // only a payment logged at exactly midnight could fall inside.
+    const { date } = buildExpenseWhere(params({ from: "2026-09-10", to: "2026-09-10" })) as {
+      date: { gte: Date; lt: Date };
+    };
+    for (const at of ["00:00:00", "03:31:00", "10:31:00", "23:59:59"]) {
+      const logged = new Date(`2026-09-10T${at}.000Z`);
+      expect(logged >= date.gte && logged < date.lt, at).toBe(true);
+    }
+  });
+
+  it("stops at the end of the last day, not into the next one", () => {
+    const { date } = buildExpenseWhere(params({ from: "2026-09-10", to: "2026-09-10" })) as {
+      date: { gte: Date; lt: Date };
+    };
+    expect(new Date("2026-09-11T00:00:00.000Z") < date.lt).toBe(false);
+    expect(new Date("2026-09-09T23:59:59.000Z") >= date.gte).toBe(false);
   });
 
   it("supports open-ended date ranges", () => {
     const fromOnly = buildExpenseWhere(params({ from: "2026-07-01" })) as {
       date: Record<string, Date>;
     };
-    expect(fromOnly.date.gte).toEqual(new Date("2026-07-01"));
-    expect(fromOnly.date.lte).toBeUndefined();
+    expect(fromOnly.date.gte).toEqual(new Date("2026-07-01T00:00:00.000Z"));
+    expect(fromOnly.date.lt).toBeUndefined();
+
+    const toOnly = buildExpenseWhere(params({ to: "2026-07-31" })) as {
+      date: Record<string, Date>;
+    };
+    expect(toOnly.date.lt).toEqual(new Date("2026-08-01T00:00:00.000Z"));
+    expect(toOnly.date.gte).toBeUndefined();
+  });
+
+  it("drops a date it cannot read rather than failing the request", () => {
+    // An Invalid Date reaches Prisma as an error, and the answer to a
+    // mistyped date is a wider list, not an error page.
+    expect(buildExpenseWhere(params({ from: "not-a-date" }))).toEqual({});
+    const { date } = buildExpenseWhere(params({ from: "2026-07-01", to: "31/07/2026" })) as {
+      date: Record<string, Date>;
+    };
+    expect(date.gte).toEqual(new Date("2026-07-01T00:00:00.000Z"));
+    expect(date.lt).toBeUndefined();
   });
 
   it("combines all filters", () => {
