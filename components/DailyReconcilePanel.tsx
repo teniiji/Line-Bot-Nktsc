@@ -13,6 +13,7 @@ import { CHANNEL_LABELS } from "@/lib/statementLines";
 import { STATUS_LABELS } from "@/lib/statementDayView";
 import { STATEMENT_ACCOUNTS } from "@/lib/statementReconcile";
 import { branchesIn, missingBranches, summariseByAccount } from "@/lib/dailyAccountSummary";
+import { flowByAccount, flowTotal, inByCategory } from "@/lib/statementTotals";
 import { bankFromDescription } from "@/lib/thaiBanks";
 import {
   depositHaystack,
@@ -210,6 +211,7 @@ export default function DailyReconcilePanel() {
   const [error, setError] = useState<string | null>(null);
   const [showOther, setShowOther] = useState(false);
   const [showStatement, setShowStatement] = useState(false);
+  const [showReport, setShowReport] = useState(false);
   const [showKnown, setShowKnown] = useState(false);
   // Uploading right here rather than sending staff to the round tab: checking
   // one day's money has nothing to do with the month-end round.
@@ -393,6 +395,14 @@ export default function DailyReconcilePanel() {
     branch ? (data?.statement ?? []).filter((r) => r.branch === branch) : (data?.statement ?? []),
     search
   );
+  // Money in and money out over exactly the rows on screen — the account
+  // filter and the search box included. What is printed is what was being
+  // looked at; the report says which filters were on so the page can be read
+  // on its own later.
+  const flowRows = flowByAccount(statementRows);
+  const flowAll = flowTotal(statementRows);
+  const categories = inByCategory(statementRows);
+
   const matchedRows = filterBy(
     branch ? day.matched.filter((p) => p.deposit.branch === branch) : day.matched,
     search,
@@ -682,6 +692,163 @@ export default function DailyReconcilePanel() {
             </div>
           )}
 
+          {/* The oldest question of the lot, and the one the tab did not
+              answer: how much came in, how much went out, what is it worth
+              now, and what were people paying for. Everything above sorts the
+              day by whether somebody still has work to do; this adds it up.
+
+              Marked print-report so this section, and nothing else on the
+              page, is what reaches paper. */}
+          <div className="px-4 py-3 border-t border-slate-100 print-report">
+            <div className="flex flex-wrap items-center gap-3">
+              <button
+                onClick={() => setShowReport((v) => !v)}
+                className="text-sm text-slate-700 hover:underline font-medium no-print"
+              >
+                {showReport ? "▾" : "▸"} 🧾 สรุปยอดเงินเข้า-เงินออก
+              </button>
+              {showReport && (
+                <button
+                  onClick={() => window.print()}
+                  className="text-xs border border-slate-300 rounded-md px-2 py-1 hover:bg-slate-50 no-print"
+                >
+                  🖨️ พิมพ์รายงาน
+                </button>
+              )}
+            </div>
+
+            {showReport && (
+              <div className="mt-3">
+                {/* Only on paper: on screen the date and the account are in
+                    the boxes above, but a printed page has to say what it is
+                    a report of, filters and all. */}
+                <div className="hidden print:block mb-3">
+                  <h2 className="font-semibold text-base">
+                    สหกรณ์ออมทรัพย์ครูหนองคาย-บึงกาฬ — สรุปยอดเงินเข้า-เงินออก
+                  </h2>
+                  <p className="text-xs text-slate-600">
+                    {from === to
+                      ? formatStatementDate(`${from}T00:00:00.000Z`)
+                      : `${formatStatementDate(`${from}T00:00:00.000Z`)} ถึง ${formatStatementDate(
+                          `${to}T00:00:00.000Z`
+                        )}`}
+                    {branch ? ` · เฉพาะบัญชี ${branch}` : " · ทุกบัญชี"}
+                    {search ? ` · กรองด้วยคำค้น "${search}"` : ""}
+                  </p>
+                </div>
+
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead className="text-slate-500 text-left text-xs uppercase tracking-wide">
+                      <tr>
+                        <th className="px-2 py-1.5 font-semibold">บัญชี</th>
+                        <th className="px-2 py-1.5 font-semibold text-right">เงินเข้า</th>
+                        <th className="px-2 py-1.5 font-semibold text-right">รวมเงินเข้า</th>
+                        <th className="px-2 py-1.5 font-semibold text-right">เงินออก</th>
+                        <th className="px-2 py-1.5 font-semibold text-right">รวมเงินออก</th>
+                        <th className="px-2 py-1.5 font-semibold text-right">สุทธิ</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {flowRows.map((flow) => (
+                        <tr key={flow.branch} className="border-t border-slate-100">
+                          <td className="px-2 py-1.5 font-medium whitespace-nowrap">{flow.branch}</td>
+                          <td className="px-2 py-1.5 num text-right text-slate-500">
+                            {flow.inCount}
+                          </td>
+                          <td className="px-2 py-1.5 text-right">
+                            <Money value={flow.inAmount} className="text-green-700 font-medium" />
+                          </td>
+                          <td className="px-2 py-1.5 num text-right text-slate-500">
+                            {flow.outCount}
+                          </td>
+                          <td className="px-2 py-1.5 text-right">
+                            <Money value={flow.outAmount} className="text-rose-700" />
+                          </td>
+                          <td className="px-2 py-1.5 text-right">
+                            <Money
+                              value={flow.net}
+                              className={flow.net < 0 ? "text-rose-700" : "font-semibold"}
+                            />
+                          </td>
+                        </tr>
+                      ))}
+                      {/* Computed from the lines, not summed from the rows
+                          above — a line whose account was never read still
+                          belongs in the day's total. */}
+                      <tr className="border-t-2 border-slate-300 bg-slate-50">
+                        <td className="px-2 py-1.5 font-semibold">รวมทุกบัญชี</td>
+                        <td className="px-2 py-1.5 num text-right text-slate-500">
+                          {flowAll.inCount}
+                        </td>
+                        <td className="px-2 py-1.5 text-right">
+                          <Money value={flowAll.inAmount} className="text-green-700 font-semibold" />
+                        </td>
+                        <td className="px-2 py-1.5 num text-right text-slate-500">
+                          {flowAll.outCount}
+                        </td>
+                        <td className="px-2 py-1.5 text-right">
+                          <Money value={flowAll.outAmount} className="text-rose-700 font-semibold" />
+                        </td>
+                        <td className="px-2 py-1.5 text-right">
+                          <Money
+                            value={flowAll.net}
+                            className={flowAll.net < 0 ? "text-rose-700 font-semibold" : "font-semibold"}
+                          />
+                        </td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+
+                <h3 className="text-sm font-semibold mt-4">เงินเข้าแยกตามประเภทรายการ</h3>
+                <p className="text-xs text-slate-500">
+                  ประเภทมาจากสลิปที่จับคู่กับบรรทัดนั้นได้แล้วเท่านั้น — สเตทเมนต์บอกแค่ว่าเงินเข้าเท่าไร
+                  ไม่เคยบอกว่าเข้ามาทำอะไร
+                </p>
+                <div className="overflow-x-auto mt-2">
+                  <table className="w-full text-sm">
+                    <thead className="text-slate-500 text-left text-xs uppercase tracking-wide">
+                      <tr>
+                        <th className="px-2 py-1.5 font-semibold">ทำรายการ</th>
+                        <th className="px-2 py-1.5 font-semibold text-right">จำนวน</th>
+                        <th className="px-2 py-1.5 font-semibold text-right">ยอดรวม</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {categories.length === 0 ? (
+                        <tr>
+                          <td colSpan={3} className="px-2 py-4 text-center text-slate-500">
+                            ไม่มีเงินเข้าในช่วงที่เลือก
+                          </td>
+                        </tr>
+                      ) : (
+                        categories.map((entry) => (
+                          <tr key={entry.category} className="border-t border-slate-100">
+                            <td className="px-2 py-1.5">{entry.category}</td>
+                            <td className="px-2 py-1.5 num text-right text-slate-500">
+                              {entry.count}
+                            </td>
+                            <td className="px-2 py-1.5 text-right">
+                              <Money value={entry.amount} className="font-medium" />
+                            </td>
+                          </tr>
+                        ))
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+
+                <h3 className="text-sm font-semibold mt-4">
+                  รายการทั้งหมด ({statementRows.length} รายการ)
+                </h3>
+                <div className="overflow-x-auto mt-2">
+                  <StatementTable rows={statementRows} showDate={from !== to} />
+                </div>
+              </div>
+            )}
+          </div>
+
           {/* Placed before the findings, because the first question a person
               checking the bank's own printout asks is "is everything here?" —
               and the sections below, sorted by conclusion and half of them
@@ -934,6 +1101,7 @@ const StatementTable = ({
         <th className="px-2 py-1.5 font-semibold text-right">คงเหลือ</th>
         <th className="px-2 py-1.5 font-semibold">บัญชี</th>
         <th className="px-2 py-1.5 font-semibold">สมาชิก</th>
+        <th className="px-2 py-1.5 font-semibold">ทำรายการ</th>
         <th className="px-2 py-1.5 font-semibold">สถานะ</th>
       </tr>
     </thead>
@@ -965,6 +1133,11 @@ const StatementTable = ({
               number={row.memberNumber}
               unitName={row.unitName}
             />
+          </td>
+          {/* Only ever from the slip this line was paired with — the bank
+              says an amount arrived, never what for. */}
+          <td className="px-2 py-1.5 whitespace-nowrap text-slate-600">
+            {row.category ?? <span className="text-slate-300">—</span>}
           </td>
           <td className="px-2 py-1.5 whitespace-nowrap">
             <StatusTag status={row.status} />

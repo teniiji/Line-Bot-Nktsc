@@ -278,6 +278,9 @@ export async function GET(request: NextRequest) {
       memberName:
         entry?.memberName ?? loggedNameByNumber.get(key) ?? slip?.memberFullName ?? null,
       unitName: entry?.unitName ?? null,
+      // Only ever from the paired slip: the bank line says an amount arrived,
+      // never what for.
+      category: slip?.category ?? null,
     };
   });
 
