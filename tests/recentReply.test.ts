@@ -74,3 +74,26 @@ describe("quoteReply", () => {
     expect(quoted.endsWith("…")).toBe(true);
   });
 });
+
+describe("how long the bot remembers what it said", () => {
+  it("still remembers a question asked two minutes ago", () => {
+    // The window was ninety seconds. A member asked for her name and member
+    // number took a minute and a bit to answer, and the bot sent her the
+    // identical question again, word for word. Pinned as a duration rather
+    // than through the constant, because the constant is the thing that was
+    // wrong.
+    const note = recentReplyNote(
+      { text: "ขอทราบชื่อ-นามสกุล และเลขสมาชิกของสมาชิกด้วยค่ะ", at: new Date(Date.now() - 2 * 60 * 1000) },
+      new Date()
+    );
+    expect(note).toContain("ขอทราบชื่อ-นามสกุล");
+  });
+
+  it("has forgotten it an hour later", () => {
+    const note = recentReplyNote(
+      { text: "ขอทราบชื่อ-นามสกุล และเลขสมาชิกของสมาชิกด้วยค่ะ", at: new Date(Date.now() - 60 * 60 * 1000) },
+      new Date()
+    );
+    expect(note).toBe("");
+  });
+});

@@ -19,10 +19,20 @@
 // the answer again, shorter and in different words. Repeating it verbatim is
 // what reads as not having been listened to.
 
-// Only a reply the member is plausibly still looking at. Long enough to cover
-// two messages typed in the same breath, short enough that an ordinary
-// conversational gap costs nothing — most messages carry no note at all.
-export const RECENT_REPLY_WINDOW_MS = 90 * 1000;
+// Only a reply the member is plausibly still looking at.
+//
+// This was ninety seconds, on the theory that it had to cover two messages
+// typed in the same breath. It does not: people answer on a phone, in Thai,
+// while doing something else. A member asked for her name and member number
+// took a minute and a bit to answer, and the bot — past the window, and so
+// with no memory of having asked — sent her the identical question again,
+// word for word. That is the exact failure this file exists to prevent, and
+// the window was why it still happened.
+//
+// Five minutes is a conversational turn on a phone rather than a typing
+// burst. The cost of the wider window is a note on more messages; the cost of
+// the narrow one was repeating itself verbatim to someone mid-answer.
+export const RECENT_REPLY_WINDOW_MS = 5 * 60 * 1000;
 
 // Enough of the reply for the model to recognise what it said. The full text
 // would crowd the flow note it sits beside, and only the shape matters.

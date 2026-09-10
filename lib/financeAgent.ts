@@ -13,6 +13,7 @@ import { forcedToolChoice, toolsForMessage } from "./agent/toolChoice";
 import { buildSystemPrompt } from "./agent/prompts";
 import { isAcknowledgementOnly, closingNote } from "./closingReply";
 import { recentReplyNote } from "./recentReply";
+import { messageHintNote } from "./messageHints";
 import {
   loadLineUser,
   loadAllPending,
@@ -116,6 +117,15 @@ export async function runFinanceAgent(
   // do not get two answers saying the same thing.
   const previousNote = recentReplyNote(previousReply, new Date());
 
+  // What this message already answered. Only ever asked about things still
+  // outstanding: a hint about a name already on record would invite the model
+  // to overwrite the roster's spelling with one read out of a sentence.
+  const hints = messageHintNote({
+    text: messageText,
+    needsName: !lineUser?.fullName,
+    needsCategory: pending !== null && !pending.category,
+  });
+
   const { base, dynamic } = buildSystemPrompt(
     lineUser,
     pending,
@@ -126,7 +136,8 @@ export async function runFinanceAgent(
     disabledRequirements,
     queuedPending.length,
     closing,
-    previousNote
+    previousNote,
+    hints
   );
   // A cache breakpoint on the static base block caches everything before it
   // in the request (all tool definitions + this base system prompt), since
