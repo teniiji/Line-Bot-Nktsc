@@ -11,7 +11,14 @@ import { CATEGORIES } from "@/lib/categories";
 import { accountCaveat, canBindAccount } from "@/lib/depositRecord";
 import { CHANNEL_LABELS } from "@/lib/statementLines";
 import { STATUS_LABELS } from "@/lib/statementDayView";
-import { filterStatementRows } from "@/lib/statementSearch";
+import {
+  depositHaystack,
+  filterBy,
+  filterStatementRows,
+  matchedPairHaystack,
+  otherLineHaystack,
+  slipHaystack,
+} from "@/lib/statementSearch";
 import {
   DailyDepositRow,
   DailyOtherLineRow,
@@ -32,10 +39,26 @@ const Money = ({ value, className = "" }: { value: number; className?: string })
   <span className={`num whitespace-nowrap ${className}`}>{formatAmount(value)}</span>
 );
 
-const Clock = ({ iso }: { iso: string | null }) => {
+// Over more than one day every table has the same problem the statement one
+// had: rows ordered by the full timestamp read 11:12, then 20:12, then 07:01,
+// and nothing on screen says why.
+const Clock = ({ iso, withDate = false }: { iso: string | null; withDate?: boolean }) => {
   const time = formatStatementTime(iso);
-  return <span className="num text-slate-500">{time || formatStatementDate(iso)}</span>;
+  if (!time) return <span className="num text-slate-500">{formatStatementDate(iso)}</span>;
+  if (!withDate) return <span className="num text-slate-500">{time}</span>;
+  return (
+    <span className="num block leading-tight text-slate-500">
+      <span className="block text-xs text-slate-400">{formatStatementDate(iso)}</span>
+      <span className="block">{time}</span>
+    </span>
+  );
 };
+
+// "(21 รายการ)" while everything is shown, "(3 จาก 21 รายการ)" while a search
+// is narrowing it — so a heading never quietly reports a filtered count as if
+// it were the whole thing.
+const countLabel = (shown: number, total: number, unit: string) =>
+  shown === total ? `${total} ${unit}` : `${shown} จาก ${total} ${unit}`;
 
 // The same, with the seconds kept. Only the statement table uses it: that is
 // the one read line by line against the bank's printout, where the seconds
@@ -319,14 +342,28 @@ export default function DailyReconcilePanel() {
     setTo(shiftDay(to, days));
   };
 
-  // Filtered here rather than server-side: the rows are already loaded, and a
-  // filter that answers as you type is what makes it usable for "where is
-  // that ฿30,000".
-  const statementRows = filterStatementRows(data?.statement ?? [], search);
-
   // Money nobody claimed, split by whether anything knows who paid it.
   const unknownPayer = (data?.depositsWithoutSlip ?? []).filter((d) => !d.memberNumber);
   const knownPayer = (data?.depositsWithoutSlip ?? []).filter((d) => d.memberNumber);
+
+  // One box over every section, not one per table: a person looking for
+  // member 26018 does not know which of the five conclusions their payment
+  // ended up under — that is usually the whole reason they are looking.
+  // Filtered here rather than server-side, so it answers as you type.
+  const statementRows = filterStatementRows(data?.statement ?? [], search);
+  const matchedRows = filterBy(data?.matched ?? [], search, matchedPairHaystack);
+  const unmatchedSlips = filterBy(data?.slipsWithoutMoney ?? [], search, slipHaystack);
+  const unknownRows = filterBy(unknownPayer, search, depositHaystack);
+  const knownRows = filterBy(knownPayer, search, depositHaystack);
+  const otherRows = filterBy(data?.otherLines ?? [], search, otherLineHaystack);
+  const searching = search.trim().length > 0;
+  const totalHits =
+    statementRows.length +
+    matchedRows.length +
+    unmatchedSlips.length +
+    unknownRows.length +
+    knownRows.length +
+    otherRows.length;
 
   const totals = data?.totals;
   const gap = totals ? Math.round((totals.depositAmount - totals.slipAmount) * 100) / 100 : 0;
@@ -417,6 +454,29 @@ export default function DailyReconcilePanel() {
         </span>
       </div>
 
+      {/* One box over the whole screen. Somebody looking for a payment does
+          not know which of the five conclusions it landed under — not knowing
+          is usually why they are looking. */}
+      <div className="flex flex-wrap items-center gap-2 px-4 py-2.5 border-b border-slate-100 text-sm">
+        <input
+          type="search"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="ค้นทุกหัวข้อ: ชื่อ, เลขสมาชิก, ยอด, เลขบัญชี, วันที่, เวลา, รหัส…"
+          className="border border-slate-300 rounded-md px-3 py-1.5 w-full sm:w-[26rem]"
+        />
+        {searching && (
+          <>
+            <span className="text-slate-500">
+              เจอ <strong className="num text-slate-900">{totalHits}</strong> รายการทุกหัวข้อรวมกัน
+            </span>
+            <button onClick={() => setSearch("")} className="text-slate-500 hover:underline">
+              ล้าง
+            </button>
+          </>
+        )}
+      </div>
+
       {/* Statement upload lives here, not only on the round tab: a day's
           money-in is an everyday question, and it used to require creating a
           month-end round and importing a หักไม่ได้ sheet first. */}
@@ -497,7 +557,8 @@ export default function DailyReconcilePanel() {
               className="text-sm text-slate-700 hover:underline font-medium"
             >
               {showStatement ? "▾" : "▸"} 📄 รายการทั้งหมดในสเตทเมนต์
-              {from === to ? "วันนี้" : "ช่วงนี้"} ({data.statement.length} รายการ)
+              {from === to ? "วันนี้" : "ช่วงนี้"} (
+              {countLabel(statementRows.length, data.statement.length, "รายการ")})
             </button>
             <p className="text-xs text-slate-500 mt-1">
               ทุกบรรทัดในช่วงที่เลือก เรียงตามเวลาแบบเดียวกับไฟล์ของธนาคาร พร้อมบอกว่าแต่ละบรรทัด
@@ -508,63 +569,35 @@ export default function DailyReconcilePanel() {
               </strong>{" "}
               (กลุ่มด้านล่างแบ่งตามข้อสรุป บางกลุ่มพับไว้ เลยดูเหมือนมีน้อยกว่าความเป็นจริง)
             </p>
-            {showStatement && (
-              <>
-                <div className="flex flex-wrap items-center gap-2 mt-2 text-sm">
-                  <input
-                    type="search"
-                    value={search}
-                    onChange={(e) => setSearch(e.target.value)}
-                    placeholder="ค้นหา: ชื่อ, เลขสมาชิก, สังกัด, ยอด, เลขบัญชี, เวลา, รหัส…"
-                    className="border border-slate-300 rounded-md px-3 py-1.5 w-full sm:w-96"
-                  />
-                  {search && (
-                    <>
-                      <span className="text-slate-500">
-                        เจอ{" "}
-                        <strong className="num text-slate-900">{statementRows.length}</strong> จาก{" "}
-                        <span className="num">{data.statement.length}</span> รายการ
-                      </span>
-                      <button
-                        onClick={() => setSearch("")}
-                        className="text-slate-500 hover:underline"
-                      >
-                        ล้าง
-                      </button>
-                    </>
-                  )}
+            {showStatement &&
+              /* Said plainly rather than shown as an empty table: "no results"
+                 and "nothing in the file" look identical otherwise, and only
+                 one of them is fixed by clearing the box. */
+              (searching && statementRows.length === 0 ? (
+                <p className="text-sm text-slate-500 py-6 text-center">
+                  ไม่มีบรรทัดไหนตรงกับ &ldquo;{search}&rdquo; ในช่วงวันที่เลือก —
+                  ลองขยายช่วงวันที่ หรือค้นด้วยคำที่สั้นลง
+                </p>
+              ) : (
+                <div className="overflow-x-auto mt-2">
+                  <StatementTable rows={statementRows} showDate={from !== to} />
                 </div>
-                {/* Said plainly rather than shown as an empty table: "no
-                    results" and "nothing in the file" look identical
-                    otherwise, and only one of them is fixed by clearing the
-                    box. */}
-                {search && statementRows.length === 0 ? (
-                  <p className="text-sm text-slate-500 py-6 text-center">
-                    ไม่มีบรรทัดไหนตรงกับ &ldquo;{search}&rdquo; ในช่วงวันที่เลือก —
-                    ลองขยายช่วงวันที่ หรือค้นด้วยคำที่สั้นลง
-                  </p>
-                ) : (
-                  <div className="overflow-x-auto mt-2">
-                    <StatementTable rows={statementRows} showDate={from !== to} />
-                  </div>
-                )}
-              </>
-            )}
+              ))}
           </div>
 
           <Section
-            title={`✅ ตรงกัน (${data.matched.length} รายการ)`}
+            title={`✅ ตรงกัน (${countLabel(matchedRows.length, data.matched.length, "รายการ")})`}
             tone="text-green-800"
             note={
               "เงินเข้าและสลิปคู่กันได้ — ไม่ต้องทำอะไร · " +
               'กด "ดูสลิป" เพื่อตรวจคู่ที่ยังไม่แน่ใจได้ โดยเฉพาะแถวที่จับคู่จาก "ยอดตรงเท่านั้น"'
             }
-            empty={data.matched.length === 0}
+            empty={matchedRows.length === 0}
           >
             <table className="w-full text-sm">
               <thead className="text-slate-500 text-left text-xs uppercase tracking-wide">
                 <tr>
-                  <th className="px-2 py-1.5 font-semibold">เวลา</th>
+                  <th className="px-2 py-1.5 font-semibold">{from !== to ? "วันที่ / เวลา" : "เวลา"}</th>
                   <th className="px-2 py-1.5 font-semibold text-right">ยอด</th>
                   <th className="px-2 py-1.5 font-semibold">ผู้โอน</th>
                   <th className="px-2 py-1.5 font-semibold">ช่องทาง</th>
@@ -574,10 +607,10 @@ export default function DailyReconcilePanel() {
                 </tr>
               </thead>
               <tbody>
-                {data.matched.map(({ deposit, slip, basis, dayApart, minutesApart }) => (
+                {matchedRows.map(({ deposit, slip, basis, dayApart, minutesApart }) => (
                   <tr key={deposit.id} className="border-t border-slate-100 hover:bg-slate-50">
                     <td className="px-2 py-1.5 whitespace-nowrap">
-                      <Clock iso={deposit.postedAt} />
+                      <Clock iso={deposit.postedAt} withDate={from !== to} />
                     </td>
                     <td className="px-2 py-1.5 text-right">
                       <Money value={deposit.amount} className="font-medium" />
@@ -611,12 +644,16 @@ export default function DailyReconcilePanel() {
           </Section>
 
           <Section
-            title={`⚠️ มีสลิปแต่ไม่เจอเงินเข้า (${data.slipsWithoutMoney.length} ใบ)`}
+            title={`⚠️ มีสลิปแต่ไม่เจอเงินเข้า (${countLabel(
+              unmatchedSlips.length,
+              data.slipsWithoutMoney.length,
+              "ใบ"
+            )})`}
             tone="text-red-700"
             note="สมาชิกส่งสลิปมาแต่หาเงินก้อนที่ตรงกันในบัญชีไม่เจอ — อาจโอนเข้าบัญชีอื่น สลิปซ้ำ หรือสลิปไม่จริง ควรตรวจก่อน"
             empty={data.slipsWithoutMoney.length === 0}
           >
-            <SlipTable slips={data.slipsWithoutMoney} />
+            <SlipTable slips={unmatchedSlips} />
           </Section>
 
           {/* Split because these two are not the same job. On a busy day a
@@ -625,7 +662,11 @@ export default function DailyReconcilePanel() {
               nobody can even put a name to. Keeping them in one list buried
               the short list under the long one. */}
           <Section
-            title={`❓ เงินเข้าที่ไม่รู้ว่าใครโอน (${unknownPayer.length} รายการ)`}
+            title={`❓ เงินเข้าที่ไม่รู้ว่าใครโอน (${countLabel(
+              unknownRows.length,
+              unknownPayer.length,
+              "รายการ"
+            )})`}
             tone="text-amber-800"
             note={
               "เลขบัญชีผู้โอนไม่ตรงกับใครเลย ทั้งในทะเบียนเลขบัญชีและรายชื่อหักไม่ได้ทุกรอบ — " +
@@ -636,7 +677,8 @@ export default function DailyReconcilePanel() {
             empty={unknownPayer.length === 0}
           >
             <DepositTable
-              deposits={unknownPayer}
+              deposits={unknownRows}
+              showDate={from !== to}
               actions={{
                 acting,
                 setActing,
@@ -660,7 +702,7 @@ export default function DailyReconcilePanel() {
                 className="text-sm text-slate-600 hover:underline"
               >
                 {showKnown ? "▾" : "▸"} เงินเข้าที่รู้ว่าใครโอน แต่ไม่ได้ส่งสลิป (
-                {knownPayer.length} รายการ)
+                {countLabel(knownRows.length, knownPayer.length, "รายการ")})
               </button>
               <p className="text-xs text-slate-500 mt-1">
                 รู้เจ้าของจากเลขบัญชีแล้ว แค่ไม่ได้ส่งสลิปเข้าบอท —
@@ -669,7 +711,7 @@ export default function DailyReconcilePanel() {
               </p>
               {showKnown && (
                 <div className="overflow-x-auto mt-2">
-                  <DepositTable deposits={knownPayer} />
+                  <DepositTable deposits={knownRows} showDate={from !== to} />
                 </div>
               )}
             </div>
@@ -681,14 +723,16 @@ export default function DailyReconcilePanel() {
                 onClick={() => setShowOther((v) => !v)}
                 className="text-sm text-slate-600 hover:underline"
               >
-                {showOther ? "▾" : "▸"} รายการอื่นในบัญชีวันนี้ ({data.otherLines.length} รายการ)
+                {showOther ? "▾" : "▸"} รายการอื่นในบัญชี
+                {from === to ? "วันนี้" : "ช่วงนี้"} (
+                {countLabel(otherRows.length, data.otherLines.length, "รายการ")})
               </button>
               <p className="text-xs text-slate-500 mt-1">
                 รายการที่ไม่ใช่สมาชิกโอนเข้ามา — เงินหน่วยงาน ฌาปนกิจ ค่าธรรมเนียม เงินโอนออก
                 ไม่นับในการเทียบด้านบน แต่แสดงไว้ให้เห็น
                 <strong>ถ้าเจอรหัสที่ควรจะนับเป็นเงินสมาชิก บอกได้ จะเพิ่มให้</strong>
               </p>
-              {showOther && <OtherTable lines={data.otherLines} />}
+              {showOther && <OtherTable lines={otherRows} showDate={from !== to} />}
             </div>
           )}
         </>
@@ -882,14 +926,17 @@ interface DepositActions {
 const DepositTable = ({
   deposits,
   actions,
+  showDate = false,
 }: {
   deposits: DailyDepositRow[];
   actions?: DepositActions;
+  // Only when the window spans more than one day — see Clock.
+  showDate?: boolean;
 }) => (
   <table className="w-full text-sm">
     <thead className="text-slate-500 text-left text-xs uppercase tracking-wide">
       <tr>
-        <th className="px-2 py-1.5 font-semibold">เวลา</th>
+        <th className="px-2 py-1.5 font-semibold">{showDate ? "วันที่ / เวลา" : "เวลา"}</th>
         <th className="px-2 py-1.5 font-semibold text-right">ยอด</th>
         <th className="px-2 py-1.5 font-semibold">ผู้โอน</th>
         <th className="px-2 py-1.5 font-semibold">ช่องทาง</th>
@@ -907,7 +954,7 @@ const DepositTable = ({
           <Fragment key={deposit.id}>
             <tr className="border-t border-slate-100 hover:bg-slate-50">
               <td className="px-2 py-1.5 whitespace-nowrap">
-                <Clock iso={deposit.postedAt} />
+                <Clock iso={deposit.postedAt} withDate={showDate} />
               </td>
               <td className="px-2 py-1.5 text-right">
                 <Money value={deposit.amount} className="font-medium" />
@@ -1053,12 +1100,18 @@ const DepositTable = ({
   </table>
 );
 
-const OtherTable = ({ lines }: { lines: DailyOtherLineRow[] }) => (
+const OtherTable = ({
+  lines,
+  showDate = false,
+}: {
+  lines: DailyOtherLineRow[];
+  showDate?: boolean;
+}) => (
   <div className="overflow-x-auto mt-2">
     <table className="w-full text-sm">
       <thead className="text-slate-500 text-left text-xs uppercase tracking-wide">
         <tr>
-          <th className="px-2 py-1.5 font-semibold">เวลา</th>
+          <th className="px-2 py-1.5 font-semibold">{showDate ? "วันที่ / เวลา" : "เวลา"}</th>
           <th className="px-2 py-1.5 font-semibold text-right">ยอด</th>
           <th className="px-2 py-1.5 font-semibold">รหัส</th>
           <th className="px-2 py-1.5 font-semibold">รายละเอียด</th>
@@ -1069,7 +1122,7 @@ const OtherTable = ({ lines }: { lines: DailyOtherLineRow[] }) => (
         {lines.map((line) => (
           <tr key={line.id} className="border-t border-slate-100 hover:bg-slate-50">
             <td className="px-2 py-1.5 whitespace-nowrap">
-              <Clock iso={line.postedAt} />
+              <Clock iso={line.postedAt} withDate={showDate} />
             </td>
             <td className="px-2 py-1.5 text-right">
               <Money
