@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { branchesIn, summariseByAccount, type DayByAccount } from "../lib/dailyAccountSummary";
+import {
+  branchesIn,
+  missingBranches,
+  summariseByAccount,
+  type DayByAccount,
+} from "../lib/dailyAccountSummary";
 import type { DailyDepositRow, DailyOtherLineRow, DailySlipRow } from "../lib/types";
 
 const deposit = (over: Partial<DailyDepositRow> = {}): DailyDepositRow => ({
@@ -139,5 +144,41 @@ describe("summariseByAccount", () => {
 
   it("returns nothing for a day with nothing in it", () => {
     expect(summariseByAccount({ matched: [], depositsWithoutSlip: [], otherLines: [] })).toEqual([]);
+  });
+});
+
+describe("missingBranches", () => {
+  const KNOWN = ["หนองคาย", "บึงกาฬ"];
+
+  it("names the account a day holds nothing for", () => {
+    // 10 ก.ย. 2569: the 447 file on hand stopped at 9 ก.ย., so the day was
+    // บึงกาฬ-less and said so nowhere — the totals read as the whole day.
+    expect(
+      missingBranches(
+        { matched: [], depositsWithoutSlip: [deposit({ branch: "หนองคาย" })], otherLines: [] },
+        KNOWN
+      )
+    ).toEqual(["บึงกาฬ"]);
+  });
+
+  it("says nothing when both accounts are there", () => {
+    expect(missingBranches(day, KNOWN)).toEqual([]);
+  });
+
+  it("counts an account present through the bank's own lines alone", () => {
+    // A day with nothing but a fee on that account still had its statement
+    // loaded, which is the question being asked.
+    expect(
+      missingBranches(
+        { matched: [], depositsWithoutSlip: [], otherLines: [other({ branch: "บึงกาฬ" })] },
+        KNOWN
+      )
+    ).toEqual(["หนองคาย"]);
+  });
+
+  it("names both when the day is empty", () => {
+    expect(missingBranches({ matched: [], depositsWithoutSlip: [], otherLines: [] }, KNOWN)).toEqual(
+      ["หนองคาย", "บึงกาฬ"].sort()
+    );
   });
 });

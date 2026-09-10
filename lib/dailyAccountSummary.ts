@@ -65,3 +65,19 @@ export function summariseByAccount(day: DayByAccount): AccountTotals[] {
     };
   });
 }
+
+// The cooperative's accounts that the day says nothing about.
+//
+// A day holding one account renders no per-account table, because splitting
+// one pile into one pile tells nobody anything. But "no table" and "the other
+// account has no lines here" look identical on screen, and they are not the
+// same fact at all: the second one usually means the statement for that
+// account has not been uploaded for these days, and every total on the page
+// is then half a day's money presented as a day's.
+//
+// Named from the account list rather than from the day, because the whole
+// point is to name something the day does not contain.
+export function missingBranches(day: DayByAccount, known: string[]): string[] {
+  const present = new Set(branchesIn(day));
+  return known.filter((branch) => !present.has(branch)).sort();
+}
