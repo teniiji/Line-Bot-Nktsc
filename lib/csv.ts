@@ -128,7 +128,8 @@ export function downloadMemberRosterCsv(members: MemberRosterEntry[]) {
     "ชื่อสมาชิก",
     "สังกัด",
     "เบอร์โทร",
-    "เชื่อมต่อ LINE แล้ว",
+    "สถานะ LINE",
+    "ชื่อ LINE",
     "มีเลขบัตรประชาชนในระบบ",
     "จำนวนบัญชีที่ผูกไว้",
     "เลขบัญชีที่ผูกไว้",
@@ -138,7 +139,11 @@ export function downloadMemberRosterCsv(members: MemberRosterEntry[]) {
     m.memberName,
     m.unitName ?? "",
     m.phone ?? "",
-    m.lineUserId ? "เชื่อมแล้ว" : "",
+    // Three states, not two: a binding pointing at an account this app has no
+    // record of is the one that needs acting on, and a column reading
+    // "เชื่อมแล้ว" would hide exactly those rows.
+    !m.lineUserId ? "" : m.lineAccountExists ? "เชื่อมแล้ว" : "ผูกค้าง — ไม่พบบัญชี",
+    m.lineDisplayName ?? "",
     // Whether one is on file, never the value itself.
     m.nationalId ? "มี" : "",
     String(m.bankAccounts.length),
