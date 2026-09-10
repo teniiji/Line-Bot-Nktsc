@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { MemberBankAccountEntry } from "@/lib/types";
 import ConfirmDialog from "@/components/ConfirmDialog";
+import { downloadBankAccountsCsv } from "@/lib/csv";
 
 const SEARCH_DEBOUNCE_MS = 300;
 
@@ -147,12 +148,24 @@ export default function MemberBankAccountsPanel() {
             แล้วระบบบันทึกให้เลย <strong>บันทึกครั้งเดียวใช้ได้ทุกรอบต่อไป</strong>
           </p>
         </div>
-        <button
-          onClick={() => setOpen((v) => !v)}
-          className="text-sm px-3 py-1.5 border border-slate-300 rounded whitespace-nowrap"
-        >
-          {open ? "ซ่อน" : "จัดการทะเบียน"}
-        </button>
+        <div className="flex items-center gap-2 shrink-0">
+          {open && (
+            <button
+              onClick={() => downloadBankAccountsCsv(entries)}
+              disabled={entries.length === 0}
+              className="text-sm px-3 py-1.5 border border-slate-300 rounded whitespace-nowrap disabled:opacity-40"
+              title="ส่งออกรายการที่แสดงอยู่ตอนนี้ ตามคำค้นที่กรองไว้"
+            >
+              ส่งออก CSV
+            </button>
+          )}
+          <button
+            onClick={() => setOpen((v) => !v)}
+            className="text-sm px-3 py-1.5 border border-slate-300 rounded whitespace-nowrap"
+          >
+            {open ? "ซ่อน" : "จัดการทะเบียน"}
+          </button>
+        </div>
       </div>
 
       {open && (

@@ -60,6 +60,13 @@ export interface MemberRosterEntry {
   // themselves to the bot at least once. Staff can only clear it, never set
   // it — see the PUT handler in app/api/member-roster/[memberNumber].
   lineUserId: string | null;
+  // True when nationalId above is the masked form, not what is stored — the
+  // API masks it while browsing the whole roster and returns it in full for a
+  // search that names who you are looking at. See lib/memberPrivacy.ts.
+  nationalIdMasked: boolean;
+  // Every bank account bound to this member, so "who is this and what do they
+  // transfer from" is one lookup instead of two panels in two tabs.
+  bankAccounts: string[];
 }
 
 export interface ServiceRequestLogEntry {

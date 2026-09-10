@@ -3,10 +3,10 @@
 import { useCallback, useEffect, useState } from "react";
 import { MemberRosterEntry } from "@/lib/types";
 import ConfirmDialog from "@/components/ConfirmDialog";
+import { downloadMemberRosterCsv } from "@/lib/csv";
 
 const PAGE_SIZE = 20;
 const SEARCH_DEBOUNCE_MS = 300;
-const MIN_SEARCH_LENGTH = 2;
 
 export default function MemberContactPanel() {
   const [members, setMembers] = useState<MemberRosterEntry[]>([]);
@@ -33,11 +33,6 @@ export default function MemberContactPanel() {
   }, [search]);
 
   const fetchMembers = useCallback(async () => {
-    if (search.length < MIN_SEARCH_LENGTH) {
-      setMembers([]);
-      setTotal(0);
-      return;
-    }
     setLoading(true);
     const params = new URLSearchParams({
       search,
@@ -85,7 +80,9 @@ export default function MemberContactPanel() {
         setError(body.error || "บันทึกไม่สำเร็จ");
         return;
       }
-      setMembers((prev) => prev.map((m) => (m.id === body.id ? { ...m, ...body } : m)));
+      setMembers((prev) =>
+        prev.map((m) => (m.id === body.id ? { ...m, ...body, nationalIdMasked: false } : m))
+      );
       setEditingId(null);
       setEditNationalId("");
       setEditPhone("");
@@ -109,43 +106,60 @@ export default function MemberContactPanel() {
       setError(body.error || "ปลดการเชื่อมต่อไม่สำเร็จ");
       return;
     }
-    setMembers((prev) => prev.map((m) => (m.id === body.id ? { ...m, ...body } : m)));
+    setMembers((prev) =>
+      prev.map((m) => (m.id === body.id ? { ...m, lineUserId: body.lineUserId } : m))
+    );
   };
 
   return (
     <div className="bg-white rounded-lg shadow">
       <div className="flex items-center justify-between gap-3 px-4 py-3 border-b border-slate-100">
         <div>
-          <h2 className="font-semibold">แก้ไขข้อมูลยืนยันตัวตนสมาชิก</h2>
+          <h2 className="font-semibold">ทะเบียนสมาชิก</h2>
           <p className="text-xs text-slate-500 mt-1">
-            ใช้เมื่อสมาชิกโทรแจ้งเปลี่ยนเบอร์โทร หรือข้อมูลเลขบัตรผิด — ค้นหาด้วยเลขสมาชิกหรือชื่อ
-            แล้วแก้ไขได้ทันที ข้อมูลนี้ใช้ยืนยันตัวตนก่อนแจ้งเลขสมาชิกทาง LINE เท่านั้น
+            เปิดดูได้ทั้งทะเบียน (แบ่งหน้า) หรือค้นด้วยเลขสมาชิก ชื่อ หรือสังกัด — แก้เบอร์โทรและ
+            เลขบัตรประชาชนได้ทันทีเมื่อสมาชิกโทรแจ้ง ข้อมูลนี้ใช้ยืนยันตัวตนก่อนแจ้งเลขสมาชิกทาง
+            LINE เท่านั้น คอลัมน์ <strong>"เลขบัญชีที่ผูกไว้"</strong> คือทะเบียนเลขบัญชีเดียวกับที่แท็บ
+            "เทียบ Statement" ดึงมาแสดงให้ตรงนี้ด้วย จะได้ไม่ต้องเปิดสองแท็บ
             ส่วนคอลัมน์ "เชื่อมต่อ LINE" บอกว่าเลขสมาชิกนี้ผูกกับบัญชี LINE ไหนอยู่ — ถ้าสมาชิกแจ้งว่า
             บอทตอบว่า "เลขสมาชิกนี้ผูกกับบัญชี LINE อื่นแล้ว" (เช่น เปลี่ยนเครื่อง/เปลี่ยนบัญชี LINE
             หรือค้างจาก LINE OA ช่องเดิม) ให้กด "ปลด" แล้วสมาชิกจะผูกใหม่ได้เองในข้อความถัดไป
           </p>
+          <p className="text-xs text-amber-700 mt-1">
+            🔒 ตอนเปิดดูทั้งทะเบียน <strong>เลขบัตรประชาชนจะถูกซ่อนไว้ เหลือ 4 ตัวท้าย</strong> —
+            ค้นหาสมาชิกคนที่ต้องการยืนยันตัวตน แล้วจะเห็นเลขเต็ม · ไฟล์ CSV
+            <strong>ไม่มีคอลัมน์เลขบัตรประชาชนเลย</strong> มีแค่ว่ามีในระบบหรือไม่
+          </p>
         </div>
-        <input
-          type="text"
-          value={searchInput}
-          onChange={(e) => setSearchInput(e.target.value)}
-          placeholder="ค้นหาเลขสมาชิกหรือชื่อ"
-          className="text-sm border border-slate-300 rounded px-3 py-1.5 w-64"
-        />
+        <div className="flex items-center gap-2 shrink-0">
+          <input
+            type="text"
+            value={searchInput}
+            onChange={(e) => setSearchInput(e.target.value)}
+            placeholder="ค้นหาเลขสมาชิก ชื่อ หรือสังกัด"
+            className="text-sm border border-slate-300 rounded px-3 py-1.5 w-64"
+          />
+          <button
+            onClick={() => downloadMemberRosterCsv(members)}
+            disabled={members.length === 0}
+            className="text-sm px-3 py-1.5 border border-slate-300 rounded whitespace-nowrap disabled:opacity-40"
+            title="ส่งออกเฉพาะหน้านี้ ไม่รวมเลขบัตรประชาชน"
+          >
+            ส่งออก CSV
+          </button>
+        </div>
       </div>
 
       {error && (
         <p className="text-sm text-red-600 bg-red-50 rounded px-3 py-2 mx-4 mt-3">{error}</p>
       )}
 
-      {search.length < MIN_SEARCH_LENGTH ? (
-        <p className="text-slate-500 text-sm py-8 text-center">
-          พิมพ์เลขสมาชิกหรือชื่ออย่างน้อย {MIN_SEARCH_LENGTH} ตัวอักษรเพื่อค้นหา
-        </p>
-      ) : loading ? (
+      {loading ? (
         <p className="text-slate-500 text-sm py-8 text-center">กำลังโหลด…</p>
       ) : members.length === 0 ? (
-        <p className="text-slate-500 text-sm py-8 text-center">ไม่พบสมาชิกที่ตรงกับคำค้นหา</p>
+        <p className="text-slate-500 text-sm py-8 text-center">
+          {search ? "ไม่พบสมาชิกที่ตรงกับคำค้นหา" : "ยังไม่มีสมาชิกในทะเบียน"}
+        </p>
       ) : (
         <div className="overflow-x-auto">
           <table className="w-full text-sm min-w-[720px]">
@@ -155,6 +169,7 @@ export default function MemberContactPanel() {
                 <th className="px-4 py-2">ชื่อสมาชิก</th>
                 <th className="px-4 py-2">เลขบัตรประชาชน</th>
                 <th className="px-4 py-2">เบอร์โทร</th>
+                <th className="px-4 py-2">เลขบัญชีที่ผูกไว้</th>
                 <th className="px-4 py-2">เชื่อมต่อ LINE</th>
                 <th className="px-4 py-2"></th>
               </tr>
@@ -176,8 +191,19 @@ export default function MemberContactPanel() {
                         placeholder="13 หลัก"
                         autoFocus
                       />
+                    ) : member.nationalId === null ? (
+                      "—"
                     ) : (
-                      member.nationalId ?? "—"
+                      <span
+                        className="font-mono"
+                        title={
+                          member.nationalIdMasked
+                            ? "ซ่อนไว้ตอนเปิดดูทั้งทะเบียน — ค้นหาสมาชิกคนนี้เพื่อดูเลขเต็ม"
+                            : undefined
+                        }
+                      >
+                        {member.nationalId}
+                      </span>
                     )}
                   </td>
                   <td className="px-4 py-2">
@@ -191,6 +217,15 @@ export default function MemberContactPanel() {
                       />
                     ) : (
                       member.phone ?? "—"
+                    )}
+                  </td>
+                  <td className="px-4 py-2">
+                    {member.bankAccounts.length === 0 ? (
+                      <span className="text-slate-300">—</span>
+                    ) : (
+                      <span className="font-mono text-xs">
+                        {member.bankAccounts.join(" · ")}
+                      </span>
                     )}
                   </td>
                   <td className="px-4 py-2 whitespace-nowrap">
