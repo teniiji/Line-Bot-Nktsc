@@ -196,18 +196,23 @@ export default function ExpenseForm({
         </p>
       )}
 
+      {/* The member number leads, because it is now the field that does the
+          work: typing it finds who they are and what they have paid in, and
+          the amount and the date below can be filled from what it turns up
+          rather than from what somebody was told. Filling in the amount first
+          is the older habit, and the wrong order for this form. */}
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         <div>
-          <label className="block text-sm text-slate-600 mb-1">จำนวนเงิน (บาท)</label>
+          <label className="block text-sm text-slate-600 mb-1">
+            เลขสมาชิก (ถ้ามี)
+            {looking && <span className="text-xs text-slate-400"> · กำลังค้นหา…</span>}
+          </label>
           <input
-            type="number"
-            step="0.01"
-            min="0"
-            value={amount}
-            onChange={(e) => setAmount(e.target.value)}
+            type="text"
+            value={memberNumber}
+            onChange={(e) => setMemberNumber(e.target.value)}
             className="w-full border border-slate-300 rounded px-3 py-2"
-            placeholder="0.00"
-            required
+            placeholder="เช่น 012345"
           />
         </div>
         <div>
@@ -240,16 +245,16 @@ export default function ExpenseForm({
           />
         </div>
         <div>
-          <label className="block text-sm text-slate-600 mb-1">
-            เลขสมาชิก (ถ้ามี)
-            {looking && <span className="text-xs text-slate-400"> · กำลังค้นหา…</span>}
-          </label>
+          <label className="block text-sm text-slate-600 mb-1">จำนวนเงิน (บาท)</label>
           <input
-            type="text"
-            value={memberNumber}
-            onChange={(e) => setMemberNumber(e.target.value)}
+            type="number"
+            step="0.01"
+            min="0"
+            value={amount}
+            onChange={(e) => setAmount(e.target.value)}
             className="w-full border border-slate-300 rounded px-3 py-2"
-            placeholder="เช่น 012345"
+            placeholder="0.00"
+            required
           />
         </div>
       </div>
