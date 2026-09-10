@@ -7,6 +7,8 @@ import {
   findMemberConflicts,
   parseMemberRosterSheet,
 } from "@/lib/memberRosterSheet";
+import { findAccountConflicts } from "@/lib/bankAccountSheet";
+import { rematchRoundsForAccounts } from "@/lib/statementRecompute";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -85,6 +87,26 @@ export async function POST(request: NextRequest) {
     );
   }
 
+  // The same account under two members is a contradiction the file has to
+  // answer for, exactly as it is in the dedicated account import — loading it
+  // would bind the account to whichever row came last.
+  const accountRows = sheet.rows
+    .filter((row): row is typeof row & { accountNumber: string } => row.accountNumber !== null)
+    .map((row) => ({ memberNumber: row.memberNumber, accountNumber: row.accountNumber }));
+  const accountConflicts = findAccountConflicts(accountRows);
+  if (accountConflicts.length > 0) {
+    return NextResponse.json(
+      {
+        error:
+          `ไฟล์นี้มีเลขบัญชีเดียวกันผูกกับสมาชิกคนละคน ${accountConflicts.length} เลขบัญชี — ` +
+          "บัญชีหนึ่งเป็นของสมาชิกคนเดียวเท่านั้น กรุณาแก้ไฟล์ให้ชัดเจนก่อนแล้วอัปโหลดใหม่ (ยังไม่ได้บันทึกอะไรลงระบบ)",
+        accountConflicts: accountConflicts.slice(0, 20),
+        accountConflictCount: accountConflicts.length,
+      },
+      { status: 400 }
+    );
+  }
+
   const incoming = dedupeByMember(sheet.rows);
 
   // Read before writing so the report can say what actually changed. "อัปเดต 3"
@@ -139,6 +161,60 @@ export async function POST(request: NextRequest) {
     );
   }
 
+  // The accounts, once the members they belong to are on file. Written after
+  // the roster so a brand-new member already has a row to be named from, and
+  // only for the last account each member listed — dedupeByMember has already
+  // reduced a repeated member to one row.
+  const withAccounts = incoming.filter(
+    (row): row is typeof row & { accountNumber: string } => row.accountNumber !== null
+  );
+  let boundAccounts = 0;
+  let repointedAccounts = 0;
+  let roundsRematched = 0;
+  if (withAccounts.length > 0) {
+    const existingBindings = await inChunks(
+      withAccounts.map((row) => row.accountNumber),
+      (accountNumbers) =>
+        prisma.memberBankAccount.findMany({
+          where: { accountNumber: { in: accountNumbers } },
+          select: { accountNumber: true, memberNumber: true },
+        })
+    );
+    const owner = new Map(existingBindings.map((row) => [row.accountNumber, row.memberNumber]));
+    boundAccounts = withAccounts.filter((row) => !owner.has(row.accountNumber)).length;
+    // Re-pointing an account moves money on the reconciliation screens, so it
+    // is counted apart from a plain new binding rather than folded into it.
+    repointedAccounts = withAccounts.filter((row) => {
+      const current = owner.get(row.accountNumber);
+      return current !== undefined && current !== row.memberNumber;
+    }).length;
+
+    for (let i = 0; i < withAccounts.length; i += WRITE_CHUNK) {
+      const chunk = withAccounts.slice(i, i + WRITE_CHUNK);
+      await prisma.$transaction(
+        chunk.map((row) =>
+          prisma.memberBankAccount.upsert({
+            where: { accountNumber: row.accountNumber },
+            create: {
+              accountNumber: row.accountNumber,
+              memberNumber: row.memberNumber,
+              memberName: row.memberName,
+              note: "นำเข้าจากไฟล์ทะเบียนสมาชิก",
+            },
+            update: { memberNumber: row.memberNumber, memberName: row.memberName },
+          })
+        )
+      );
+    }
+
+    // Money that sat as "โอนเข้ามาแต่ไม่พบเจ้าของ" in an earlier round can be
+    // placed now, so the rounds that carry these accounts are recomputed —
+    // each once, however many rows named it.
+    roundsRematched = await rematchRoundsForAccounts(
+      withAccounts.map((row) => row.accountNumber)
+    );
+  }
+
   return NextResponse.json({
     read: sheet.rows.length,
     imported: incoming.length,
@@ -146,6 +222,9 @@ export async function POST(request: NextRequest) {
     updated: incoming.length - added.length,
     filledNationalId: filledNationalId.length,
     filledPhone: filledPhone.length,
+    boundAccounts,
+    repointedAccounts,
+    roundsRematched,
     blankRows: sheet.blankRows,
     columns: sheet.columns,
     problems: sheet.problems.slice(0, 20),

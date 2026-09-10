@@ -5,6 +5,7 @@ import {
   findMemberConflicts,
   parseMemberRosterSheet,
 } from "../lib/memberRosterSheet";
+import { findAccountConflicts } from "../lib/bankAccountSheet";
 
 const HEADER = ["ลำดับ", "เลขสมาชิก", "ชื่อ-สกุล", "สังกัด", "เลขบัตรประชาชน", "เบอร์โทร"];
 const row = (
@@ -115,9 +116,15 @@ describe("parseMemberRosterSheet", () => {
       ["เลขสมาชิก", "ชื่อ"],
       ["28374", "นางสาวชาลิสา อ่อนตา"],
     ]);
-    expect(sheet.columns).toEqual({ unit: false, nationalId: false, phone: false });
+    expect(sheet.columns).toEqual({
+      unit: false,
+      nationalId: false,
+      phone: false,
+      account: false,
+    });
     expect(sheet.rows[0].nationalId).toBeNull();
     expect(sheet.rows[0].phone).toBeNull();
+    expect(sheet.rows[0].accountNumber).toBeNull();
   });
 });
 
@@ -157,5 +164,66 @@ describe("dedupeByMember", () => {
     const rows = dedupeByMember(sheet.rows);
     expect(rows).toHaveLength(2);
     expect(rows[0].unitName).toBe("หน่วย ข");
+  });
+});
+
+// The account column: staff keep the whole thing in one spreadsheet, so the
+// roster import loads the bank-account directory from the same file rather
+// than asking for the join to be done by hand.
+describe("the account column", () => {
+  const WITH_ACCOUNT = [
+    "ลำดับ",
+    "เลขสมาชิก",
+    "ชื่อ-สกุล",
+    "เลขที่บัญชี",
+  ];
+
+  it("keeps only the digits, so punctuation does not make two accounts", () => {
+    const sheet = parseMemberRosterSheet([
+      WITH_ACCOUNT,
+      ["1", "28374", "นางสาวชาลิสา อ่อนตา", "982-5-07219-9"],
+      ["2", "28375", "นายสมชาย ใจดี", "9825072188"],
+    ]);
+    expect(sheet.columns.account).toBe(true);
+    expect(sheet.rows[0].accountNumber).toBe("9825072199");
+    expect(sheet.rows[1].accountNumber).toBe("9825072188");
+  });
+
+  it("reports an account cell with no digits and keeps the rest of the row", () => {
+    // A dash or a note in the column is a hole in the file, not a member to
+    // drop — the name and unit still belong in the roster.
+    const sheet = parseMemberRosterSheet([
+      WITH_ACCOUNT,
+      ["1", "28374", "นางสาวชาลิสา อ่อนตา", "ยังไม่ทราบ"],
+    ]);
+    expect(sheet.rows).toHaveLength(1);
+    expect(sheet.rows[0].accountNumber).toBeNull();
+    expect(sheet.rows[0].memberName).toBe("นางสาวชาลิสา อ่อนตา");
+    expect(sheet.problems).toHaveLength(1);
+    expect(sheet.problems[0].reason).toContain("ไม่มีตัวเลข");
+  });
+
+  it("is optional — a file without it still imports everything else", () => {
+    const sheet = parseMemberRosterSheet([
+      ["เลขสมาชิก", "ชื่อ"],
+      ["28374", "นางสาวชาลิสา อ่อนตา"],
+    ]);
+    expect(sheet.columns.account).toBe(false);
+    expect(sheet.rows[0].accountNumber).toBeNull();
+    expect(sheet.problems).toHaveLength(0);
+  });
+
+  it("lets the shared conflict rule catch one account under two members", () => {
+    // Refused by the route before anything is written — the same rule the
+    // dedicated account import applies, asked of these rows.
+    const sheet = parseMemberRosterSheet([
+      WITH_ACCOUNT,
+      ["1", "28374", "นางสาวชาลิสา อ่อนตา", "9825072199"],
+      ["2", "28375", "นายสมชาย ใจดี", "982-5-07219-9"],
+    ]);
+    const pairs = sheet.rows
+      .filter((row) => row.accountNumber !== null)
+      .map((row) => ({ memberNumber: row.memberNumber, accountNumber: row.accountNumber! }));
+    expect(findAccountConflicts(pairs)).toHaveLength(1);
   });
 });

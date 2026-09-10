@@ -155,7 +155,10 @@ export function parseBankAccountSheet(rows: unknown[][]): BankAccountSheet {
 // importing it would bind the account to whichever row happened to be last.
 // The same pair repeated is just a duplicate row and is dropped quietly.
 export function findAccountConflicts(
-  rows: BankAccountRow[]
+  // Only these two fields are read, so the member-roster import — whose rows
+  // carry an optional account column — can ask the same question of its own
+  // rows rather than growing a second copy of this rule.
+  rows: { memberNumber: string; accountNumber: string }[]
 ): { accountNumber: string; memberNumbers: string[] }[] {
   const owners = new Map<string, Set<string>>();
   for (const row of rows) {
