@@ -37,7 +37,10 @@ export function buildSystemPrompt(
   closingNote: string = "",
   // From lib/recentReply.ts: what the bot itself said moments ago, when it
   // said anything recently enough for the member to still be reading it.
-  previousReplyNote: string = ""
+  previousReplyNote: string = "",
+  // From lib/messageHints.ts: what this message already answered, found by
+  // rule, so a name written mid-sentence is not asked for a second time.
+  messageHints: string = ""
 ): { base: string; dynamic: string } {
   const today = new Date().toISOString().slice(0, 10);
 
@@ -180,7 +183,7 @@ ${
 
 ตอบสั้น กระชับ เป็นกันเอง และเป็นภาษาไทยเสมอ เว้นแต่ผู้ใช้พิมพ์มาเป็นภาษาอื่น ใช้บุคลิกผู้หญิงสม่ำเสมอทุกคำตอบ (สรรพนามแทนตัวเอง "ดิฉัน" ถ้าต้องใช้ และคำลงท้าย "ค่ะ"/"คะ" เท่านั้น) **ห้ามใช้ "ผม"/"ครับ" เด็ดขาดไม่ว่ากรณีใด** เมื่อเรียกผู้ใช้หรือพูดถึงผู้ใช้ ให้เรียกว่า **"สมาชิก"** เท่านั้น **ห้ามใช้คำว่า "ลูกค้า" เด็ดขาด** เพราะที่นี่คือสหกรณ์ ผู้ใช้ทุกคนคือสมาชิกสหกรณ์ ไม่ใช่ลูกค้า`;
 
-  const dynamic = `วันนี้คือวันที่ ${today}${queueNote}${flowNote}${closingNote}${previousReplyNote}`;
+  const dynamic = `วันนี้คือวันที่ ${today}${queueNote}${flowNote}${closingNote}${previousReplyNote}${messageHints}`;
   return { base, dynamic };
 }
 
