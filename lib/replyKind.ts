@@ -28,7 +28,24 @@ export type ReplyKind =
   // photo in the same album, is noise: the question is already on screen and
   // unanswered, and staff can see the conversation.
   | "asked-what-they-need"
+  // The member asked something only the cooperative can answer — whether a
+  // payment date can be moved, whether something is approved, a figure that
+  // depends on their own account. Nothing here is sent at all.
+  | "left-to-staff"
   | null;
+
+// Kinds that are never sent, as against kinds that are only withheld when
+// they would repeat themselves.
+//
+// A member asked whether she could pay on Monday because she was on official
+// duty in Khon Kaen until Friday. The bot cannot decide that — nobody in this
+// system can — so it wrote ten lines: four phone numbers, an email address,
+// and a suggested workaround, none of which was the answer. This is a staffed
+// channel. The answer to a question the bot cannot answer is for the person
+// who can to answer it, and anything the bot says first is in the way.
+const NEVER_SENT = new Set<ReplyKind>(["left-to-staff"]);
+
+export const alwaysSilent = (kind: ReplyKind): boolean => NEVER_SENT.has(kind);
 
 // How long a kind stays answered. Long enough to cover a member adding more
 // photos to what is, to them, one message; short enough that someone who

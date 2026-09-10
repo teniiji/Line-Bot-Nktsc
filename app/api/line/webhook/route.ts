@@ -12,7 +12,7 @@ import {
   loadLastReplyKind,
   recordReply,
 } from "@/lib/agent/state";
-import { repeatsLastReply, type ReplyKind } from "@/lib/replyKind";
+import { alwaysSilent, repeatsLastReply, type ReplyKind } from "@/lib/replyKind";
 import { ensureLineUser } from "@/lib/lineUsers";
 import {
   GROUP_JOIN_NOTICE,
@@ -361,6 +361,14 @@ async function handleEvent(event: webhook.Event, origin: string): Promise<void> 
   // Not recorded either: the window stays anchored to the message the member
   // is really looking at, rather than being pushed forward by replies that
   // were never sent.
+  // A reply the bot decided not to make at all: the member asked something
+  // only the cooperative can answer, and staff read this chat. See
+  // lib/replyKind.ts for the ten-line non-answer that made this worth having.
+  if (alwaysSilent(replyKind)) {
+    console.log(`[line/webhook] leaving this one to staff (${replyKind})`);
+    return;
+  }
+
   if (replyKind !== null) {
     const previous = await loadLastReplyKind(lineUserId).catch((err) => {
       // Never a reason to withhold a reply — not knowing what was said last

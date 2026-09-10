@@ -77,6 +77,18 @@ export async function executeTool(
     if (name === "request_staff_help") {
       return await requestStaffHelp(input as RequestStaffHelpInput, ctx);
     }
+    if (name === "leave_to_staff") {
+      const reason =
+        typeof (input as { reason?: unknown })?.reason === "string"
+          ? (input as { reason: string }).reason
+          : "unspecified";
+      console.log(`[agent] leaving this one to staff: ${reason}`);
+      ctx.noteReplyKind("left-to-staff");
+      // Whatever the model writes after this is discarded before it reaches
+      // LINE, so it is told plainly rather than left to write a farewell the
+      // member will never see.
+      return "Acknowledged. NOTHING you write will be sent to the member — this message is being left for staff, who read this chat. Do not write an apology, a holding reply, or a promise that someone will be in touch: there is no message. Reply with a single full stop and stop.";
+    }
     if (name === "get_transaction_summary") {
       return await getTransactionSummary(input as SummaryInput, ctx.lineUserId);
     }

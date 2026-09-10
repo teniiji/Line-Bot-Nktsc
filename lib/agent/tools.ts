@@ -225,6 +225,22 @@ export const tools: Anthropic.Tool[] = [
     },
   },
   {
+    name: "leave_to_staff",
+    description:
+      "Call when the member has asked something this bot cannot actually answer, and say nothing to them — staff read this chat and will reply. Use it for a request for a DECISION only the cooperative can make (moving a payment due date, approving or waiving something, an exception to a rule), for a figure that depends on that member's own account which is not in the reference data (their remaining balance, their borrowing limit, what they owe), for a complaint or a dispute, and for any message where you do not actually know what the member is referring to. NEVER use it for anything the cooperative's reference data above already answers (interest rates, contact details, account numbers, published criteria), for a transfer slip or any transaction step, for a thank-you or acknowledgement, or while any transaction, service request, or member-number lookup is in progress — those all have their own handling and must be finished. The test is not whether the question is hard: it is whether an answer from you would be a guess, a stack of contact details, or a restatement of the question. When it would be any of those, silence is the correct reply and this tool is how you give it.",
+    input_schema: {
+      type: "object",
+      properties: {
+        reason: {
+          type: "string",
+          description:
+            "Short note, in Thai, on what the member asked and why it is staff's to answer. Recorded in the logs only — the member never sees it.",
+        },
+      },
+      required: ["reason"],
+    },
+  },
+  {
     name: "get_transaction_summary",
     description:
       "Look up totals from the user's own previously recorded transactions, optionally filtered by date range and/or category. Use this when the user asks about their own spending, debt, or savings history.",

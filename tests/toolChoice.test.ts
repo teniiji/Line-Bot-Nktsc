@@ -121,3 +121,33 @@ describe("toolsForMessage", () => {
     expect(tools).toHaveLength(before);
   });
 });
+
+describe("staying silent is only for a member with nothing in progress", () => {
+  const tools = [
+    { name: "report_transaction" },
+    { name: "submit_member_info" },
+    { name: "leave_to_staff" },
+  ];
+
+  it("is offered when nothing is waiting", () => {
+    expect(toolsForMessage(tools, false, false).map((t) => t.name)).toContain("leave_to_staff");
+  });
+
+  it("is withheld while a transaction or request is half-finished", () => {
+    // The first turn of such a message is forced to call some tool, and this
+    // one would end the conversation by leaving the work unanswered.
+    expect(toolsForMessage(tools, false, true).map((t) => t.name)).not.toContain(
+      "leave_to_staff"
+    );
+  });
+
+  it("does not disturb the picture-only rule", () => {
+    const withImage = [...tools, { name: "decline_unreadable_image" }];
+    expect(toolsForMessage(withImage, false, false).map((t) => t.name)).not.toContain(
+      "decline_unreadable_image"
+    );
+    expect(toolsForMessage(withImage, true, false).map((t) => t.name)).toContain(
+      "decline_unreadable_image"
+    );
+  });
+});

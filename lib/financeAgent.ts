@@ -7,7 +7,7 @@ import type Anthropic from "@anthropic-ai/sdk";
 import { anthropic } from "./anthropicClient";
 import { getKnowledgeText } from "./knowledge";
 import { getFormLinksData } from "./formLinks";
-import { stripDisallowedLinks } from "./links";
+import { sanitiseReplyText } from "./replyText";
 import { tools } from "./agent/tools";
 import { forcedToolChoice, toolsForMessage } from "./agent/toolChoice";
 import { buildSystemPrompt } from "./agent/prompts";
@@ -158,7 +158,11 @@ export async function runFinanceAgent(
   const messages: Anthropic.MessageParam[] = [buildInitialUserMessage(userContent)];
   // A tool that can only be about a picture is not offered on a message that
   // has none — see toolsForMessage.
-  const availableTools = toolsForMessage(tools, hasAttachmentContent(userContent));
+  const availableTools = toolsForMessage(
+    tools,
+    hasAttachmentContent(userContent),
+    pending !== null || pendingService !== null || pendingLookup !== null
+  );
 
   // Set by a tool whose reply can repeat itself into noise, and read by the
   // caller to decide whether to send this one at all — see lib/replyKind.ts.
@@ -236,7 +240,7 @@ export async function runFinanceAgent(
         );
       }
       return {
-        text: stripDisallowedLinks(
+        text: sanitiseReplyText(
           text || "ขอโทษค่ะ ไม่สามารถตอบได้ในตอนนี้",
           formLinksData.hosts
         ),
@@ -284,7 +288,7 @@ export async function runFinanceAgent(
     (block): block is Anthropic.TextBlock => block.type === "text"
   );
   return {
-    text: stripDisallowedLinks(
+    text: sanitiseReplyText(
       finalText?.text.trim() || "ขอโทษค่ะ ดำเนินการไม่สำเร็จ ลองใหม่อีกครั้งนะคะ",
       formLinksData.hosts
     ),
