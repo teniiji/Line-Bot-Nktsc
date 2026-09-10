@@ -22,15 +22,34 @@ export async function GET(request: NextRequest) {
     Math.max(1, Number(searchParams.get("pageSize")) || PAGE_SIZE)
   );
 
-  const where = browsing
-    ? {}
-    : {
-        OR: [
-          { memberNumber: { contains: search, mode: "insensitive" as const } },
-          { memberName: { contains: search, mode: "insensitive" as const } },
-          { unitName: { contains: search, mode: "insensitive" as const } },
-        ],
-      };
+  // What is missing is the question this panel is usually opened to answer:
+  // who cannot be identity-verified yet, who the bot has never reached, whose
+  // account nobody has bound. Each filter is a plain "has / does not have" on
+  // one column, combined with AND so they narrow together.
+  const missing = searchParams.get("missing") ?? "";
+  const linked = searchParams.get("linked") ?? "";
+  const unit = searchParams.get("unit")?.trim() ?? "";
+
+  const filters: Record<string, unknown>[] = [];
+  if (!browsing) {
+    filters.push({
+      OR: [
+        { memberNumber: { contains: search, mode: "insensitive" as const } },
+        { memberName: { contains: search, mode: "insensitive" as const } },
+        { unitName: { contains: search, mode: "insensitive" as const } },
+      ],
+    });
+  }
+  if (unit) filters.push({ unitName: unit });
+  // An empty string counts as missing alongside null: a spreadsheet import
+  // that wrote "" for a blank cell leaves a value that is present but useless,
+  // and staff chasing holes need to see those rows too.
+  if (missing === "nationalId") filters.push({ OR: [{ nationalId: null }, { nationalId: "" }] });
+  if (missing === "phone") filters.push({ OR: [{ phone: null }, { phone: "" }] });
+  if (linked === "yes") filters.push({ NOT: { lineUserId: null } });
+  if (linked === "no") filters.push({ lineUserId: null });
+
+  const where = filters.length > 0 ? { AND: filters } : {};
 
   const [rows, total] = await Promise.all([
     prisma.memberRoster.findMany({
@@ -81,5 +100,16 @@ export async function GET(request: NextRequest) {
     bankAccounts: accountsByMember.get(row.memberNumber) ?? [],
   }));
 
-  return NextResponse.json({ data, total, page, pageSize, browsing });
+  // Every unit on file, for the dropdown. Distinct over one indexed-enough
+  // column and small — there are tens of units, not thousands — so it is
+  // cheaper than making the panel fetch it separately on every render.
+  const unitRows = await prisma.memberRoster.findMany({
+    where: { NOT: { unitName: null } },
+    distinct: ["unitName"],
+    orderBy: { unitName: "asc" },
+    select: { unitName: true },
+  });
+  const units = unitRows.map((row) => row.unitName).filter((name): name is string => Boolean(name));
+
+  return NextResponse.json({ data, total, page, pageSize, browsing, units });
 }
