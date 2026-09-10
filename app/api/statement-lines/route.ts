@@ -53,7 +53,7 @@ export async function POST(request: NextRequest) {
   }
 
   const stored = await storeStatementLines(rows, account, branch, checked.file.name);
-  if (stored === 0) {
+  if (stored.lines === 0) {
     return NextResponse.json(
       {
         error:
@@ -66,20 +66,16 @@ export async function POST(request: NextRequest) {
 
   // Which days this upload actually covers, so staff can see straight away
   // whether the day they came here to look at is now available — the whole
-  // reason they uploaded. Read back from the account's stored lines rather
-  // than from the file, so an export whose range overlaps one already loaded
-  // reports what is really there.
-  const range = await prisma.statementLine.aggregate({
-    where: { account, sourceFile: checked.file.name },
-    _min: { postedAt: true },
-    _max: { postedAt: true },
-  });
-
+  // reason they uploaded. Read from the file's own lines: a line already
+  // stored keeps the sourceFile it first arrived with, so asking the database
+  // which rows carry this filename would report nothing for a file
+  // re-uploaded unchanged, which is exactly when staff most want to be told
+  // the day is there.
   return NextResponse.json({
     account,
     branch,
-    lines: stored,
-    from: range._min.postedAt?.toISOString() ?? null,
-    to: range._max.postedAt?.toISOString() ?? null,
+    lines: stored.lines,
+    from: stored.from?.toISOString() ?? null,
+    to: stored.to?.toISOString() ?? null,
   });
 }

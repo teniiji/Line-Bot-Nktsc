@@ -153,7 +153,7 @@ export async function POST(
   // daily view in later.
   let lines = 0;
   try {
-    lines = await storeStatementLines(rows, account, branch, checked.file.name);
+    lines = (await storeStatementLines(rows, account, branch, checked.file.name)).lines;
   } catch (err) {
     console.error("statement lines not stored", err);
   }

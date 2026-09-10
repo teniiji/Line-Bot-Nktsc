@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { DepositLine, SlipRecord, reconcileDay } from "../lib/dailyReconcile";
+import {
+  DepositLine,
+  SlipRecord,
+  honourLiveLinks,
+  reconcileDay,
+} from "../lib/dailyReconcile";
 
 const deposit = (over: Partial<DepositLine> = {}): DepositLine => ({
   id: "d1",
@@ -389,5 +394,76 @@ describe("reconcileDay", () => {
       expect(result.matched[0].basis).toBe("amount");
       expect(result.matched[0].minutesApart).toBeNull();
     });
+  });
+});
+
+describe("honourLiveLinks", () => {
+  // 10 Sep 2026, นางสาวศิราณี วงศาสนธิ์ 900403. ฿10,000 arrived at 08:19:54
+  // and a person had already recorded it from that very line — and the tab
+  // showed the money under "รู้เจ้าของ ไม่มีสลิป" and the transaction under
+  // "มีสลิปแต่ไม่เจอเงินเข้า", the same payment on both lists, because
+  // re-uploading the statement had given the line a new id.
+  const HER_ACCOUNT = "4883387836";
+  const herDeposit = deposit({
+    id: "line-new",
+    amount: 10000,
+    postedAt: new Date("2026-09-10T08:19:54.000Z"),
+    senderAccount: HER_ACCOUNT,
+    description: `TR fr ${HER_ACCOUNT}`,
+  });
+  const herSlip = slip({
+    id: "expense-10000",
+    amount: 10000,
+    date: new Date("2026-09-10T00:00:00.000Z"),
+    memberNumber: "900403",
+    memberFullName: "นางสาวศิราณี วงศาสนธิ์",
+    category: "ฝากเงิน",
+    statementLineId: "line-deleted",
+  });
+  const hers = new Map([[HER_ACCOUNT, "900403"]]);
+
+  it("strands the payment on two lists if the dead link is honoured", () => {
+    // The bug as it stood, kept so the fix cannot be undone quietly.
+    const result = reconcileDay([herDeposit], [herSlip], hers);
+    expect(result.matched).toHaveLength(0);
+    expect(result.slipsWithoutMoney).toHaveLength(1);
+    expect(result.depositsWithoutSlip).toHaveLength(1);
+  });
+
+  it("pairs it once the link is known to point at nothing", () => {
+    const result = reconcileDay(
+      [herDeposit],
+      honourLiveLinks([herSlip], new Set(["line-new"])),
+      hers
+    );
+    expect(result.matched).toHaveLength(1);
+    // Down a level of confidence, honestly: the pairing is inferred now,
+    // because the record of a person having decided it is gone.
+    expect(result.matched[0].basis).toBe("account");
+    expect(result.slipsWithoutMoney).toHaveLength(0);
+    expect(result.depositsWithoutSlip).toHaveLength(0);
+  });
+
+  it("leaves a live link alone, wherever its line is", () => {
+    // A slip at the edge of the window is linked to a line just outside it.
+    // Reading that as dead would let it be inferred onto somebody else's
+    // payment.
+    const [kept] = honourLiveLinks([herSlip], new Set(["line-deleted"]));
+    expect(kept.statementLineId).toBe("line-deleted");
+    expect(kept).toBe(herSlip);
+  });
+
+  it("still refuses to let a live link pair with any other line", () => {
+    const result = reconcileDay(
+      [herDeposit],
+      honourLiveLinks([herSlip], new Set(["line-deleted"])),
+      hers
+    );
+    expect(result.matched).toHaveLength(0);
+  });
+
+  it("has nothing to say about a slip that was never linked", () => {
+    const plain = slip();
+    expect(honourLiveLinks([plain], new Set())[0]).toBe(plain);
   });
 });
