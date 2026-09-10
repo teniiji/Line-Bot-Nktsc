@@ -142,6 +142,35 @@ export default function Dashboard() {
     }
   };
 
+  // Recording a payment from the bank line it arrived on, rather than from
+  // what somebody typed. The amount and the date are read from the stored
+  // line by the route itself and never taken from here — what arrived and
+  // when is the bank's statement, not something a browser gets to assert.
+  const handleRecordFromLine = async (lineId: string, data: ExpenseFormData) => {
+    const res = await fetch(`/api/statement-lines/${lineId}/record`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        memberNumber: data.memberNumber,
+        memberName: data.memberFullName,
+        category: data.category,
+        note: data.description,
+      }),
+    });
+
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error(body.error || "บันทึกรายการไม่สำเร็จ");
+    }
+
+    setEditingExpense(null);
+    if (page === 1) {
+      await fetchExpenses();
+    } else {
+      setPage(1);
+    }
+  };
+
   const handleConfirmDelete = async () => {
     if (!pendingDelete) return;
     const id = pendingDelete.id;
@@ -244,6 +273,7 @@ export default function Dashboard() {
                 <ExpenseForm
                   editingExpense={editingExpense}
                   onSave={handleSave}
+                  onRecordFromLine={handleRecordFromLine}
                   onCancelEdit={() => setEditingExpense(null)}
                 />
 
