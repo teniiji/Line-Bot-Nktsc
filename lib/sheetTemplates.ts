@@ -36,12 +36,30 @@ export const MEMBER_ROSTER_TEMPLATE: SheetTemplate = {
   fileName: "nktsc-template-members.xlsx",
   sheetName: "ทะเบียนสมาชิก",
   note: TEMPLATE_NOTE,
-  header: ["เลขสมาชิก", "ชื่อ-สกุล", "สังกัด", "เลขบัตรประชาชน", "เบอร์โทร"],
+  // The account column belongs here as well as in its own template: staff
+  // keep all of this in one spreadsheet, and asking them to split it into two
+  // files to load it is asking them to do the join by hand. Leaving it blank
+  // is fine — a column the file does not fill changes nothing.
+  header: ["เลขสมาชิก", "ชื่อ-สกุล", "สังกัด", "เลขบัตรประชาชน", "เบอร์โทร", "เลขที่บัญชี"],
   examples: [
-    ["10152", "(ตัวอย่าง) นายนิพนธ์ จำวงศ์", "บำนาญ อ.เมือง นค.", "3430100128262", "0807597560"],
-    ["10175", "(ตัวอย่าง) นางวิไลลักษณ์ ตระกูลพรพงศ์", "สพป.นค. เขต 1", "3430100123188", "0844050754"],
+    [
+      "10152",
+      "(ตัวอย่าง) นายนิพนธ์ จำวงศ์",
+      "บำนาญ อ.เมือง นค.",
+      "3430100128262",
+      "0807597560",
+      "982-5-07219-9",
+    ],
+    [
+      "10175",
+      "(ตัวอย่าง) นางวิไลลักษณ์ ตระกูลพรพงศ์",
+      "สพป.นค. เขต 1",
+      "3430100123188",
+      "0844050754",
+      "9825072188",
+    ],
   ],
-  widths: [12, 32, 24, 18, 14],
+  widths: [12, 32, 24, 18, 14, 18],
 };
 
 export const BANK_ACCOUNT_TEMPLATE: SheetTemplate = {

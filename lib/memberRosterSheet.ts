@@ -28,6 +28,7 @@
 //   cooperative maintains for the purpose, not for that one.
 
 import { memberNumberKey } from "./memberNumber";
+import { normalizeAccountNumber } from "./statementReconcile";
 import { parseNationalId, parsePhone } from "./identityFormat";
 
 // Matched as substrings against the header cell with spaces removed, so
@@ -37,6 +38,10 @@ const NAME_HEADINGS = ["ชื่อสมาชิก", "ชื่อ-สกุ
 const UNIT_HEADINGS = ["สังกัด", "หน่วยงาน", "หน่วยคุม", "unit"];
 const NATIONAL_ID_HEADINGS = ["เลขบัตรประชาชน", "เลขประจำตัวประชาชน", "บัตรประชาชน", "nationalid"];
 const PHONE_HEADINGS = ["เบอร์โทร", "โทรศัพท์", "เบอร์ติดต่อ", "phone", "tel"];
+// The bank account the member transfers from. It lives in its own table and
+// has its own import, but staff keep both in one spreadsheet — asking them to
+// split it into two files to load it is asking them to do the join by hand.
+const ACCOUNT_HEADINGS = ["เลขบัญชี", "เลขที่บัญชี", "บัญชีธนาคาร", "accountno", "accountnumber"];
 
 // These sheets often open with a title and a blank line or two; past this it
 // is not a header, it is a data row that happens to contain the word.
@@ -48,6 +53,9 @@ export interface MemberRosterRow {
   unitName: string | null;
   nationalId: string | null;
   phone: string | null;
+  // Digits only, punctuation stripped, so "982-5-07219-9" and "9825072199"
+  // are the same account — the same normalisation the dedicated import uses.
+  accountNumber: string | null;
   // Position in the rows handed to this function, counting from 1. Close to
   // the spreadsheet's own row number but not promised to equal it — the
   // reader drops fully empty rows first — so every problem names the member
@@ -73,6 +81,7 @@ export interface MemberRosterSheet {
     unit: boolean;
     nationalId: boolean;
     phone: boolean;
+    account: boolean;
   };
 }
 
@@ -125,6 +134,7 @@ export function parseMemberRosterSheet(rows: unknown[][]): MemberRosterSheet {
   const unitColumn = findColumn(header, UNIT_HEADINGS);
   const nationalIdColumn = findColumn(header, NATIONAL_ID_HEADINGS);
   const phoneColumn = findColumn(header, PHONE_HEADINGS);
+  const accountColumn = findColumn(header, ACCOUNT_HEADINGS);
 
   const parsed: MemberRosterRow[] = [];
   const problems: MemberRosterSheetProblem[] = [];
@@ -170,12 +180,24 @@ export function parseMemberRosterSheet(rows: unknown[][]): MemberRosterSheet {
       });
     }
 
+    // An account cell with no digits in it at all is a note, a dash, or a
+    // typo — reported rather than stored as an account nobody can match.
+    const accountRaw = accountColumn === -1 ? "" : cellText(row[accountColumn]);
+    const accountNumber = normalizeAccountNumber(accountRaw);
+    if (accountRaw && !accountNumber) {
+      problems.push({
+        rowNumber,
+        reason: `เลขสมาชิก ${memberRaw}: เลขบัญชี "${accountRaw}" ไม่มีตัวเลขเลย — ข้ามช่องนี้ไว้`,
+      });
+    }
+
     parsed.push({
       memberNumber: memberNumberKey(memberRaw) ?? memberRaw,
       memberName: nameRaw,
       unitName: unitColumn === -1 ? null : cellText(row[unitColumn]) || null,
       nationalId,
       phone,
+      accountNumber,
       rowNumber,
     });
   }
@@ -188,6 +210,7 @@ export function parseMemberRosterSheet(rows: unknown[][]): MemberRosterSheet {
       unit: unitColumn !== -1,
       nationalId: nationalIdColumn !== -1,
       phone: phoneColumn !== -1,
+      account: accountColumn !== -1,
     },
   };
 }

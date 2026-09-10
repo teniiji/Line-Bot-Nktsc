@@ -28,6 +28,7 @@ describe("the member roster template", () => {
       unit: true,
       nationalId: true,
       phone: true,
+      account: true,
     });
   });
 

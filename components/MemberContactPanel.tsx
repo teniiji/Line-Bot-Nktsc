@@ -15,12 +15,17 @@ interface ImportResult {
   updated?: number;
   filledNationalId?: number;
   filledPhone?: number;
+  boundAccounts?: number;
+  repointedAccounts?: number;
+  roundsRematched?: number;
   blankRows?: number;
-  columns?: { unit: boolean; nationalId: boolean; phone: boolean };
+  columns?: { unit: boolean; nationalId: boolean; phone: boolean; account: boolean };
   problems?: { rowNumber: number; reason: string }[];
   problemCount?: number;
   conflicts?: { memberNumber: string; names: string[] }[];
   conflictCount?: number;
+  accountConflicts?: { accountNumber: string; memberNumbers: string[] }[];
+  accountConflictCount?: number;
 }
 
 const PAGE_SIZE = 20;
@@ -192,7 +197,9 @@ export default function MemberContactPanel() {
           </p>
           <p className="text-xs text-slate-500 mt-1">
             <strong>นำเข้าจากไฟล์</strong> ได้เลย — ระบบหาคอลัมน์จาก<strong>ชื่อหัวตาราง</strong>
-            (เลขสมาชิก, ชื่อ, สังกัด, เลขบัตรประชาชน, เบอร์โทร) อยู่คอลัมน์ไหนก็ได้ ไม่ยึดตำแหน่ง ·
+            (เลขสมาชิก, ชื่อ, สังกัด, เลขบัตรประชาชน, เบอร์โทร, <strong>เลขที่บัญชี</strong>)
+            อยู่คอลัมน์ไหนก็ได้ ไม่ยึดตำแหน่ง · ใส่เลขที่บัญชีมาในไฟล์เดียวกันได้เลย
+            ระบบจะผูกเข้าทะเบียนเลขบัญชีให้เอง ไม่ต้องนำเข้าสองรอบ ·
             <strong>เพิ่มและอัปเดตเท่านั้น ไม่ลบใคร</strong> คนที่ไม่มีในไฟล์จะไม่ถูกแตะ ·
             ช่องที่ไฟล์ไม่มีจะไม่ทับข้อมูลเดิม · เลขบัตรที่ไม่ครบ 13 หลักหรือเบอร์ที่ผิดรูปแบบจะถูกข้ามและรายงานให้ดู
             ไม่เดาแทน · <strong>ไม่แตะการเชื่อมต่อ LINE เด็ดขาด</strong> เพราะเป็นสิ่งที่ระบบใช้กันการสวมสิทธิ์
@@ -315,6 +322,24 @@ export default function MemberContactPanel() {
               ) : null}
             </p>
           )}
+          {importResult.boundAccounts || importResult.repointedAccounts ? (
+            <p className="mt-1">
+              ผูกเลขบัญชีใหม่ <strong className="num">{importResult.boundAccounts}</strong> บัญชี
+              {importResult.repointedAccounts ? (
+                <>
+                  {" "}
+                  · <strong className="num">ย้าย {importResult.repointedAccounts}</strong> บัญชีไปสมาชิกคนใหม่
+                </>
+              ) : null}
+              {importResult.roundsRematched ? (
+                <>
+                  {" "}
+                  · คำนวณรอบเทียบยอดใหม่ให้{" "}
+                  <strong className="num">{importResult.roundsRematched}</strong> รอบ
+                </>
+              ) : null}
+            </p>
+          ) : null}
           {/* Said plainly, because "why did nothing get filled in" is
               otherwise unanswerable from the screen. */}
           {importResult.columns && (
@@ -323,11 +348,27 @@ export default function MemberContactPanel() {
               {importResult.columns.unit ? ", สังกัด" : ""}
               {importResult.columns.nationalId ? ", เลขบัตรประชาชน" : ""}
               {importResult.columns.phone ? ", เบอร์โทร" : ""}
+              {importResult.columns.account ? ", เลขที่บัญชี" : ""}
               {!importResult.columns.nationalId && !importResult.columns.phone
                 ? " — ไฟล์นี้ไม่มีคอลัมน์เลขบัตรและเบอร์โทร จึงไม่ได้เติมสองช่องนั้น"
                 : ""}
+              {!importResult.columns.account ? " · ไม่มีคอลัมน์เลขที่บัญชี จึงไม่ได้ผูกบัญชีให้ใคร" : ""}
             </p>
           )}
+          {importResult.accountConflictCount ? (
+            <div className="mt-2">
+              <p className="text-red-700">
+                เลขบัญชีซ้ำแต่คนละสมาชิก {importResult.accountConflictCount} เลขบัญชี:
+              </p>
+              <ul className="list-disc ml-5 text-xs text-red-700">
+                {importResult.accountConflicts?.map((c) => (
+                  <li key={c.accountNumber}>
+                    {c.accountNumber} — {c.memberNumbers.join(" / ")}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
           {importResult.conflictCount ? (
             <div className="mt-2">
               <p className="text-red-700">
