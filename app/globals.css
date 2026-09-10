@@ -27,3 +27,54 @@
     font-feature-settings: "tnum";
   }
 }
+
+/* Printing a day's report.
+ *
+ * The dashboard is one long tabbed page, so "print" without this puts the
+ * navigation, every other panel and the filter boxes on paper around the one
+ * table somebody wanted. Everything is hidden and the report alone is made
+ * visible again — visibility rather than display, because the report is
+ * nested several levels inside the page and a hidden ancestor would take it
+ * with it.
+ */
+@media print {
+  body * {
+    visibility: hidden;
+  }
+
+  .print-report,
+  .print-report * {
+    visibility: visible;
+  }
+
+  .print-report {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    padding: 0;
+  }
+
+  /* Buttons, filters and anything else there is no point printing — inside
+     the report as well as outside it. */
+  .no-print,
+  .no-print * {
+    visibility: hidden !important;
+    display: none !important;
+  }
+
+  /* A table that scrolls sideways on screen must not be cropped on paper. */
+  .print-report .overflow-x-auto {
+    overflow: visible !important;
+  }
+
+  /* Keep a row off a page boundary: half a line of somebody's payment on
+     each side of the fold is how a figure gets read twice or not at all. */
+  .print-report tr {
+    break-inside: avoid;
+  }
+
+  @page {
+    margin: 12mm;
+  }
+}
