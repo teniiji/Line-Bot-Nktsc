@@ -80,7 +80,12 @@ export function extractSenderAccount(description: string): string | null {
 
   // "004-2248282765", and the same with the bank's own trailing note
   // ("014-8872614889 Future Amount: 1500 Tran") — the account is still the
-  // run of digits after the branch code, so the note must not hide it.
+  // run of digits after the leading code, so the note must not hide it.
+  //
+  // A three-digit prefix is the paying bank's national interbank code (004 is
+  // กสิกรไทย, 014 ไทยพาณิชย์, 025 กรุงศรีอยุธยา); see lib/thaiBanks.ts, which
+  // names it on screen. Longer prefixes appear too and are not bank codes,
+  // which is why nothing here depends on the length.
   const viaBranch = description.match(/^[A-Z]?\d{3,6}-(\d{9,})(?!\d)/);
   if (viaBranch) return viaBranch[1];
 
