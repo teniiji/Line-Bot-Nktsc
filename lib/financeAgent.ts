@@ -14,6 +14,7 @@ import { buildSystemPrompt } from "./agent/prompts";
 import { isAcknowledgementOnly, closingNote } from "./closingReply";
 import { recentReplyNote } from "./recentReply";
 import { messageHintNote } from "./messageHints";
+import { quotedMessageNote } from "./quotedMessage";
 import {
   loadLineUser,
   loadAllPending,
@@ -22,6 +23,7 @@ import {
   loadDisabledRequirements,
   loadRecentAction,
   loadPreviousReply,
+  loadQuotedMessage,
   computeNextRequirement,
   computeServiceRequirement,
   computeLookupRequirement,
@@ -69,7 +71,11 @@ export async function runFinanceAgent(
   lineUserId: string,
   slipImageUrlPromise: Promise<string | null> = Promise.resolve(null),
   slipImageHash: string | null = null,
-  slipIsPdf: boolean = false
+  slipIsPdf: boolean = false,
+  // The id of the message this one was sent as a reply to, straight off the
+  // webhook event — null on the great majority of messages, which quote
+  // nothing.
+  quotedMessageId: string | null = null
 ): Promise<FinanceAgentReply> {
   // Decided before the loads so the recent-action lookup joins them in the
   // same round trip instead of adding a second one — and is skipped entirely
@@ -77,7 +83,7 @@ export async function runFinanceAgent(
   const messageText = plainTextOf(userContent);
   const isAcknowledgement = messageText !== null && isAcknowledgementOnly(messageText);
 
-  const [lineUser, queuedPending, pendingService, pendingLookup, knowledgeText, formLinksData, disabledRequirements, recentAction, previousReply] =
+  const [lineUser, queuedPending, pendingService, pendingLookup, knowledgeText, formLinksData, disabledRequirements, recentAction, previousReply, quoted] =
     await Promise.all([
       loadLineUser(lineUserId),
       loadAllPending(lineUserId),
@@ -88,6 +94,11 @@ export async function runFinanceAgent(
       loadDisabledRequirements(),
       isAcknowledgement ? loadRecentAction(lineUserId) : Promise.resolve(null),
       loadPreviousReply(lineUserId),
+      // Joins the same round trip, and is skipped entirely on a message that
+      // quotes nothing — nearly all of them.
+      quotedMessageId
+        ? loadQuotedMessage(lineUserId, quotedMessageId)
+        : Promise.resolve(null),
     ]);
 
   // The caller kicks off the Blob upload before calling this function but
@@ -127,6 +138,10 @@ export async function runFinanceAgent(
     needsCategory: pending !== null && !pending.category,
   });
 
+  // The message the member tapped ตอบกลับ on — the subject of the sentence
+  // they just typed, which the model has no other way of seeing.
+  const quotedNote = quotedMessageNote(quotedMessageId !== null, quoted);
+
   const { base, dynamic } = buildSystemPrompt(
     lineUser,
     pending,
@@ -138,7 +153,8 @@ export async function runFinanceAgent(
     queuedPending.length,
     closing,
     previousNote,
-    hints
+    hints,
+    quotedNote
   );
   // A cache breakpoint on the static base block caches everything before it
   // in the request (all tool definitions + this base system prompt), since

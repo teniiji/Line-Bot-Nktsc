@@ -3,12 +3,14 @@
 // request / member-number lookup) is pending, and — via the
 // computeXXXRequirement functions — which single piece of information the
 // bot should ask for next. Split out of lib/financeAgent.ts.
+import { Prisma } from "@prisma/client";
 import { prisma } from "../prisma";
 import { namesLikelyMatch } from "../nameMatch";
 import { CATEGORIES } from "../categories";
 import { LOAN_TYPES } from "../loanTypes";
 import type { RecentAction } from "../closingReply";
 import { quoteReply, type PreviousReply } from "../recentReply";
+import { quotableText, QUOTED_RETENTION_MS, type QuotedMessage } from "../quotedMessage";
 import type { LastReply, ReplyKind } from "../replyKind";
 import {
   isFeatureEnabled,
@@ -418,4 +420,71 @@ export async function loadLastReplyKind(lineUserId: string): Promise<LastReply |
   });
   if (!user?.lastReplyKind || !user.lastReplyAt) return null;
   return { kind: user.lastReplyKind as ReplyKind, at: user.lastReplyAt };
+}
+
+
+// Both sides of the chat, kept under LINE's message ids so a quote can be
+// read back — see lib/quotedMessage.ts. Every write here is best-effort:
+// failing to remember a line is a worse answer later, never a reason to fail
+// the message being handled now.
+export async function rememberMessage(
+  messageId: string,
+  lineUserId: string,
+  text: string,
+  fromBot: boolean
+): Promise<void> {
+  const kept = quotableText(text);
+  if (!kept) return;
+  await prisma.quotableMessage
+    .create({ data: { id: messageId, lineUserId, text: kept, fromBot } })
+    .catch((err) => {
+      // A retried delivery of the same event reaches here twice; the id is
+      // LINE's, so the second insert is a duplicate of a row that already
+      // says the right thing.
+      if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === "P2002") return;
+      console.error("[state] could not remember a message:", err);
+    });
+}
+
+// The ids LINE hands back from replyMessage, one per message actually sent.
+// Only one is ever sent today, but the API is a list and the member can quote
+// any of them.
+export async function rememberSentMessages(
+  messageIds: string[],
+  lineUserId: string,
+  text: string
+): Promise<void> {
+  await Promise.all(messageIds.map((id) => rememberMessage(id, lineUserId, text, true)));
+}
+
+// The quoted message's text, or null when nothing was kept for that id — a
+// staff reply typed in chat.line.biz (never seen by this application), or one
+// older than the retention window.
+//
+// Scoped to the member who is quoting: the id comes from a webhook payload,
+// and one member's chat must not be readable from another's message.
+export async function loadQuotedMessage(
+  lineUserId: string,
+  quotedMessageId: string
+): Promise<QuotedMessage | null> {
+  const row = await prisma.quotableMessage
+    .findUnique({
+      where: { id: quotedMessageId },
+      select: { lineUserId: true, text: true, fromBot: true },
+    })
+    .catch((err) => {
+      console.error("[state] could not read the quoted message:", err);
+      return null;
+    });
+  if (!row || row.lineUserId !== lineUserId) return null;
+  return { text: row.text, fromBot: row.fromBot };
+}
+
+// Fire-and-forget, called from the webhook's opportunistic prune. Nothing
+// else ever deletes these rows.
+export async function pruneQuotableMessages(): Promise<void> {
+  const cutoff = new Date(Date.now() - QUOTED_RETENTION_MS);
+  await prisma.quotableMessage
+    .deleteMany({ where: { createdAt: { lt: cutoff } } })
+    .catch((err) => console.error("[state] quotable-message prune failed:", err));
 }

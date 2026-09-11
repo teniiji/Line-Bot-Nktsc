@@ -161,6 +161,26 @@ model ProcessedLineEvent {
   createdAt DateTime @default(now())
 }
 
+// A text message in a member's chat, kept under LINE's own message id purely
+// so that a later message quoting it can be read back — LINE sends only the
+// quoted message's id, never its text. Holds both sides: the member's
+// messages and the bot's replies (the reply API returns the ids of what it
+// just sent). Truncated on write and pruned on a fortnight's clock — see
+// lib/quotedMessage.ts, which explains why this is a rolling window for
+// reading one line back, not a chat archive.
+model QuotableMessage {
+  // LINE's message id, which is exactly the value that arrives as
+  // quotedMessageId on a message quoting this one.
+  id         String   @id
+  lineUserId String
+  fromBot    Boolean
+  text       String
+  createdAt  DateTime @default(now())
+
+  @@index([lineUserId])
+  @@index([createdAt])
+}
+
 // An in-progress cooperative transaction the agent is still collecting
 // required info for (member identity, transfer slip, and — for ชำระหนี้ —
 // loan type, or — for ฝากเงิน — the deposit account number) across
