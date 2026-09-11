@@ -16,6 +16,7 @@ import {
 } from "@/lib/types";
 
 import ConfirmDialog from "@/components/ConfirmDialog";
+import PanelHelp from "@/components/PanelHelp";
 import { describeDeductionPeriod } from "@/lib/deductionPeriod";
 import { downloadStatementMembersCsv } from "@/lib/csv";
 import { EXCLUDE_REASONS } from "@/lib/statementSlipHints";
@@ -457,14 +458,18 @@ export default function StatementReconcilePanel() {
       <div className="flex items-start justify-between gap-3 px-4 py-3 border-b border-slate-100">
         <div>
           <h2 className="font-semibold">เทียบ Statement (ใครโอนมาแล้วบ้าง)</h2>
-          <p className="text-xs text-slate-500 mt-1">
-            อัปโหลด 2 อย่างต่อรอบ: <strong>รายชื่อหักไม่ได้</strong> (ไฟล์ "รวม_ไม่ได้" — คอลัมน์ E
-            ยอดหักไม่ได้, คอลัมน์ I เลขบัญชี) และ <strong>Statement ธนาคาร</strong> ของบัญชี 413
-            หนองคาย / 447 บึงกาฬ — ระบบจับคู่รายการ "TR fr เลขบัญชี" กับสมาชิกให้เอง
-            แล้วสรุปว่าใครชำระครบ/เกิน/ยังค้าง — <strong>Statement อัปโหลดได้หลายไฟล์ต่อบัญชี</strong>{" "}
-            (คนละช่วงวันที่) ระบบจะรวมกันให้ ไม่ทับของเดิม และรายการที่โหลดไว้แล้วจะไม่ถูกนับซ้ำ
-            ต่อให้อัปโหลดไฟล์เดิมหรือช่วงวันที่คาบเกี่ยวกัน
-          </p>
+          <PanelHelp summary="อัปโหลดรายชื่อหักไม่ได้ + Statement ธนาคารต่อรอบ แล้วระบบจับคู่รายการโอนกับสมาชิกให้เอง ว่าใครชำระครบ/เกิน/ยังค้าง">
+            <p>
+              ไฟล์ที่ต้องใช้: <strong>รายชื่อหักไม่ได้</strong> (ไฟล์ "รวม_ไม่ได้" — คอลัมน์ E
+              ยอดหักไม่ได้, คอลัมน์ I เลขบัญชี) และ <strong>Statement ธนาคาร</strong> ของบัญชี 413
+              หนองคาย / 447 บึงกาฬ — ระบบจับคู่รายการ "TR fr เลขบัญชี" กับสมาชิกให้เอง
+            </p>
+            <p>
+              <strong>Statement อัปโหลดได้หลายไฟล์ต่อบัญชี</strong> (คนละช่วงวันที่) ระบบจะรวมกันให้
+              ไม่ทับของเดิม และรายการที่โหลดไว้แล้วจะไม่ถูกนับซ้ำ
+              ต่อให้อัปโหลดไฟล์เดิมหรือช่วงวันที่คาบเกี่ยวกัน
+            </p>
+          </PanelHelp>
         </div>
         <button
           onClick={() => setShowNew((v) => !v)}
