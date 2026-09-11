@@ -2,6 +2,7 @@
 import { CATEGORIES } from "../categories";
 import { LOAN_TYPES } from "../loanTypes";
 import { formatAmount } from "../format";
+import { cooperativeToday } from "../cooperativeClock";
 import {
   computeNextRequirement,
   computeServiceMissing,
@@ -48,7 +49,10 @@ export function buildSystemPrompt(
   // read immediately before their message.
   quotedNote: string = ""
 ): { base: string; dynamic: string } {
-  const today = new Date().toISOString().slice(0, 10);
+  // The date in Thailand, not on the server — Vercel runs in UTC, so between
+  // midnight and seven in the morning the bot was telling members yesterday's
+  // date, and dating anything it recorded to yesterday with it.
+  const today = cooperativeToday();
 
   // A member who sends two slips in a row must not be told only one arrived —
   // silence about the other is exactly what makes somebody send it again, or

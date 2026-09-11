@@ -15,6 +15,7 @@ import { STATEMENT_ACCOUNTS } from "@/lib/statementReconcile";
 import { branchesIn, missingBranches, summariseByAccount } from "@/lib/dailyAccountSummary";
 import { flowByAccount, flowTotal, inByCategory } from "@/lib/statementTotals";
 import { bankFromDescription } from "@/lib/thaiBanks";
+import { cooperativeToday, shiftDay } from "@/lib/cooperativeClock";
 import {
   depositHaystack,
   filterBy,
@@ -31,13 +32,11 @@ import {
   DailyStatementRow,
 } from "@/lib/types";
 
-const todayISO = () => new Date().toISOString().slice(0, 10);
-
-const shiftDay = (date: string, days: number) => {
-  const shifted = new Date(`${date}T00:00:00.000Z`);
-  shifted.setUTCDate(shifted.getUTCDate() + days);
-  return shifted.toISOString().slice(0, 10);
-};
+// The day it is at the cooperative, not on this device: the tab opens on
+// today's money, and a browser reading UTC opens on yesterday's until seven in
+// the morning. shiftDay is the same day arithmetic this file had, moved into
+// lib/cooperativeClock.ts so every preset in the dashboard agrees on it.
+const todayISO = () => cooperativeToday();
 
 const Money = ({ value, className = "" }: { value: number; className?: string }) => (
   <span className={`num whitespace-nowrap ${className}`}>{formatAmount(value)}</span>

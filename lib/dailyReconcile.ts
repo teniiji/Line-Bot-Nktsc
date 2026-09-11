@@ -113,6 +113,12 @@ export interface DayReconciliation {
 // payments that day.
 const sameAmount = (a: number, b: number) => Math.abs(a - b) < 0.01;
 
+// Which calendar day a timestamp falls on. Both sides carry the same clock —
+// the bank's wall clock in UTC for a posting, the cooperative's own for a
+// transaction (see lib/cooperativeClock.ts) — so one reading serves for both.
+// While a slip's date was still a real instant, every slip filed after
+// midnight came out a day behind here, and its pairing was ranked as though
+// the member had sent it the day before the money arrived.
 const dayOf = (date: Date) => Math.floor(date.getTime() / DAY_MS);
 
 // Minutes between the slip's printed clock and the bank's posting, when both
