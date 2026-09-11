@@ -10,7 +10,10 @@ import {
   PENDING_TRANSACTION_EXPIRY_MS,
   PENDING_TRANSACTION_RETENTION_MS,
   loadLastReplyKind,
+  pruneQuotableMessages,
   recordReply,
+  rememberMessage,
+  rememberSentMessages,
 } from "@/lib/agent/state";
 import { alwaysSilent, repeatsLastReply, type ReplyKind } from "@/lib/replyKind";
 import { ensureLineUser } from "@/lib/lineUsers";
@@ -244,6 +247,10 @@ async function handleEvent(event: webhook.Event, origin: string): Promise<void> 
     prisma.conversationLock
       .deleteMany({ where: { expiresAt: { lt: new Date() } } })
       .catch((err) => console.error("[line/webhook] conversation-lock prune failed:", err));
+
+    // The chat lines kept so a quoted message can be read back. Nothing else
+    // ever deletes them, and a fortnight is as far back as one is read.
+    pruneQuotableMessages();
   }
 
   // In-flight member-number lookups hold a typed national ID, and
@@ -325,6 +332,21 @@ async function handleEvent(event: webhook.Event, origin: string): Promise<void> 
     }
   }
 
+  // What the member tapped ตอบกลับ on, if anything. LINE sends only the
+  // quoted message's id — the text is looked up from what the bot kept of
+  // this conversation (lib/quotedMessage.ts). Text messages are the only
+  // ones the bot handles that can carry a quote.
+  const incomingText =
+    event.message.type === "text" ? (event.message as webhook.TextMessageContent) : null;
+  const quotedMessageId = incomingText?.quotedMessageId ?? null;
+
+  // Kept before the reply is even attempted, so it is there to be quoted
+  // later whatever happens to this turn — including the turns the bot
+  // deliberately stays silent on. Best-effort inside; never blocks.
+  if (incomingText) {
+    rememberMessage(event.message.id, lineUserId, incomingText.text, false);
+  }
+
   let replyText: string;
   let quickReplies: string[] = [];
   let replyKind: ReplyKind = null;
@@ -342,7 +364,8 @@ async function handleEvent(event: webhook.Event, origin: string): Promise<void> 
       lineUserId,
       slipImageUrlPromise,
       slipImageHash,
-      slipIsPdf
+      slipIsPdf,
+      quotedMessageId
     );
     replyText = result.text;
     quickReplies = result.quickReplies;
@@ -402,13 +425,20 @@ async function handleEvent(event: webhook.Event, origin: string): Promise<void> 
       : undefined;
 
   try {
-    await lineClient.replyMessage({
+    const sent = await lineClient.replyMessage({
       replyToken: event.replyToken,
       messages: [{ type: "text", text: replyText, ...(quickReply ? { quickReply } : {}) }],
     });
     // Only once it has actually gone out: a reply the member never received
     // must not be quoted back to the model as one they are looking at.
     await recordReply(lineUserId, replyText, replyKind);
+    // And under the ids LINE just assigned it, so that if the member taps
+    // ตอบกลับ on this very message the bot can read back what it asked.
+    await rememberSentMessages(
+      (sent?.sentMessages ?? []).map((message) => message.id),
+      lineUserId,
+      replyText
+    );
   } catch (err) {
     console.error("[line/webhook] LINE reply error:", err);
   }

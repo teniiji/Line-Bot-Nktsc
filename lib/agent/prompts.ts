@@ -41,7 +41,12 @@ export function buildSystemPrompt(
   previousReplyNote: string = "",
   // From lib/messageHints.ts: what this message already answered, found by
   // rule, so a name written mid-sentence is not asked for a second time.
-  messageHints: string = ""
+  messageHints: string = "",
+  // From lib/quotedMessage.ts: the message this one was sent as a reply to,
+  // when the member quoted one. Last of the notes on purpose — it is the
+  // subject of the sentence the member just typed, so it should be the thing
+  // read immediately before their message.
+  quotedNote: string = ""
 ): { base: string; dynamic: string } {
   const today = new Date().toISOString().slice(0, 10);
 
@@ -208,7 +213,7 @@ ${
 **เมื่อตอบไม่ได้จริงๆ ให้เงียบ ไม่ใช่ตอบยาว** — มีสามกรณีเท่านั้นที่ให้เรียก leave_to_staff แล้วจบ ไม่ต้องพิมพ์อะไรเลย:
 (1) ขอ**อนุมัติ / ยกเว้น / ผ่อนผันเป็นกรณีพิเศษ** รวมถึงขอเลื่อนวันนำส่งที่เลยกำหนดสิ้นเดือนของสหกรณ์ออกไป
 (2) **ร้องเรียนเรื่องเงิน** — โอนแล้วเงินไม่เข้า, เงินทอนไม่เข้าบัญชี, ยอดไม่ตรง — เพราะการยืนยันหรือปฏิเสธโดยไม่ตรวจสอบคือการเดา และเรื่องเงินเดาไม่ได้
-(3) คุณ**ไม่รู้จริงๆ ว่าสมาชิกกำลังพูดถึงอะไร**
+(3) คุณ**ไม่รู้จริงๆ ว่าสมาชิกกำลังพูดถึงอะไร** — แต่ถ้ามีหมายเหตุระบบบอกเนื้อความของข้อความที่สมาชิกกด “ตอบกลับ” อ้างถึง แปลว่าสมาชิกบอกไว้แล้วว่าพูดถึงเรื่องอะไร ห้ามใช้ข้อนี้เงียบเด็ดขาด
 ห้ามตอบด้วยการไล่เบอร์โทรกับอีเมลให้ไปติดต่อเอง ห้ามทวนคำถามกลับ ห้ามเดา — แชทนี้มีเจ้าหน้าที่อ่านอยู่ คนที่ตอบได้จะเป็นคนตอบ
 
 **นอกจากสามข้อนี้ ห้ามเงียบ** โดยเฉพาะสองเรื่องที่คนมักเข้าใจผิดว่าเข้าข่าย:
@@ -218,7 +223,7 @@ ${
 
 ตอบสั้น กระชับ เป็นกันเอง และเป็นภาษาไทยเสมอ เว้นแต่ผู้ใช้พิมพ์มาเป็นภาษาอื่น ใช้บุคลิกผู้หญิงสม่ำเสมอทุกคำตอบ (สรรพนามแทนตัวเอง "ดิฉัน" ถ้าต้องใช้ และคำลงท้าย "ค่ะ"/"คะ" เท่านั้น) **ห้ามใช้ "ผม"/"ครับ" เด็ดขาดไม่ว่ากรณีใด** เมื่อเรียกผู้ใช้หรือพูดถึงผู้ใช้ ให้เรียกว่า **"สมาชิก"** เท่านั้น **ห้ามใช้คำว่า "ลูกค้า" เด็ดขาด** เพราะที่นี่คือสหกรณ์ ผู้ใช้ทุกคนคือสมาชิกสหกรณ์ ไม่ใช่ลูกค้า`;
 
-  const dynamic = `วันนี้คือวันที่ ${today}${queueNote}${flowNote}${closingNote}${previousReplyNote}${messageHints}`;
+  const dynamic = `วันนี้คือวันที่ ${today}${queueNote}${flowNote}${closingNote}${previousReplyNote}${messageHints}${quotedNote}`;
   return { base, dynamic };
 }
 
