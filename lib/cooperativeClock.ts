@@ -87,6 +87,26 @@ export function endOfMonth(day: string): string {
 }
 
 /**
+ * A real instant — a createdAt, not a transaction's date — written out as the
+ * clock in the office read at the time.
+ *
+ * Used where a message leaves the system and names a moment (a request being
+ * forwarded a second time, say). The date columns on screen are a different
+ * thing: those hold wall clock already and are rendered in UTC, see
+ * lib/format.ts.
+ */
+export function cooperativeDateTime(instant: Date): string {
+  return new Intl.DateTimeFormat("th-TH", {
+    timeZone: "Asia/Bangkok",
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(instant);
+}
+
+/**
  * The month a day falls in, as the half-open window [start, end) that a
  * database query wants.
  */

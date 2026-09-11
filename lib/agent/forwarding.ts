@@ -12,7 +12,7 @@ import {
 import { getCategoryDepartment } from "../categoryDepartments";
 import { formatAmount } from "../format";
 import { depositAccountLine } from "../depositNotice";
-import { NO_DOCUMENT } from "../documentTypes";
+import { serviceRequestMessages } from "../serviceRequestMessage";
 import { isFeatureEnabled, departmentNotifyKey } from "../featureFlags";
 import type { LineUserInfo, PendingServiceInfo } from "./types";
 
@@ -213,33 +213,22 @@ export async function forwardServiceRequest(
     return "Error: forwarding isn't configured on this system. Apologize to the user and tell them to contact the cooperative office directly instead — do not claim the request was forwarded.";
   }
 
-  const verifyMark = lineUser.verified
-    ? "✅ ยืนยันตัวตนจากทะเบียน"
-    : "⚠️ ยังไม่ยืนยัน (เลขสมาชิกไม่พบในทะเบียน — กรุณาตรวจสอบ)";
-  const documentLine =
-    pendingService.documentType === NO_DOCUMENT
-      ? ""
-      : `เอกสารที่ส่งมา: ${pendingService.documentType}\n`;
-  const text = `📋 คำขอจากสมาชิก (ผ่าน LINE Bot)\n${documentLine}แผนก: ${pendingService.department}\nคำขอ: ${pendingService.requestType}\nชื่อ-นามสกุล: ${lineUser.fullName}\nเลขสมาชิก: ${lineUser.memberNumber}\nเบอร์โทรติดต่อกลับ: ${lineUser.phone ?? "-"}\nสถานะ: ${verifyMark}`;
-
-  // imageUrl is the best-effort Blob backup of the document the member
-  // sent (null if BLOB_READ_WRITE_TOKEN isn't configured). LINE's
-  // Messaging API can only push a real photo as an "image" message (it
-  // fetches and thumbnails the URL) — a PDF isn't a valid image message,
-  // so it's sent as a plain text link instead.
-  const messages: Parameters<typeof lineClient.pushMessage>[0]["messages"] =
-    pendingService.imageUrl
-      ? pendingService.imageIsPdf
-        ? [{ type: "text", text: `${text}\n📎 ไฟล์เอกสาร (PDF): ${pendingService.imageUrl}` }]
-        : [
-            { type: "text", text },
-            {
-              type: "image",
-              originalContentUrl: pendingService.imageUrl,
-              previewImageUrl: pendingService.imageUrl,
-            },
-          ]
-      : [{ type: "text", text }];
+  // Built in lib/serviceRequestMessage.ts, which is also where a resend from
+  // the dashboard builds it: one message, whether it goes now out of the
+  // conversation or later out of what was logged.
+  const messages = serviceRequestMessages(
+    {
+      documentType: pendingService.documentType,
+      department: pendingService.department,
+      requestType: pendingService.requestType,
+      memberFullName: lineUser.fullName,
+      memberNumber: lineUser.memberNumber,
+      phone: lineUser.phone ?? null,
+      memberVerified: lineUser.verified ?? false,
+    },
+    pendingService.imageUrl,
+    pendingService.imageIsPdf
+  );
 
   // The member is only told forwarding failed if every recipient failed; a
   // partial failure is still logged so staff can spot and fix the stale

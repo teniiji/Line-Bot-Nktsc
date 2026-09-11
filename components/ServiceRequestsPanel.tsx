@@ -6,11 +6,15 @@ import ConfirmDialog from "@/components/ConfirmDialog";
 
 const PAGE_SIZE = 20;
 
+// Each label carries its own mark, so the four statuses stay four different
+// things on a washed-out screen, or to somebody who does not separate the red
+// from the green. The colours stay; they are just no longer the only thing
+// saying which is which.
 const STATUS_LABELS: Record<ServiceRequestLogEntry["status"], string> = {
-  forwarded: "ส่งต่อสำเร็จ",
-  failed: "ส่งต่อไม่สำเร็จ",
-  unconfigured: "ยังไม่ตั้งค่าผู้รับ",
-  muted: "ปิดแจ้งเตือนแผนกนี้ไว้",
+  forwarded: "✅ ส่งต่อสำเร็จ",
+  failed: "❌ ส่งต่อไม่สำเร็จ",
+  unconfigured: "⚠️ ยังไม่ตั้งค่าผู้รับ",
+  muted: "🔕 ปิดแจ้งเตือนแผนกนี้ไว้",
 };
 
 const STATUS_STYLES: Record<ServiceRequestLogEntry["status"], string> = {
@@ -37,6 +41,12 @@ export default function ServiceRequestsPanel() {
   const [loading, setLoading] = useState(true);
   const [pendingAdd, setPendingAdd] = useState<ServiceRequestLogEntry | null>(null);
   const [adding, setAdding] = useState(false);
+  // Sending a request to the officer again — see
+  // app/api/service-requests/[id]/resend/route.ts for why the causes of a
+  // failed forward are all things staff can put right.
+  const [resendingId, setResendingId] = useState<string | null>(null);
+  const [resendError, setResendError] = useState<string | null>(null);
+  const [resendNotice, setResendNotice] = useState<string | null>(null);
 
   const fetchEntries = useCallback(async () => {
     setLoading(true);
@@ -78,6 +88,31 @@ export default function ServiceRequestsPanel() {
     }
   };
 
+  const handleResend = async (entry: ServiceRequestLogEntry) => {
+    setResendingId(entry.id);
+    setResendError(null);
+    setResendNotice(null);
+    try {
+      const res = await fetch(`/api/service-requests/${entry.id}/resend`, { method: "POST" });
+      const body = await res.json().catch(() => ({}) as Record<string, unknown>);
+      if (!res.ok) {
+        // The reason is the whole value of the button: every cause has a
+        // different next step, and "ส่งซ้ำไม่สำเร็จ" on its own is a dead end.
+        setResendError(typeof body.error === "string" ? body.error : "ส่งซ้ำไม่สำเร็จ");
+        await fetchEntries();
+        return;
+      }
+      setResendNotice(
+        `ส่งซ้ำถึงเจ้าหน้าที่แล้ว (${entry.memberFullName ?? "ไม่ทราบชื่อ"}${
+          entry.requestType ? ` — ${entry.requestType}` : ""
+        })`
+      );
+      await fetchEntries();
+    } finally {
+      setResendingId(null);
+    }
+  };
+
   return (
     <div className="bg-white rounded-lg shadow">
       <div className="flex items-center justify-between gap-3 px-4 py-3 border-b border-slate-100">
@@ -94,6 +129,11 @@ export default function ServiceRequestsPanel() {
           <option value="muted">ปิดแจ้งเตือนแผนกนี้ไว้</option>
         </select>
       </div>
+
+      {resendNotice && (
+        <p className="px-4 py-2 text-sm text-green-700 bg-green-50">{resendNotice}</p>
+      )}
+      {resendError && <p className="px-4 py-2 text-sm text-red-700 bg-red-50">{resendError}</p>}
 
       {loading ? (
         <p className="text-slate-500 text-sm py-8 text-center">กำลังโหลด…</p>
@@ -167,16 +207,35 @@ export default function ServiceRequestsPanel() {
                     {entry.forwardError && (
                       <p className="text-xs text-red-700 mt-1 max-w-xs">{entry.forwardError}</p>
                     )}
+                    {/* A row that now reads "ส่งต่อสำเร็จ" still says when the
+                        member asked; this says when it actually reached the
+                        officer, which on a resent request is not the same day. */}
+                    {entry.resentAt && (
+                      <p className="text-xs text-slate-400 mt-1">
+                        ส่งซ้ำเมื่อ {formatDateTime(entry.resentAt)}
+                      </p>
+                    )}
                   </td>
                   <td className="px-4 py-2 whitespace-nowrap text-right">
-                    {!entry.memberVerified && entry.memberNumber && entry.memberFullName && (
-                      <button
-                        onClick={() => setPendingAdd(entry)}
-                        className="text-green-700 hover:underline py-1"
-                      >
-                        เพิ่มเข้าทะเบียน
-                      </button>
-                    )}
+                    <div className="flex items-center justify-end gap-3">
+                      {entry.status !== "forwarded" && (
+                        <button
+                          onClick={() => handleResend(entry)}
+                          disabled={resendingId !== null}
+                          className="text-blue-600 hover:underline py-1 disabled:opacity-50"
+                        >
+                          {resendingId === entry.id ? "กำลังส่ง…" : "ส่งซ้ำ"}
+                        </button>
+                      )}
+                      {!entry.memberVerified && entry.memberNumber && entry.memberFullName && (
+                        <button
+                          onClick={() => setPendingAdd(entry)}
+                          className="text-green-700 hover:underline py-1"
+                        >
+                          เพิ่มเข้าทะเบียน
+                        </button>
+                      )}
+                    </div>
                   </td>
                 </tr>
               ))}
