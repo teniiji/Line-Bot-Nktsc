@@ -3,7 +3,7 @@
 // what they want and which department owns it, then collects the identity and
 // callback number staff need before forwarding. Split out of ./handlers.ts.
 import { prisma } from "../prisma";
-import { DOCUMENT_TYPES, NO_DOCUMENT } from "../documentTypes";
+import { DOCUMENT_TYPES, NO_DOCUMENT, staffHelpDocumentFields } from "../documentTypes";
 import { DEPARTMENTS } from "../departments";
 import { isPlaceholderText } from "../placeholderText";
 import { detectNamedDepartment } from "../departmentMatch";
@@ -166,6 +166,11 @@ export async function requestStaffHelp(
   }
   const department = resolveDepartment(purpose, modelDepartment);
 
+  // A document already filed against this member's request is a fact about
+  // it, and reaching this tool is not evidence that it stopped being one —
+  // see staffHelpDocumentFields for the certificate that was overwritten.
+  const existing = await loadPendingServiceRequest(ctx.lineUserId);
+
   const updated = await prisma.pendingServiceRequest.upsert({
     where: { lineUserId: ctx.lineUserId },
     create: {
@@ -177,12 +182,10 @@ export async function requestStaffHelp(
       imageIsPdf: false,
     },
     update: {
-      documentType: NO_DOCUMENT,
       requestType: purpose,
       department,
-      imageUrl: null,
-      imageIsPdf: false,
       createdAt: new Date(),
+      ...staffHelpDocumentFields(existing?.documentType ?? null),
     },
   });
 
