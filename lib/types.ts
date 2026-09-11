@@ -44,6 +44,13 @@ export interface LineUser {
   fullName: string | null;
   memberNumber: string | null;
   unitName: string | null;
+  // The roster's own spelling of this member's name, joined in by
+  // memberNumber the same way unitName is. Kept apart from fullName rather
+  // than folded into it: fullName is what the member typed into the chat and
+  // is what the edit box writes back, while this is the cooperative's record
+  // — the two disagree in small ways ("หมื่นหาวงศ์" against "หมื่นหาวงค์")
+  // and it matters which one is being changed.
+  rosterName: string | null;
   // Whether MemberRoster has a row for this member number at all — which is
   // what tells "no member number yet" apart from "that number is not in the
   // roster", two blanks with completely different fixes.
