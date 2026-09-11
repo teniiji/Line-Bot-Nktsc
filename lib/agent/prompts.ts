@@ -4,7 +4,8 @@ import { LOAN_TYPES } from "../loanTypes";
 import { formatAmount } from "../format";
 import {
   computeNextRequirement,
-  computeServiceRequirement,
+  computeServiceMissing,
+  describeServiceMissing,
   computeLookupMissingFields,
 } from "./state";
 import type { QuestionRequirement } from "./state";
@@ -99,13 +100,32 @@ export function buildSystemPrompt(
       flowNote = `\n\nหมายเหตุระบบ (สำคัญ): มีธุรกรรมค้างอยู่ (${amountNote}) ข้อมูลครบแล้ว แต่ชื่อในช่อง "จาก" ของสลิป ("${pending.slipSenderName}") ไม่ตรงกับชื่อที่ลงทะเบียนไว้ ("${lineUser?.fullName}") ต้องถามสมาชิกยืนยันก่อนบันทึกว่าเป็นธุรกรรมของตัวเองจริง (อาจเป็นสามี/ภรรยา/ญาติโอนแทนให้ก็ได้ ไม่ได้แปลว่าผิดเสมอไป) ถ้าข้อความปัจจุบันของผู้ใช้ยืนยันว่าใช่ (เช่น "ใช่ค่ะ", "ใช่ของฉันเอง", "แฟนโอนให้") ให้เรียก confirm_transaction_sender ด้วย confirmed: true ถ้าปฏิเสธ (เช่น "ไม่ใช่", "ไม่ใช่ของฉัน") ให้เรียก confirm_transaction_sender ด้วย confirmed: false ถ้ายังไม่ชัดเจนให้ถามย้ำสั้นๆ ด้วยคำสุภาพ`;
     }
   } else if (pendingService) {
-    const next = computeServiceRequirement(lineUser, pendingService);
-    if (next === "purpose") {
-      flowNote = `\n\nหมายเหตุระบบ (สำคัญ): ผู้ใช้เพิ่งส่งเอกสารประกอบ (${pendingService.documentType}) มา ยังไม่ทราบว่าต้องการทำรายการอะไร ถ้าข้อความปัจจุบันของผู้ใช้ระบุว่าต้องการทำอะไร (เช่น ขอกู้เงิน, สมัครสมาชิก) ให้เรียก submit_service_purpose ทันทีด้วยข้อความนั้น พร้อมระบุ department ตามคำอธิบายพารามิเตอร์ department ของ tool นี้ (มีแผนกให้เลือกมากกว่าแค่สินเชื่อ/อื่นๆ — ถ้าผู้ใช้เอ่ยชื่อแผนกมาตรงๆ ให้ใช้แผนกนั้นเลย) ถ้ายังไม่ชัดเจนให้ถามย้ำสั้นๆ ด้วยคำสุภาพว่าต้องการทำรายการอะไร`;
-    } else if (next === "member_info") {
-      flowNote = `\n\nหมายเหตุระบบ (สำคัญ): ผู้ใช้ต้องการทำรายการ "${pendingService.requestType}" (จากเอกสาร ${pendingService.documentType}) ทราบจุดประสงค์แล้ว แต่ยังต้องขอชื่อ-นามสกุลและเลขสมาชิกก่อนจะส่งต่อให้ฝ่ายที่เกี่ยวข้อง ถ้าข้อความปัจจุบันของผู้ใช้มีชื่อ-นามสกุลและเลขสมาชิกอยู่แล้ว ให้เรียก submit_member_info ทันที ถ้ายังไม่มีให้ถามอีกครั้งสั้นๆ`;
-    } else if (next === "phone") {
-      flowNote = `\n\nหมายเหตุระบบ (สำคัญ): ผู้ใช้ต้องการทำรายการ "${pendingService.requestType}" ทราบตัวตนสมาชิกแล้ว แต่ยังต้องขอเบอร์โทรติดต่อกลับก่อนจะส่งต่อให้ฝ่ายที่เกี่ยวข้อง (เจ้าหน้าที่จะใช้โทรกลับเรื่องคำขอนี้) ถ้าข้อความปัจจุบันของผู้ใช้มีเบอร์โทรอยู่แล้ว ให้เรียก submit_contact_phone ทันที ถ้ายังไม่มีให้ถามอีกครั้งสั้นๆ ว่าขอเบอร์โทรติดต่อกลับด้วยค่ะ`;
+    const missing = computeServiceMissing(lineUser, pendingService);
+    if (missing.length > 0) {
+      const labels = describeServiceMissing(missing, lineUser);
+      const known = [
+        pendingService.requestType ? `เรื่องที่ขอ: "${pendingService.requestType}"` : "",
+        lineUser?.fullName ? `ชื่อ: "${lineUser.fullName}"` : "",
+        lineUser?.memberNumber ? `เลขสมาชิก: ${lineUser.memberNumber}` : "",
+        lineUser?.phone ? `เบอร์โทร: ${lineUser.phone}` : "",
+      ].filter(Boolean);
+      const knownNote = known.length
+        ? ` **ระบบมีข้อมูลเหล่านี้เก็บไว้แล้ว ห้ามถามซ้ำเด็ดขาด: ${known.join(" · ")}**`
+        : "";
+      flowNote =
+        `\n\nหมายเหตุระบบ (สำคัญ): ผู้ใช้ส่งเอกสารประกอบ (${pendingService.documentType}) มา ` +
+        `และกำลังรอส่งต่อให้เจ้าหน้าที่ ยังขาด ${missing.length} อย่าง: **${labels.join(" / ")}**` +
+        knownNote +
+        " **ถ้าข้อความปัจจุบันของผู้ใช้มีข้อมูลที่ขาดอยู่ ให้เรียก tool ที่เกี่ยวข้องทันที " +
+        "(submit_service_purpose / submit_member_info / submit_contact_phone) — เรียกหลายตัวในเทิร์นเดียวได้ " +
+        "ส่งเท่าที่มีก็ได้ ไม่ต้องรอให้ครบ** " +
+        "**ถ้ายังขาดอยู่ ให้ถามสิ่งที่ขาดทั้งหมดรวมในข้อความเดียว ห้ามถามทีละอย่างแยกหลายข้อความเด็ดขาด** " +
+        "เขียนให้สั้น เป็นรายการสั้นๆ บรรทัดละอย่าง ไม่ต้องอธิบายยาว " +
+        "เมื่อเรียก submit_service_purpose ให้ระบุ department ตามคำอธิบายพารามิเตอร์ department ของ tool นั้น " +
+        "(มีแผนกให้เลือกมากกว่าแค่สินเชื่อ/อื่นๆ — ถ้าผู้ใช้เอ่ยชื่อแผนกมาตรงๆ ให้ใช้แผนกนั้น) " +
+        "**ถ้าผู้ใช้ตอบสั้นหรือกำกวมเกี่ยวกับเรื่องที่ขอ (เช่น \"ถ้าปิดฉุกเฉิน\", \"กู้ได้อีกไหม\") " +
+        "ให้ตีความว่าเป็นคำตอบของเรื่องที่ขอแล้วเรียก submit_service_purpose ด้วยข้อความนั้นตามที่เขาพิมพ์มา " +
+        "อย่าถามซ้ำว่าต้องการทำรายการอะไร**";
     }
   } else if (pendingLookup) {
     const missing = computeLookupMissingFields(pendingLookup);

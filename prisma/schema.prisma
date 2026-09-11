@@ -81,6 +81,10 @@ model Expense {
   // attempted (e.g. an older row from before this feature existed).
   forwardedTo          String?
   forwardStatus        String?
+  // Why the push failed, when it did — see lib/pushError.ts. The reason
+  // already existed in a Vercel log nobody reads; this is the copy on the row
+  // a person actually looks at. Null unless forwardStatus is "failed".
+  forwardError         String?
   // The name shown in the slip's "จาก" (sender) field, if the model could
   // read one — and whether it looked like it belonged to someone other
   // than the member who claimed this transaction (lib/nameMatch.ts,
@@ -441,6 +445,8 @@ model ServiceRequestLog {
   // LINE user ID of the staff member the request was pushed to (null when
   // status is "unconfigured").
   forwardedTo    String?
+  // Why the push failed, when it did — see lib/pushError.ts.
+  forwardError   String?
   status         String
   createdAt      DateTime @default(now())
 

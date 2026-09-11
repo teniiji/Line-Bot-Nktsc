@@ -2,6 +2,7 @@
 // request or transaction notification, broadcasting LINE push messages to
 // them, and recording the outcome. Split out of lib/financeAgent.ts.
 import { prisma } from "../prisma";
+import { summarisePushFailures } from "../pushError";
 import { lineClient } from "../lineClient";
 import { pickLoanForwardTarget } from "../loanRouting";
 import {
@@ -86,7 +87,7 @@ export async function pushToPlan(
   plan: DepartmentForwardPlan,
   messages: Parameters<typeof lineClient.pushMessage>[0]["messages"],
   logLabel: string
-): Promise<{ succeededIds: string[]; failedIds: string[] }> {
+): Promise<PushOutcome> {
   const first = await pushToTargets(plan.primary, messages, logLabel);
   if (first.succeededIds.length > 0 || plan.fallback.length === 0) return first;
 
@@ -102,6 +103,7 @@ export async function pushToPlan(
   return {
     succeededIds: second.succeededIds,
     failedIds: [...first.failedIds, ...second.failedIds],
+    errors: [...first.errors, ...second.errors],
   };
 }
 
@@ -109,16 +111,28 @@ export async function pushToPlan(
 // Pushes the same messages to every target independently — one recipient's
 // push failing (blocked bot, stale ID) never stops the others from
 // receiving it. Shared by forwardServiceRequest and notifyTransactionForward.
+export interface PushOutcome {
+  succeededIds: string[];
+  failedIds: string[];
+  // What LINE said about each failure, in the order they failed. Carried out
+  // rather than only logged: the reason is the difference between "ring the
+  // office and hope" and "add the officer as a friend and it works".
+  errors: unknown[];
+}
+
 export async function pushToTargets(
   targetIds: string[],
   messages: Parameters<typeof lineClient.pushMessage>[0]["messages"],
   logLabel: string
-): Promise<{ succeededIds: string[]; failedIds: string[] }> {
+): Promise<PushOutcome> {
   const pushResults = await Promise.allSettled(
     targetIds.map((to) => lineClient.pushMessage({ to, messages }))
   );
   const succeededIds = targetIds.filter((_, i) => pushResults[i].status === "fulfilled");
   const failedIds = targetIds.filter((_, i) => pushResults[i].status === "rejected");
+  const errors = pushResults
+    .filter((result): result is PromiseRejectedResult => result.status === "rejected")
+    .map((result) => result.reason);
 
   pushResults.forEach((result, i) => {
     if (result.status === "rejected") {
@@ -126,7 +140,7 @@ export async function pushToTargets(
     }
   });
 
-  return { succeededIds, failedIds };
+  return { succeededIds, failedIds, errors };
 }
 
 
@@ -139,7 +153,8 @@ export async function logServiceRequest(
   pendingService: PendingServiceInfo,
   lineUser: LineUserInfo,
   status: "forwarded" | "failed" | "unconfigured" | "muted",
-  forwardedTo: string | null
+  forwardedTo: string | null,
+  forwardError: string | null = null
 ): Promise<void> {
   try {
     await prisma.serviceRequestLog.create({
@@ -155,6 +170,7 @@ export async function logServiceRequest(
         imageUrl: pendingService.imageUrl,
         imageIsPdf: pendingService.imageIsPdf,
         forwardedTo,
+        forwardError,
         status,
       },
     });
@@ -228,7 +244,7 @@ export async function forwardServiceRequest(
   // The member is only told forwarding failed if every recipient failed; a
   // partial failure is still logged so staff can spot and fix the stale
   // contact from the dashboard.
-  const { succeededIds, failedIds } = await pushToPlan(
+  const { succeededIds, failedIds, errors } = await pushToPlan(
     plan,
     messages,
     "forward service request"
@@ -240,7 +256,8 @@ export async function forwardServiceRequest(
       pendingService,
       lineUser,
       "failed",
-      allPlanTargets(plan).join(", ")
+      allPlanTargets(plan).join(", "),
+      summarisePushFailures(errors)
     );
     await prisma.pendingServiceRequest.delete({ where: { lineUserId } }).catch(() => {});
     return "Error: failed to forward the request. Apologize to the user and tell them to contact the cooperative office directly instead — do not claim the request was forwarded.";
@@ -347,7 +364,7 @@ export async function notifyTransactionForward(
             ]
         : [{ type: "text", text }];
 
-    const { succeededIds, failedIds } = await pushToPlan(
+    const { succeededIds, failedIds, errors } = await pushToPlan(
       plan,
       messages,
       "notify transaction forward"
@@ -365,6 +382,7 @@ export async function notifyTransactionForward(
       data: {
         forwardStatus: succeededIds.length > 0 ? "forwarded" : "failed",
         forwardedTo,
+        forwardError: succeededIds.length > 0 ? null : summarisePushFailures(errors),
       },
     });
   } catch (err) {
