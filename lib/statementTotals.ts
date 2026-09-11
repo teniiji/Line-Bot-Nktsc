@@ -45,6 +45,19 @@ export interface CategoryTotal {
   amount: number;
 }
 
+// The day's reconciliation in three figures: how much members paid in, how
+// much of it a slip accounts for, and how much is still nobody's.
+export interface DayTally {
+  depositCount: number;
+  depositAmount: number;
+  matchedCount: number;
+  matchedAmount: number;
+  // Member money with no slip behind it — the known payers and the unknown
+  // ones together, which is the list staff work through.
+  unmatchedCount: number;
+  unmatchedAmount: number;
+}
+
 const round2 = (n: number) => Math.round(n * 100) / 100;
 
 const empty = (branch: string): MoneyFlow => ({
@@ -92,6 +105,49 @@ export function flowTotal(rows: DailyStatementRow[]): MoneyFlow {
   const flow = empty("");
   for (const row of rows) add(flow, row.amount);
   return flow;
+}
+
+/**
+ * The reconciliation over exactly the rows given, so the strip at the top of
+ * the page can say the same thing as the tables under it.
+ *
+ * It used to be told by the server, over the whole window, while every table
+ * below it followed the account filter and the search box. Narrowing to one
+ * account left a heading that still counted both — a person reading ฿2.7M
+ * over a list adding up to ฿900,000, with nothing on screen saying why.
+ *
+ * "สลิป" and "ส่วนต่าง" cannot be shown here and are dropped rather than left
+ * unfiltered: a slip with no money behind it belongs to no account (that is
+ * what makes it unmatched), so there is nothing to narrow it by. What takes
+ * their place answers the same question from the statement's side — how much
+ * of this money still has no slip.
+ */
+export function dayTally(rows: DailyStatementRow[]): DayTally {
+  const tally: DayTally = {
+    depositCount: 0,
+    depositAmount: 0,
+    matchedCount: 0,
+    matchedAmount: 0,
+    unmatchedCount: 0,
+    unmatchedAmount: 0,
+  };
+  for (const row of rows) {
+    // The bank's own postings are on the statement but are not a member
+    // paying in, so they are no part of this. They keep their place in the
+    // money-in/money-out figures, which are about the account rather than
+    // about members.
+    if (row.status === "notMemberMoney") continue;
+    tally.depositCount += 1;
+    tally.depositAmount = round2(tally.depositAmount + row.amount);
+    if (row.status === "matched") {
+      tally.matchedCount += 1;
+      tally.matchedAmount = round2(tally.matchedAmount + row.amount);
+    } else {
+      tally.unmatchedCount += 1;
+      tally.unmatchedAmount = round2(tally.unmatchedAmount + row.amount);
+    }
+  }
+  return tally;
 }
 
 /**
