@@ -469,6 +469,12 @@ model ServiceRequestLog {
   forwardError   String?
   status         String
   createdAt      DateTime @default(now())
+  // When staff last sent this request to the officer again from the
+  // dashboard. Kept separate from createdAt so a row that reads "ส่งต่อสำเร็จ"
+  // still says when the member actually asked — a request forwarded a week
+  // late is a different thing from one forwarded at the time, and staff
+  // should be able to see which they are looking at.
+  resentAt       DateTime?
 
   @@index([createdAt])
   @@index([lineUserId])

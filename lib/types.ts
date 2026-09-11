@@ -107,6 +107,9 @@ export interface ServiceRequestLogEntry {
   forwardError: string | null;
   status: "forwarded" | "failed" | "unconfigured" | "muted";
   createdAt: string;
+  // When staff last sent this request to the officer again from the dashboard.
+  // Null for every request nobody had to.
+  resentAt: string | null;
 }
 
 export interface FeatureFlagEntry {

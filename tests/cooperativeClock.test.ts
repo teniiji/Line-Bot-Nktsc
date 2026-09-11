@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   COOPERATIVE_OFFSET_MS,
+  cooperativeDateTime,
   cooperativeNow,
   cooperativeToday,
   dayStart,
@@ -128,5 +129,20 @@ describe("the day a transaction lands on", () => {
     const start = dayStart("2026-09-10")!;
     const end = dayStart("2026-09-11")!;
     expect(stored >= start && stored < end).toBe(false);
+  });
+});
+
+describe("cooperativeDateTime", () => {
+  it("writes a real instant as the clock in the office read", () => {
+    // 03:23Z is 10:23 in the morning in Nong Khai — the time on the message
+    // an officer is sent, which must not be the server's idea of it.
+    expect(cooperativeDateTime(new Date("2026-09-04T03:23:00.000Z"))).toContain("10:23");
+  });
+
+  it("keeps a late-evening instant on its own day", () => {
+    // 16:30Z is 23:30 the same night, not the next morning.
+    const out = cooperativeDateTime(new Date("2026-09-04T16:30:00.000Z"));
+    expect(out).toContain("23:30");
+    expect(out).toContain("4");
   });
 });
