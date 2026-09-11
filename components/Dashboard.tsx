@@ -5,7 +5,8 @@ import { Expense, ExpenseSummary } from "@/lib/types";
 import { formatAmount } from "@/lib/format";
 import { downloadExpensesCsv } from "@/lib/csv";
 import ExpenseForm, { ExpenseFormData } from "@/components/ExpenseForm";
-import ExpenseFilters, { Filters, toIso } from "@/components/ExpenseFilters";
+import ExpenseFilters, { Filters } from "@/components/ExpenseFilters";
+import { cooperativeToday } from "@/lib/cooperativeClock";
 import ExpenseList from "@/components/ExpenseList";
 import LineUsersPanel from "@/components/LineUsersPanel";
 import MemberContactPanel from "@/components/MemberContactPanel";
@@ -55,7 +56,9 @@ export default function Dashboard() {
   const [pendingDelete, setPendingDelete] = useState<Expense | null>(null);
   const [pendingVerify, setPendingVerify] = useState<Expense | null>(null);
   const [filters, setFilters] = useState<Filters>(() => {
-    const today = toIso(new Date());
+    // The cooperative's today, not the device's — the dashboard opens on
+    // today's transactions, and before seven in the morning the two differ.
+    const today = cooperativeToday();
     return { category: "All", from: today, to: today, verified: "" };
   });
 

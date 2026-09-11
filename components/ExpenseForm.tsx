@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { CATEGORIES } from "@/lib/categories";
 import { formatAmount, formatStatementDate, formatStatementTime } from "@/lib/format";
 import { CHANNEL_LABELS } from "@/lib/statementLines";
+import { cooperativeToday } from "@/lib/cooperativeClock";
 import { Expense } from "@/lib/types";
 
 // What the member-deposits route knows about a member number: who they are,
@@ -43,7 +44,10 @@ interface ExpenseFormProps {
   onCancelEdit: () => void;
 }
 
-const todayIso = () => new Date().toISOString().slice(0, 10);
+// The form opens on today at the cooperative, not today on this device — a
+// staff member filing a payment at half past midnight is filing it for that
+// day, not the one before. See lib/cooperativeClock.ts.
+const todayIso = () => cooperativeToday();
 
 export default function ExpenseForm({
   editingExpense,

@@ -20,9 +20,13 @@ const MAX_RANGE_DAYS = 31;
 // own for that reason.
 //
 // Statement timestamps hold the bank's wall clock in UTC (see
-// parseStatementDate) and slip dates are stored as plain days, so the window
-// is built in UTC too — reading either in the server's timezone would shift
-// the boundary and move payments made near midnight into the wrong day.
+// parseStatementDate), and a transaction's date now holds that same clock
+// whoever wrote it (see lib/cooperativeClock.ts), so the window is built in
+// UTC too — reading either in the server's timezone would shift the boundary
+// and move payments made near midnight into the wrong day. Until the two were
+// made one clock, a slip the bot logged after midnight was a real instant
+// seven hours behind, and this view looked for it on the day before the one
+// the member sent it.
 export async function GET(request: NextRequest) {
   const params = request.nextUrl.searchParams;
   const dateParam = params.get("date") ?? "";

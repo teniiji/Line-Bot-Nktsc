@@ -1,4 +1,7 @@
 import { Expense, MemberBankAccountEntry, MemberRosterEntry, StatementMemberRow } from "./types";
+// The day the file was exported, in Thailand — a download at one in the
+// morning carried yesterday's date in its name.
+import { cooperativeToday } from "./cooperativeClock";
 
 const escapeCsvField = (value: string) =>
   /[",\n]/.test(value) ? `"${value.replace(/"/g, '""')}"` : value;
@@ -58,7 +61,7 @@ export function downloadExpensesCsv(expenses: Expense[]) {
 
   downloadCsv(
     [header, ...rows],
-    `nktsc-transactions-${new Date().toISOString().slice(0, 10)}.csv`
+    `nktsc-transactions-${cooperativeToday()}.csv`
   );
 }
 
@@ -154,7 +157,7 @@ export function downloadMemberRosterCsv(members: MemberRosterEntry[]) {
 
   downloadCsv(
     [header, ...rows],
-    `nktsc-members-${new Date().toISOString().slice(0, 10)}.csv`
+    `nktsc-members-${cooperativeToday()}.csv`
   );
 }
 
@@ -184,6 +187,6 @@ export function downloadBankAccountsCsv(entries: MemberBankAccountEntry[]) {
 
   downloadCsv(
     [header, ...rows],
-    `nktsc-bank-accounts-${new Date().toISOString().slice(0, 10)}.csv`
+    `nktsc-bank-accounts-${cooperativeToday()}.csv`
   );
 }

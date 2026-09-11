@@ -2,9 +2,12 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 
 // A day from the filter, as the instant it begins.
 //
-// Read in UTC, which is what ExpenseFilters already commits to — its presets
-// build "today" with toISOString().slice(0, 10). Reading them in the server's
-// timezone instead would put the two ends of one filter in different days.
+// Read in UTC, because a transaction's date holds the cooperative's wall
+// clock in UTC — the same shape as every statement timestamp, and the single
+// clock the whole system now writes (see lib/cooperativeClock.ts, which is
+// also where the presets that produce these strings get their "today"). So
+// both ends of a filter mean the day the office is in. Reading either in the
+// server's timezone would put the two ends of one filter in different days.
 function startOfDay(value: string): Date | null {
   const day = new Date(`${value}T00:00:00.000Z`);
   return Number.isNaN(day.getTime()) ? null : day;

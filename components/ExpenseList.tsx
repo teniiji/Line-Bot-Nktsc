@@ -1,7 +1,7 @@
 "use client";
 
 import { Expense } from "@/lib/types";
-import { formatAmount } from "@/lib/format";
+import { formatAmount, formatStatementDate } from "@/lib/format";
 
 interface ExpenseListProps {
   expenses: Expense[];
@@ -15,12 +15,12 @@ interface ExpenseListProps {
   onExportCsv: () => void;
 }
 
-const formatDate = (iso: string) =>
-  new Date(iso).toLocaleDateString("th-TH", {
-    year: "numeric",
-    month: "short",
-    day: "numeric",
-  });
+// A transaction's date is the cooperative's wall clock held in UTC, the same
+// shape as every statement timestamp (see lib/cooperativeClock.ts), so it is
+// read back in UTC. Read in the device's own zone, an evening transaction
+// showed tomorrow's date: the row said one day and the filter that found it
+// said another.
+const formatDate = (iso: string) => formatStatementDate(iso);
 
 function memberLabel(expense: Expense): string {
   if (expense.memberFullName) {

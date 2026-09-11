@@ -11,6 +11,7 @@ import { CATEGORIES } from "../categories";
 import { LOAN_TYPES } from "../loanTypes";
 import { formatAmount } from "../format";
 import { isPlaceholderText } from "../placeholderText";
+import { cooperativeNow } from "../cooperativeClock";
 import { namesLikelyMatch } from "../nameMatch";
 import { normalizeAccountPattern, parseSlipTime } from "../slipDetails";
 import { classifyRecipient } from "../recipientCheck";
@@ -64,7 +65,7 @@ export async function finalizeTransaction(
         amount: pending.amount,
         category: pending.category,
         description: pending.description,
-        date: pending.date ?? new Date(),
+        date: pending.date ?? cooperativeNow(),
         lineUserId,
         referenceNumber: pending.referenceNumber,
         slipImageHash: pending.slipImageHash,
@@ -238,7 +239,13 @@ export async function reportTransaction(
 
   const parsedAmount =
     typeof amount === "number" && Number.isFinite(amount) && amount > 0 ? amount : null;
-  const parsedDate = typeof date === "string" && date ? new Date(date) : new Date();
+  // The cooperative's own clock, not the server's. A slip filed at two in the
+  // morning in Nong Khai belongs to that morning; stored as a real instant it
+  // was filed against the previous day everywhere the system reads a day
+  // boundary — see lib/cooperativeClock.ts. A date the model supplies is a
+  // plain day already (no clock, no zone), so it needs no shifting.
+  const parsedDate =
+    typeof date === "string" && date ? new Date(date) : cooperativeNow();
   if (Number.isNaN(parsedDate.getTime())) {
     return "Error: invalid date.";
   }
