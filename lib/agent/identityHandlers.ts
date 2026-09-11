@@ -15,6 +15,7 @@ import {
   statedValue,
 } from "../memberIdentity";
 import { matchesIdentity } from "../memberLookup";
+import { rosterCanVerify } from "../lookupReadiness";
 import { isFeatureEnabled, MEMBER_LOOKUP_ENABLED } from "../featureFlags";
 import {
   loadAllPending,
@@ -290,6 +291,29 @@ export async function submitLookupInfo(
     return "Error: this LINE account is temporarily locked out of member-number lookup after too many failed identity checks in a row. Apologize to the user, in Thai, and tell them to contact the cooperative office directly if they need their member number now — do not ask for or store any identity info for this, and do not tell them exactly when the lockout ends.";
   }
 
+  // Asked of the roster, not of the member: can this check succeed for
+  // anybody? Where the roster carries no national ID and phone at all, the
+  // answer is no, and every member who answers honestly is told their details
+  // do not match — a sentence that calls them mistaken when the cooperative
+  // simply had nothing to compare against. See lib/lookupReadiness.ts.
+  const verifiable = await prisma.memberRoster.findMany({
+    select: { nationalId: true, phone: true },
+  });
+  if (!rosterCanVerify(verifiable)) {
+    await prisma.pendingMemberLookup.delete({ where: { lineUserId: ctx.lineUserId } }).catch(() => {});
+    return (
+      "STOP: the cooperative's roster holds no national ID and phone records, so this check cannot " +
+      "succeed for anyone and must not be attempted. Do NOT ask for the member's national ID " +
+      "number or phone number — asking for a national ID number to run a check that cannot pass " +
+      "is worse than not offering the service. In Thai, tell the member plainly that the " +
+      "cooperative's system does not yet hold the details needed to confirm their identity over " +
+      "chat, so their member number cannot be given out here, and that the office can confirm it " +
+      "for them by telephone. Make clear this is about what the system holds, NOT about anything " +
+      "the member got wrong. Give the office telephone numbers from the reference data; do not " +
+      "give an email address."
+    );
+  }
+
   const fullName =
     typeof input.fullName === "string" && input.fullName.trim() && !isPlaceholderText(input.fullName)
       ? input.fullName.trim()
@@ -367,7 +391,12 @@ export async function submitLookupInfo(
       ? " This was also their last attempt before a temporary lockout — tell them, in Thai, that member-number lookup is now paused for this account for a while after too many failed tries, and to contact the cooperative office directly if they need their member number now."
       : "";
     return (
-      "No roster record matched the identity info provided. Apologize to the user, in Thai, and tell them to contact the cooperative office directly to verify their identity and get their member number. Do not reveal which specific field (name/ID/phone) didn't match, and never guess or make up a member number." +
+      "No roster record matched the identity info provided. In Thai: say that the details could not " +
+      "be matched against the cooperative's records, and say in the same breath that this can also " +
+      "mean the cooperative's own records are incomplete — NOT that the member is mistaken, which " +
+      "is not something you know. Tell them the office can confirm their member number by " +
+      "telephone. Do not reveal which specific field (name/ID/phone) did not match, never guess or " +
+      "make up a member number, and do not give an email address." +
       lockoutNote
     );
   }

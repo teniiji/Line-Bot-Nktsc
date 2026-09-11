@@ -1,50 +1,64 @@
 import { describe, expect, it } from "vitest";
-import { defuseBareDomains, sanitiseReplyText, stripMarkdown } from "../lib/replyText";
+import {
+  DOMAIN_REMOVED,
+  EMAIL_REMOVED,
+  sanitiseReplyText,
+  stripBareDomains,
+  stripMarkdown,
+} from "../lib/replyText";
 
-const JOINER = "⁠";
-
-describe("defuseBareDomains", () => {
-  it("breaks the domain that pulled a gambling advert into the cooperative's channel", () => {
-    // The address is genuinely nktsc.org@gmail.com. The old nktsc.org website
-    // expired and is now squatted with gambling content, and LINE fetched it
-    // with no scheme in front of it.
-    const out = defuseBareDomains("อีเมล nktsc.org@gmail.com");
-    expect(out).toBe(`อีเมล nktsc${JOINER}.org@gmail${JOINER}.com`);
+describe("stripBareDomains", () => {
+  // The advert appeared twice with a defence in place. The first hid an
+  // invisible U+2060 inside the address in the knowledge entry, and the model
+  // retyped the address, losing it. The second put the same character into
+  // the finished reply, where nothing can retype it — it reached LINE intact
+  // and LINE unfurled the domain anyway. So the address is removed, not
+  // decorated: it is a domain, and there is no way to write a domain that a
+  // matcher looking for domains will not find.
+  it("takes the whole address out, not half of it", () => {
+    expect(stripBareDomains("อีเมล nktsc.org@gmail.com")).toBe(`อีเมล ${EMAIL_REMOVED}`);
   });
 
-  it("leaves the address readable and copyable", () => {
-    // U+2060 has no width and is not a space, so what a member sees and
-    // copies is still the address.
-    const out = defuseBareDomains("nktsc.org@gmail.com");
-    expect(out.replace(new RegExp(JOINER, "g"), "")).toBe("nktsc.org@gmail.com");
-    expect(out).not.toContain(" ");
+  it("leaves no domain behind for the client to fetch", () => {
+    const out = stripBareDomains("ติดต่อ nktsc.org@gmail.com หรือดูที่ nktsc.org");
+    expect(out).not.toContain("nktsc.org");
+    expect(out).not.toContain("gmail.com");
+  });
+
+  it("removes a bare domain with no address around it", () => {
+    expect(stripBareDomains("ดูที่ nktscoop.com ค่ะ")).toBe(`ดูที่ ${DOMAIN_REMOVED} ค่ะ`);
   });
 
   it("does not touch an amount, a time, or a filename", () => {
     // All of these contain a dot and none of them is a domain.
     for (const text of ["ยอด 1,234.56 บาท", "ไม่เกิน 15.00 น.", "ไฟล์ รายการหัก.xlsx"]) {
-      expect(defuseBareDomains(text), text).toBe(text);
+      expect(stripBareDomains(text), text).toBe(text);
     }
   });
 
   it("does not touch a Thai abbreviation written with dots", () => {
     // น.ส., ส.ส.ค. — mangling these would be worse than the advert.
     for (const text of ["น.ส.กฤตยา ภักดีบรรดิษฐ์", "สมาคมฌาปนกิจ (ส.ส.ค.)"]) {
-      expect(defuseBareDomains(text), text).toBe(text);
+      expect(stripBareDomains(text), text).toBe(text);
     }
+  });
+
+  it("does not touch the office telephone numbers, which are the answer now", () => {
+    const phones = "โทร 042-411334, 042-423355, 042-420746";
+    expect(stripBareDomains(phones)).toBe(phones);
   });
 
   it("leaves a real link alone, because it has already been allowed", () => {
     // By the time this runs the allowlist has had its say. Breaking the host
     // of a link staff entered deliberately would stop it working.
     const text = "กรอกที่ https://forms.gle/abc123 ได้เลยค่ะ";
-    expect(defuseBareDomains(text)).toBe(text);
+    expect(stripBareDomains(text)).toBe(text);
   });
 
-  it("still defuses prose either side of an allowed link", () => {
-    const out = defuseBareDomains("ดูที่ https://forms.gle/x หรือเมล nktsc.org@gmail.com");
+  it("still strips prose either side of an allowed link", () => {
+    const out = stripBareDomains("ดูที่ https://forms.gle/x หรือเมล nktsc.org@gmail.com");
     expect(out).toContain("https://forms.gle/x");
-    expect(out).toContain(`nktsc${JOINER}.org`);
+    expect(out).not.toContain("nktsc.org");
   });
 });
 
@@ -89,8 +103,20 @@ describe("stripMarkdown", () => {
 describe("sanitiseReplyText", () => {
   it("handles the reply that carried the advert, end to end", () => {
     const out = sanitiseReplyText("📧 **nktsc.org@gmail.com**");
-    expect(out).toBe(`📧 nktsc${JOINER}.org@gmail${JOINER}.com`);
+    expect(out).toBe(`📧 ${EMAIL_REMOVED}`);
     expect(out).not.toContain("*");
+  });
+
+  it("clears the whole real message that carried it", () => {
+    // Verbatim from the conversation on 11 Sep, advert card and all.
+    const real =
+      "ขออภัยค่ะ ข้อมูลที่สมาชิกให้มาไม่ตรงกับทะเบียนสมาชิกของสหกรณ์ " +
+      "สมาชิกโปรดติดต่อสำนักงานสหกรณ์โดยตรงได้ที่เบอร์โทรศัพท์ 042-411334, " +
+      "042-423355, 042-420746 หรืออีเมล nktsc.org@gmail.com ค่ะ";
+    const out = sanitiseReplyText(real);
+    expect(out).not.toContain("nktsc.org");
+    expect(out).not.toContain("gmail.com");
+    expect(out).toContain("042-411334, 042-423355, 042-420746");
   });
 
   it("still strips a link no host allows", () => {
