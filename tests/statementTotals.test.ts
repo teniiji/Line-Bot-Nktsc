@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   NOT_MEMBER_MONEY,
   UNKNOWN_CATEGORY,
+  dayTally,
   flowByAccount,
   flowTotal,
   inByCategory,
@@ -143,5 +144,63 @@ describe("inByCategory", () => {
   it("adds back up to the money in", () => {
     const total = inByCategory(day).reduce((t, c) => t + c.amount, 0);
     expect(total).toBe(flowTotal(day).inAmount);
+  });
+});
+
+describe("dayTally", () => {
+  it("counts only money members paid in", () => {
+    // Fees and outward transfers are on the statement and belong in the
+    // money-in/money-out figures, but no part of the reconciliation.
+    const tally = dayTally(day);
+    expect(tally.depositCount).toBe(7);
+    expect(tally.depositAmount).toBe(322200);
+  });
+
+  it("splits it into what a slip accounts for and what does not", () => {
+    const tally = dayTally(day);
+    expect(tally.matchedCount).toBe(5);
+    expect(tally.matchedAmount).toBe(238200);
+    expect(tally.unmatchedCount).toBe(2);
+    expect(tally.unmatchedAmount).toBe(84000);
+  });
+
+  it("adds back up, so the strip can be read as one sum", () => {
+    const tally = dayTally(day);
+    expect(tally.matchedCount + tally.unmatchedCount).toBe(tally.depositCount);
+    expect(tally.matchedAmount + tally.unmatchedAmount).toBe(tally.depositAmount);
+  });
+
+  it("counts a payer nobody knows alongside one the directory does", () => {
+    // Both are money with no slip behind it, which is the list staff work
+    // through — the difference between them is who to ring, not whether.
+    const rows = [
+      line({ id: "k", amount: 500, status: "knownPayer" }),
+      line({ id: "u", amount: 700, status: "unknownPayer" }),
+    ];
+    expect(dayTally(rows)).toMatchObject({ unmatchedCount: 2, unmatchedAmount: 1200 });
+  });
+
+  it("follows the rows it is given, which is the whole point", () => {
+    // The strip is fed the filtered rows now, so narrowing to one account
+    // narrows the figures with it instead of going on reporting both.
+    const bungkan = day
+      .slice(0, 3)
+      .map((row) => ({ ...row, id: `bk-${row.id}`, branch: "บึงกาฬ" }));
+    const both = [...day, ...bungkan];
+    expect(dayTally(both).depositAmount).toBe(536200);
+    expect(dayTally(both.filter((row) => row.branch === "บึงกาฬ")).depositAmount).toBe(214000);
+    expect(dayTally(both.filter((row) => row.branch === "หนองคาย")).depositAmount).toBe(322200);
+  });
+
+  it("keeps float noise out of the figures on screen", () => {
+    expect(dayTally([line({ amount: 0.1 }), line({ amount: 0.2 })]).depositAmount).toBe(0.3);
+  });
+
+  it("says nothing about an empty day", () => {
+    expect(dayTally([])).toMatchObject({
+      depositCount: 0,
+      matchedCount: 0,
+      unmatchedCount: 0,
+    });
   });
 });

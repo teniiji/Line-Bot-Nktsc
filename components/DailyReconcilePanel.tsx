@@ -13,7 +13,7 @@ import { CHANNEL_LABELS } from "@/lib/statementLines";
 import { STATUS_LABELS } from "@/lib/statementDayView";
 import { STATEMENT_ACCOUNTS } from "@/lib/statementReconcile";
 import { branchesIn, missingBranches, summariseByAccount } from "@/lib/dailyAccountSummary";
-import { flowByAccount, flowTotal, inByCategory } from "@/lib/statementTotals";
+import { dayTally, flowByAccount, flowTotal, inByCategory } from "@/lib/statementTotals";
 import { bankFromDescription } from "@/lib/thaiBanks";
 import { cooperativeToday, shiftDay } from "@/lib/cooperativeClock";
 import {
@@ -422,8 +422,12 @@ export default function DailyReconcilePanel() {
     knownRows.length +
     otherRows.length;
 
-  const totals = data?.totals;
-  const gap = totals ? Math.round((totals.depositAmount - totals.slipAmount) * 100) / 100 : 0;
+  // Counted over the rows on screen, so the strip at the top says the same
+  // thing as the tables under it — see dayTally for what the account filter
+  // does to "สลิป" and "ส่วนต่าง", which used to sit here counting a whole
+  // day beside a list showing one account's share of it.
+  const tally = dayTally(statementRows);
+  const narrowed = branch !== "" || searching;
 
   return (
     <section className="bg-white rounded-lg border border-slate-200">
@@ -599,21 +603,34 @@ export default function DailyReconcilePanel() {
         <>
           <div className="flex flex-wrap items-center gap-4 px-4 py-2.5 border-b border-slate-100 text-sm bg-slate-50">
             <span className="text-slate-500">
-              เงินเข้า{" "}
-              <strong className="num text-slate-900">{totals?.depositCount}</strong> รายการ{" "}
-              <Money value={totals?.depositAmount ?? 0} className="font-semibold text-green-700" />
+              เงินเข้า <strong className="num text-slate-900">{tally.depositCount}</strong> รายการ{" "}
+              <Money value={tally.depositAmount} className="font-semibold text-green-700" />
             </span>
             <span className="text-slate-500">
-              สลิป <strong className="num text-slate-900">{totals?.slipCount}</strong> ใบ{" "}
-              <Money value={totals?.slipAmount ?? 0} className="font-semibold" />
+              ตรงกับสลิป <strong className="num text-slate-900">{tally.matchedCount}</strong>{" "}
+              <Money value={tally.matchedAmount} className="font-semibold" />
             </span>
             <span className="text-slate-500">
-              ส่วนต่าง{" "}
+              ยังไม่มีสลิป{" "}
+              <strong className="num text-slate-900">{tally.unmatchedCount}</strong>{" "}
               <Money
-                value={gap}
-                className={`font-semibold ${gap === 0 ? "text-slate-900" : "text-amber-700"}`}
+                value={tally.unmatchedAmount}
+                className={`font-semibold ${
+                  tally.unmatchedCount === 0 ? "text-slate-900" : "text-amber-700"
+                }`}
               />
             </span>
+            {/* Said out loud, because a total that changes when a filter is
+                set is only readable if the page admits which one it is
+                counting. */}
+            {narrowed && (
+              <span className="text-xs text-slate-400">
+                (เฉพาะ
+                {branch ? `บัญชี ${branch}` : ""}
+                {branch && searching ? " · " : ""}
+                {searching ? "ที่ค้นหา" : ""})
+              </span>
+            )}
           </div>
 
           {/* One account in the range is not a reason to say nothing. It
