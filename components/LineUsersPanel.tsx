@@ -3,6 +3,7 @@
 import { Fragment, useCallback, useEffect, useState } from "react";
 import { LineUser } from "@/lib/types";
 import ConfirmDialog from "@/components/ConfirmDialog";
+import PanelHelp from "@/components/PanelHelp";
 
 const PAGE_SIZE = 20;
 const SEARCH_DEBOUNCE_MS = 300;
@@ -150,12 +151,15 @@ export default function LineUsersPanel() {
       <div className="flex items-start justify-between gap-3 px-4 py-3 border-b border-slate-100 flex-wrap">
         <div>
           <h2 className="font-semibold">สมาชิกที่เคยทักบอท (LINE)</h2>
-          <p className="text-xs text-slate-500 mt-1">
-            ปิด "บอทตอบอัตโนมัติ" ของคนใดคนหนึ่งได้ เวลาเจ้าหน้าที่กำลังคุยกับสมาชิกคนนั้นเองใน
-            chat.line.biz — บอทจะไม่ตอบข้อความจากคนนี้เลย (ไม่กระทบสมาชิกคนอื่น) — "เลขสมาชิก"/"สังกัด"
-            จะขึ้นก็ต่อเมื่อคนนั้นเคยยืนยันตัวตนตอนบันทึกธุรกรรมแล้วเท่านั้น หรือปิด/เปิดพร้อมกันทั้งหมด
-            (เฉพาะที่ตรงกับคำค้นหาถ้ามี) ด้วยปุ่มด้านขวา
-          </p>
+          <PanelHelp summary='ปิด "บอทตอบอัตโนมัติ" ของสมาชิกคนใดคนหนึ่งได้ เวลาเจ้าหน้าที่กำลังคุยกับคนนั้นเองใน chat.line.biz'>
+            <p>
+              บอทจะไม่ตอบข้อความจากคนนี้เลย (ไม่กระทบสมาชิกคนอื่น) หรือปิด/เปิดพร้อมกันทั้งหมด
+              (เฉพาะที่ตรงกับคำค้นหาถ้ามี) ด้วยปุ่มด้านขวา
+            </p>
+            <p>
+              "เลขสมาชิก"/"สังกัด" จะขึ้นก็ต่อเมื่อคนนั้นเคยยืนยันตัวตนตอนบันทึกธุรกรรมแล้วเท่านั้น
+            </p>
+          </PanelHelp>
         </div>
         <div className="flex flex-col items-end gap-2">
           <input

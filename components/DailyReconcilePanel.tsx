@@ -16,6 +16,7 @@ import { branchesIn, missingBranches, summariseByAccount } from "@/lib/dailyAcco
 import { dayTally, flowByAccount, flowTotal, inByCategory } from "@/lib/statementTotals";
 import { bankFromDescription } from "@/lib/thaiBanks";
 import { cooperativeToday, shiftDay } from "@/lib/cooperativeClock";
+import PanelHelp from "@/components/PanelHelp";
 import {
   depositHaystack,
   filterBy,
@@ -433,24 +434,23 @@ export default function DailyReconcilePanel() {
     <section className="bg-white rounded-lg border border-slate-200">
       <div className="px-4 py-3 border-b border-slate-100">
         <h2 className="font-semibold">เงินเข้าประจำวัน (เทียบกับสลิปที่ส่งมาทางไลน์)</h2>
-        <p className="text-xs text-slate-500 mt-1">
-          เทียบ <strong>เงินที่เข้าบัญชีสหกรณ์วันนั้น</strong> กับ{" "}
-          <strong>สลิปที่สมาชิกส่งเข้าบอท</strong> ในช่วงเดียวกัน เพื่อจับ 2 อย่าง:
-          สลิปที่ไม่มีเงินเข้าจริง และเงินที่เข้ามาโดยไม่มีใครแจ้ง —{" "}
-          <strong>อัปโหลด Statement ได้ที่นี่เลย ไม่ต้องสร้างรอบเก็บไม่ได้</strong>{" "}
-          (ไฟล์ที่เคยอัปในแท็บ "เทียบ Statement" ก็ใช้ได้ ไม่ต้องอัปซ้ำ)
-        </p>
-        <p className="text-xs text-amber-700 mt-1">
-          ⚠️ ช่อง <strong>"จับคู่จาก"</strong> บอกว่าคู่นั้นเชื่อได้แค่ไหน —
-          <strong>เลขบัญชีตรง</strong> กับ <strong>บัญชีในสลิปตรง</strong> แน่นอนเกือบ 100%,
-          <strong>เวลาใกล้กัน</strong> ค่อนข้างแน่, ส่วน <strong>ยอดตรงเท่านั้น</strong> คือ
-          <strong>เดา</strong> — วันที่มีคนโอนยอดเท่ากันหลายคนอาจสลับคู่กันได้
-          ให้ถือว่าเป็นรายการให้ไล่ดู ไม่ใช่คำตอบสุดท้าย
-        </p>
-        <p className="text-xs text-slate-400 mt-1">
-          สลิปที่บอทบันทึก<strong>ตั้งแต่ 7 ก.ย. 69 เป็นต้นไป</strong>จะเก็บเวลาที่โอนและเลขบัญชีผู้โอน
-          (เท่าที่สลิปแสดง) ไว้ด้วย — รายการเก่ากว่านั้นยังมีแค่วันที่กับยอดเงิน จึงจับคู่ได้แค่ "ยอดตรงเท่านั้น"
-        </p>
+        <PanelHelp summary="เทียบเงินที่เข้าบัญชีสหกรณ์วันนั้น กับสลิปที่สมาชิกส่งเข้าบอท เพื่อจับสลิปที่ไม่มีเงินเข้าจริง และเงินที่เข้ามาโดยไม่มีใครแจ้ง">
+          <p>
+            <strong>อัปโหลด Statement ได้ที่นี่เลย ไม่ต้องสร้างรอบเก็บไม่ได้</strong>{" "}
+            (ไฟล์ที่เคยอัปในแท็บ "เทียบ Statement" ก็ใช้ได้ ไม่ต้องอัปซ้ำ)
+          </p>
+          <p className="text-amber-700">
+            ⚠️ ช่อง <strong>"จับคู่จาก"</strong> บอกว่าคู่นั้นเชื่อได้แค่ไหน —
+            <strong>เลขบัญชีตรง</strong> กับ <strong>บัญชีในสลิปตรง</strong> แน่นอนเกือบ 100%,
+            <strong>เวลาใกล้กัน</strong> ค่อนข้างแน่, ส่วน <strong>ยอดตรงเท่านั้น</strong> คือ
+            <strong>เดา</strong> — วันที่มีคนโอนยอดเท่ากันหลายคนอาจสลับคู่กันได้
+            ให้ถือว่าเป็นรายการให้ไล่ดู ไม่ใช่คำตอบสุดท้าย
+          </p>
+          <p className="text-slate-500">
+            สลิปที่บอทบันทึก<strong>ตั้งแต่ 7 ก.ย. 69 เป็นต้นไป</strong>จะเก็บเวลาที่โอนและเลขบัญชีผู้โอน
+            (เท่าที่สลิปแสดง) ไว้ด้วย — รายการเก่ากว่านั้นยังมีแค่วันที่กับยอดเงิน จึงจับคู่ได้แค่ "ยอดตรงเท่านั้น"
+          </p>
+        </PanelHelp>
       </div>
 
       <div className="flex flex-wrap items-center gap-2 px-4 py-3 border-b border-slate-100 text-sm">
