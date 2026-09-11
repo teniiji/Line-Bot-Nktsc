@@ -154,12 +154,19 @@ export default function ServiceRequestsPanel() {
                   <td className="px-4 py-2 whitespace-nowrap text-slate-500">
                     {entry.phone ?? "—"}
                   </td>
-                  <td className="px-4 py-2 whitespace-nowrap">
+                  <td className="px-4 py-2">
                     <span
                       className={`inline-block text-xs px-2 py-0.5 rounded-full border ${STATUS_STYLES[entry.status]}`}
                     >
                       {STATUS_LABELS[entry.status]}
                     </span>
+                    {/* The reason, when LINE gave one — see lib/pushError.ts.
+                        Shown rather than hidden in a tooltip: "ส่งต่อไม่สำเร็จ"
+                        on its own is a dead end, and the next step is
+                        different for every cause. */}
+                    {entry.forwardError && (
+                      <p className="text-xs text-red-700 mt-1 max-w-xs">{entry.forwardError}</p>
+                    )}
                   </td>
                   <td className="px-4 py-2 whitespace-nowrap text-right">
                     {!entry.memberVerified && entry.memberNumber && entry.memberFullName && (

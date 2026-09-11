@@ -242,6 +242,47 @@ export function computeServiceRequirement(
   return null;
 }
 
+// Everything the request is still short of, rather than the next one thing.
+//
+// A member sent a salary certificate and asked what she could borrow. She was
+// asked what she wanted; then who she was; then her surname's other half;
+// then her telephone number — four rounds and six messages, and each of them
+// waited for the one before. Every one of those answers is needed before the
+// request can go anywhere, and none of them depends on any other, so there
+// was never a reason to collect them one at a time.
+//
+// The member-number lookup already asks for all three at once and says so in
+// its own flow note. This is the same rule for the same reason.
+export function computeServiceMissing(
+  lineUser: LineUserInfo | null,
+  pendingService: PendingServiceInfo
+): ServiceRequirement[] {
+  const missing: ServiceRequirement[] = [];
+  if (!pendingService.requestType) missing.push("purpose");
+  if (!lineUser?.fullName || !lineUser?.memberNumber) missing.push("member_info");
+  if (!lineUser?.phone) missing.push("phone");
+  return missing;
+}
+
+// What each one is called when the member is asked for it, so the note can
+// name exactly the pieces still outstanding — never one already on record.
+export function describeServiceMissing(
+  missing: ServiceRequirement[],
+  lineUser: LineUserInfo | null
+): string[] {
+  const labels: string[] = [];
+  for (const item of missing) {
+    if (item === "purpose") labels.push("ต้องการทำรายการอะไร");
+    if (item === "member_info") {
+      if (!lineUser?.fullName && !lineUser?.memberNumber) labels.push("ชื่อ-นามสกุล และเลขสมาชิก");
+      else if (!lineUser?.fullName) labels.push("ชื่อ-นามสกุล");
+      else labels.push("เลขสมาชิก");
+    }
+    if (item === "phone") labels.push("เบอร์โทรติดต่อกลับ");
+  }
+  return labels;
+}
+
 
 export async function loadPendingServiceRequest(
   lineUserId: string

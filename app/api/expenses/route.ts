@@ -28,6 +28,7 @@ const EXPENSE_SELECT = {
   // after an OA migration — looked exactly like everything working.
   forwardStatus: true,
   forwardedTo: true,
+  forwardError: true,
 } as const;
 
 export async function GET(request: NextRequest) {

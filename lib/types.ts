@@ -17,6 +17,9 @@ export interface Expense {
   // (dept_notify_* flag), so it isn't a problem to flag.
   forwardStatus: "forwarded" | "failed" | "unconfigured" | "muted";
   forwardedTo: string | null;
+  // Why the push failed, when it did — see lib/pushError.ts. Null unless the
+  // forward failed.
+  forwardError: string | null;
   user: { displayName: string | null; nickname: string | null } | null;
 }
 
@@ -92,6 +95,9 @@ export interface ServiceRequestLogEntry {
   department: string | null;
   imageUrl: string | null;
   forwardedTo: string | null;
+  // Why the push failed, when it did — see lib/pushError.ts. Null unless the
+  // forward failed.
+  forwardError: string | null;
   status: "forwarded" | "failed" | "unconfigured" | "muted";
   createdAt: string;
 }

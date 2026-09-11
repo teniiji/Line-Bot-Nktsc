@@ -125,9 +125,14 @@ export default function ExpenseList({
                   {expense.forwardStatus === "failed" && (
                     <span
                       className="inline-block text-xs px-2 py-0.5 rounded-full bg-red-50 text-red-700 border border-red-200"
-                      title={`ส่งแจ้งเตือนให้เจ้าหน้าที่ไม่สำเร็จ (${
-                        expense.forwardedTo ?? "-"
-                      }) — ธุรกรรมบันทึกเรียบร้อยแล้ว แต่ไม่มีใครได้รับแจ้ง ตรวจ LINE UserID ของเจ้าหน้าที่ในแท็บ "ผู้รับผิดชอบ"`}
+                      title={
+                        // The reason, when LINE gave one — see lib/pushError.ts.
+                        // Without it every cause reads the same and every cause
+                        // needs a different person to fix a different thing.
+                        `ส่งแจ้งเตือนให้เจ้าหน้าที่ไม่สำเร็จ (${expense.forwardedTo ?? "-"})` +
+                        (expense.forwardError ? `\n\nสาเหตุ: ${expense.forwardError}` : "") +
+                        `\n\nธุรกรรมบันทึกเรียบร้อยแล้ว แต่ไม่มีใครได้รับแจ้ง ตรวจ LINE UserID ของเจ้าหน้าที่ในแท็บ "ผู้รับผิดชอบ"`
+                      }
                     >
                       ⚠️ แจ้งเจ้าหน้าที่ไม่สำเร็จ
                     </span>
