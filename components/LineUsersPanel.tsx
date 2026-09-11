@@ -242,6 +242,20 @@ export default function LineUsersPanel() {
                         placeholder="ชื่อ-นามสกุล"
                         className="border border-slate-300 rounded px-2 py-1 text-sm w-full"
                       />
+                    ) : user.rosterName ? (
+                      // The cooperative's own spelling wins over what the
+                      // member typed — they disagree in small ways, and the
+                      // roster is the record. What they typed is still what
+                      // the edit box holds, and is shown beside it when the
+                      // two differ so neither is a surprise.
+                      <>
+                        {user.rosterName}
+                        {user.fullName && user.fullName !== user.rosterName && (
+                          <span className="block text-xs text-slate-400">
+                            สมาชิกพิมพ์ว่า {user.fullName}
+                          </span>
+                        )}
+                      </>
                     ) : (
                       (user.fullName ?? "—")
                     )}

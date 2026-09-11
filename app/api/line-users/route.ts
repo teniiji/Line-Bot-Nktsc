@@ -13,24 +13,44 @@ const MAX_PAGE_SIZE = 100;
 // Shared with PATCH below so "ปิดทั้งหมด" bulk-pauses exactly the set of
 // people the search box is currently showing (every matching page, not just
 // the one on screen) instead of drifting from what GET actually returns.
-function buildLineUserWhere(search: string | undefined): Record<string, unknown> {
-  return search
-    ? {
-        OR: [
-          { displayName: { contains: search, mode: "insensitive" } },
-          { nickname: { contains: search, mode: "insensitive" } },
-          { id: { contains: search, mode: "insensitive" } },
-          { memberNumber: { contains: search, mode: "insensitive" } },
-        ],
-      }
-    : {};
+async function buildLineUserWhere(
+  search: string | undefined
+): Promise<Record<string, unknown>> {
+  if (!search) return {};
+
+  // The roster's name is shown in this table, so it has to be searchable from
+  // it — a name on screen that the box above it cannot find is worse than no
+  // name. MemberRoster is a different table, so the member numbers it matches
+  // are resolved first and folded into the same OR. One extra query, only
+  // when somebody is actually searching.
+  const rosterMatches = await prisma.memberRoster.findMany({
+    where: { memberName: { contains: search, mode: "insensitive" } },
+    select: { memberNumber: true },
+    take: 500,
+  });
+
+  return {
+    OR: [
+      { displayName: { contains: search, mode: "insensitive" } },
+      { nickname: { contains: search, mode: "insensitive" } },
+      { id: { contains: search, mode: "insensitive" } },
+      { memberNumber: { contains: search, mode: "insensitive" } },
+      // What the member typed, which is what this table showed before the
+      // roster's spelling was joined in and is still the only name for
+      // anyone the roster has never heard of.
+      { fullName: { contains: search, mode: "insensitive" } },
+      ...(rosterMatches.length
+        ? [{ memberNumber: { in: rosterMatches.map((r) => r.memberNumber) } }]
+        : []),
+    ],
+  };
 }
 
 export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
 
   const search = searchParams.get("search")?.trim();
-  const where = buildLineUserWhere(search);
+  const where = await buildLineUserWhere(search);
 
   const page = Math.max(1, Number(searchParams.get("page")) || 1);
   const pageSize = Math.min(
@@ -68,14 +88,19 @@ export async function GET(request: NextRequest) {
     memberNumbers.length > 0
       ? await prisma.memberRoster.findMany({
           where: { memberNumber: { in: memberNumbers } },
-          select: { memberNumber: true, unitName: true },
+          select: { memberNumber: true, unitName: true, memberName: true },
         })
       : [];
   const unitByMemberNumber = new Map(rosterEntries.map((r) => [r.memberNumber, r.unitName]));
+  // The name was always in this row. Only the unit was being taken out of it,
+  // so a member the roster knows well enough to name their unit still showed
+  // a dash where their name goes.
+  const nameByMemberNumber = new Map(rosterEntries.map((r) => [r.memberNumber, r.memberName]));
 
   const data = rows.map((r) => ({
     ...r,
     unitName: r.memberNumber ? unitByMemberNumber.get(r.memberNumber) ?? null : null,
+    rosterName: r.memberNumber ? nameByMemberNumber.get(r.memberNumber) ?? null : null,
     // Why สังกัด is blank, which a dash cannot say. "No member number yet" and
     // "that number is not in the roster" need completely different actions —
     // one is a member the bot never identified, the other is very likely a
@@ -111,7 +136,7 @@ export async function PATCH(request: NextRequest) {
     return NextResponse.json({ error: "search must be a string" }, { status: 400 });
   }
 
-  const where = buildLineUserWhere(search?.trim());
+  const where = await buildLineUserWhere(search?.trim());
   const result = await prisma.lineUser.updateMany({ where, data: { botPaused } });
 
   return NextResponse.json({ count: result.count });
