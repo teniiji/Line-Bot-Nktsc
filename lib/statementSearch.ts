@@ -75,21 +75,10 @@ export function filterStatementRows<T extends SearchableStatementRow>(
 
 // Every word has to match, not any of them — see matchesStatementSearch. The
 // same rule for every section, because a search box that behaves differently
-// depending on which table it is over is worse than none.
-export function matchesTerms(haystack: string, query: string): boolean {
-  const terms = query.trim().toLowerCase().split(/\s+/).filter(Boolean);
-  if (terms.length === 0) return true;
-  return terms.every((term) => haystack.includes(term));
-}
-
-export function filterBy<T>(
-  rows: readonly T[],
-  query: string,
-  haystackOf: (row: T) => string
-): T[] {
-  if (!query.trim()) return [...rows];
-  return rows.filter((row) => matchesTerms(haystackOf(row).toLowerCase(), query));
-}
+// depending on which table it is over is worse than none. It lives in
+// lib/listSearch.ts now, where the dashboard's other long lists use it too,
+// and is re-exported here so a statement table still needs one import.
+export { filterBy, matchesTerms } from "./listSearch";
 
 // The amount twice in each of these, for the same reason as the statement
 // rows: as typed and as displayed.
