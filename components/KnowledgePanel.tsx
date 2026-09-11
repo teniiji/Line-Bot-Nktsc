@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { filterBy, knowledgeHaystack } from "@/lib/listSearch";
 
 interface KnowledgeEntry {
   id: string;
@@ -28,6 +29,9 @@ export default function KnowledgePanel() {
   const [editContent, setEditContent] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // The entries are short but there are enough of them that finding the one
+  // to correct means reading the lot. See lib/listSearch.ts.
+  const [search, setSearch] = useState("");
 
   const fetchEntries = async () => {
     setLoading(true);
@@ -77,6 +81,8 @@ export default function KnowledgePanel() {
     }
   };
 
+  const shown = filterBy(entries, search, knowledgeHaystack);
+
   return (
     <div className="bg-white rounded-lg shadow">
       <div className="px-4 py-3 border-b border-slate-100">
@@ -92,15 +98,35 @@ export default function KnowledgePanel() {
         </p>
       )}
 
+      {!loading && entries.length > 0 && (
+        <div className="flex flex-wrap items-center gap-2 px-4 py-2.5 border-b border-slate-100">
+          <input
+            type="search"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="ค้นหาในหัวข้อและเนื้อหา…"
+            className="border border-slate-300 rounded px-3 py-1.5 text-sm w-full sm:w-80"
+          />
+          {search.trim() && (
+            <span className="text-xs text-slate-500">
+              แสดง <strong className="text-slate-900">{shown.length}</strong> จาก {entries.length}{" "}
+              หัวข้อ
+            </span>
+          )}
+        </div>
+      )}
+
       {loading ? (
         <p className="text-slate-500 text-sm py-8 text-center">กำลังโหลด…</p>
       ) : entries.length === 0 ? (
         <p className="text-slate-500 text-sm py-8 text-center">
           ยังไม่มีข้อมูลในตาราง — บอทกำลังใช้ค่าเริ่มต้นที่ฝังไว้ในระบบ (รัน migration เพื่อ seed ข้อมูล)
         </p>
+      ) : shown.length === 0 ? (
+        <p className="text-slate-500 text-sm py-8 text-center">ไม่มีหัวข้อที่ตรงกับที่ค้นหา</p>
       ) : (
         <ul className="divide-y divide-slate-100">
-          {entries.map((entry) => (
+          {shown.map((entry) => (
             <li key={entry.id} className="px-4 py-3">
               {editingId === entry.id ? (
                 <div className="space-y-2">

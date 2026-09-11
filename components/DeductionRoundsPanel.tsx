@@ -6,6 +6,12 @@ import { DeductionRoundSummary, DeductionUnitRow } from "@/lib/types";
 import ConfirmDialog from "@/components/ConfirmDialog";
 import { describeDeductionPeriod } from "@/lib/deductionPeriod";
 import { matchFileNameToUnit } from "@/lib/deductionFileMatch";
+import {
+  UNIT_FILTERS,
+  UNIT_FILTER_LABELS,
+  filterUnits,
+  type UnitFilter,
+} from "@/lib/listSearch";
 
 interface BulkRow {
   file: File;
@@ -52,6 +58,10 @@ export default function DeductionRoundsPanel() {
   const [error, setError] = useState<string | null>(null);
   const [busyUnit, setBusyUnit] = useState<string | null>(null);
   const [pendingDelete, setPendingDelete] = useState<DeductionRoundSummary | null>(null);
+
+  // 105 units in one table, read once a month by eye. See lib/listSearch.ts.
+  const [unitSearch, setUnitSearch] = useState("");
+  const [unitFilter, setUnitFilter] = useState<UnitFilter>("all");
 
   const [showNew, setShowNew] = useState(false);
   const [newPeriod, setNewPeriod] = useState("");
@@ -305,6 +315,11 @@ export default function DeductionRoundsPanel() {
 
   const selected = rounds.find((r) => r.id === selectedId) ?? null;
   const totalAmount = units.reduce((sum, u) => sum + (u.amount ?? 0), 0);
+  // The rows actually on screen. The totals above the table stay the round's
+  // own — they are what the month is measured against, and a figure that moved
+  // when a search box was typed in could not be read as progress.
+  const shownUnits = filterUnits(units, unitSearch, unitFilter, (s) => STATUS_LABEL[s] ?? s);
+  const unitsNarrowed = unitSearch.trim() !== "" || unitFilter !== "all";
 
   return (
     <div className="bg-white rounded-lg shadow">
@@ -553,8 +568,56 @@ export default function DeductionRoundsPanel() {
             </div>
           )}
 
+          {selected && !loadingUnits && units.length > 0 && (
+            <div className="flex flex-wrap items-center gap-2 px-4 py-2.5 border-b border-slate-100 text-sm">
+              <input
+                type="search"
+                value={unitSearch}
+                onChange={(e) => setUnitSearch(e.target.value)}
+                placeholder="ค้นหาหน่วยงาน ชื่อไฟล์ อีเมล…"
+                className="border border-slate-300 rounded px-3 py-1.5 text-sm w-full sm:w-72"
+              />
+              <div className="flex flex-wrap gap-1">
+                {UNIT_FILTERS.map((option) => (
+                  <button
+                    key={option}
+                    type="button"
+                    onClick={() => setUnitFilter(option)}
+                    className={`px-2.5 py-1 rounded border text-xs ${
+                      unitFilter === option
+                        ? "bg-slate-900 text-white border-slate-900"
+                        : "bg-white text-slate-600 border-slate-300 hover:bg-slate-50"
+                    }`}
+                  >
+                    {UNIT_FILTER_LABELS[option]}
+                  </button>
+                ))}
+              </div>
+              {unitsNarrowed && (
+                <span className="text-xs text-slate-500">
+                  แสดง <strong className="num text-slate-900">{shownUnits.length}</strong> จาก{" "}
+                  {units.length} หน่วยงาน
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setUnitSearch("");
+                      setUnitFilter("all");
+                    }}
+                    className="ml-2 text-slate-500 hover:underline"
+                  >
+                    ล้างตัวกรอง
+                  </button>
+                </span>
+              )}
+            </div>
+          )}
+
           {loadingUnits ? (
             <p className="text-slate-500 text-sm py-8 text-center">กำลังโหลด…</p>
+          ) : unitsNarrowed && shownUnits.length === 0 ? (
+            <p className="text-slate-500 text-sm py-8 text-center">
+              ไม่มีหน่วยงานที่ตรงกับที่ค้นหา
+            </p>
           ) : (
             <div className="overflow-x-auto">
               <table className="w-full text-sm min-w-[900px]">
@@ -569,7 +632,7 @@ export default function DeductionRoundsPanel() {
                   </tr>
                 </thead>
                 <tbody>
-                  {units.map((u) => (
+                  {shownUnits.map((u) => (
                     <tr key={u.id} className="border-t border-slate-100">
                       <td className="px-4 py-2">
                         {u.unitName}
