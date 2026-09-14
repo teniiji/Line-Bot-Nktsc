@@ -118,14 +118,38 @@ export function stripMarkdown(text: string): string {
   );
 }
 
+// **The phrase nobody says.** A member was answered "ไม่ประเด็นค่ะ" — "no
+// problem", carried across word by word into a language that does not put
+// those words together. The prompt now asks for the Thai people actually
+// speak, which is worth doing; but a phrase this specific is worth catching on
+// the way out as well, because whatever the model types is what the member
+// reads.
+//
+// Deliberately a short list of exact literal translations rather than a style
+// filter. Rewriting the bot's wording in general is not this file's business —
+// these are the ones that have reached a member and read as broken Thai.
+const LITERAL_TRANSLATIONS: [RegExp, string][] = [
+  [/ไม่ประเด็น(?:ค่ะ|ครับ|คะ|นะคะ|นะครับ)?/g, "ยินดีค่ะ"],
+];
+
+export function fixLiteralTranslations(text: string): string {
+  return LITERAL_TRANSLATIONS.reduce(
+    (out, [pattern, replacement]) => out.replace(pattern, replacement),
+    text
+  );
+}
+
 /**
  * Everything a reply goes through on its way out. Ordered: markdown first, so
  * a link written as [text](url) is unwrapped before the allowlist judges the
- * url; then the allowlist; then every domain in whatever prose is left.
+ * url; then the allowlist; then every domain in whatever prose is left; and
+ * last the handful of phrases that are not Thai.
  */
 export function sanitiseReplyText(
   text: string,
   extraAllowedHosts: Set<string> = new Set()
 ): string {
-  return stripBareDomains(stripDisallowedLinks(stripMarkdown(text), extraAllowedHosts));
+  return fixLiteralTranslations(
+    stripBareDomains(stripDisallowedLinks(stripMarkdown(text), extraAllowedHosts))
+  );
 }

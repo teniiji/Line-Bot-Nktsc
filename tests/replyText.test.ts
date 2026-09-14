@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   DOMAIN_REMOVED,
   EMAIL_REMOVED,
+  fixLiteralTranslations,
   sanitiseReplyText,
   stripBareDomains,
   stripMarkdown,
@@ -132,5 +133,28 @@ describe("sanitiseReplyText", () => {
   it("keeps an allowed host working through every step", () => {
     const out = sanitiseReplyText("[กรอกที่นี่](https://forms.gle/abc)", new Set(["forms.gle"]));
     expect(out).toBe("กรอกที่นี่ https://forms.gle/abc");
+  });
+});
+
+describe("fixLiteralTranslations", () => {
+  it("rewrites the phrase that reached a member", () => {
+    // "ไม่ประเด็นค่ะ" — "no problem" word for word, which is not Thai.
+    expect(fixLiteralTranslations("ไม่ประเด็นค่ะ 😊")).toBe("ยินดีค่ะ 😊");
+  });
+
+  it("catches it with any polite ending, or none", () => {
+    for (const text of ["ไม่ประเด็น", "ไม่ประเด็นครับ", "ไม่ประเด็นคะ", "ไม่ประเด็นนะคะ"]) {
+      expect(fixLiteralTranslations(text), text).toBe("ยินดีค่ะ");
+    }
+  });
+
+  it("leaves an ordinary sentence about a ประเด็น alone", () => {
+    // The word itself is perfectly good Thai; only the fused phrase is not.
+    const text = "ประเด็นนี้ต้องให้เจ้าหน้าที่ตรวจสอบก่อนค่ะ";
+    expect(fixLiteralTranslations(text)).toBe(text);
+  });
+
+  it("runs as part of the reply's last pass", () => {
+    expect(sanitiseReplyText("**ไม่ประเด็นค่ะ**")).toBe("ยินดีค่ะ");
   });
 });

@@ -66,3 +66,56 @@ describe("what it must answer instead of going quiet", () => {
     }
   });
 });
+
+// A member opened with "ขอกู้ฉุกเฉินได้ไหมครับ" and got the bot's list of
+// things it can help with — and then, over three more messages, was asked what
+// he wanted three times. Asking to borrow is asking to use a service the
+// cooperative already offers; it is not asking for an exception to a rule.
+describe("asking whether they may borrow", () => {
+  it("is not an approval request, in the prompt", () => {
+    expect(prompt()).toContain("ไม่ใช่การขออนุมัติเป็นกรณีพิเศษ");
+    expect(prompt()).toContain("ขอกู้ฉุกเฉินได้ไหมครับ");
+  });
+
+  it("is answered from the reference data and handed to สินเชื่อ", () => {
+    expect(prompt()).toContain('request_staff_help ทันที (department: "สินเชื่อ")');
+  });
+
+  it("is never answered with the menu of what the bot can do", () => {
+    // The member asked one thing and was shown a service list instead.
+    expect(prompt()).toContain("ห้ามตอบด้วยการไล่รายการสิ่งที่บอทช่วยได้แทนคำตอบเด็ดขาด");
+  });
+
+  it("says the same thing where the model reads the tool itself", () => {
+    expect(description()).toContain("is NOT an approval request either");
+  });
+});
+
+describe("what the bot may ask a member", () => {
+  // The note the bot is given while a member's document is waiting to be
+  // handed to staff — which is where all three of these went wrong.
+  const serviceNote = () =>
+    buildSystemPrompt(
+      null,
+      null,
+      { documentType: "สลิปเงินเดือน", requestType: null, department: null, imageUrl: null, imageIsPdf: false },
+      null,
+      "",
+      ""
+    ).dynamic;
+
+  it("never asks why they need the money", () => {
+    // The bot asked a member why he wanted an emergency loan, and offered
+    // invented examples of acceptable reasons. Staff never needed either.
+    expect(serviceNote()).toContain("ห้ามถามว่าจะเอาเงินไปทำอะไร");
+  });
+
+  it("never invents a loan type or a form that does not exist", () => {
+    expect(serviceNote()).toContain("ห้ามยกตัวอย่างประเภทเงินกู้ ชื่อโครงการ หรือชื่อแบบฟอร์ม");
+  });
+
+  it("never explains its own classification to the member", () => {
+    // "เอกสารนี้ไม่ใช่สลิปโอนเงิน" is the bot talking about its own rules.
+    expect(prompt()).toContain("ห้ามอธิบายการจัดประเภทของระบบให้สมาชิกฟัง");
+  });
+});

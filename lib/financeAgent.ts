@@ -117,13 +117,17 @@ export async function runFinanceAgent(
   // tells the model not to answer as though only one slip had arrived.
   const pending = queuedPending[0] ?? null;
 
-  // A pending flow outranks a sign-off: "ขอบคุณค่ะ" while the bot is still
-  // waiting for a slip is politeness mid-conversation, not the end of one,
-  // and the flow note has to keep the floor.
-  const closing =
-    isAcknowledgement && !pending && !pendingService && !pendingLookup
-      ? closingNote(true, recentAction)
-      : "";
+  // A sign-off closes the conversation even when something is still pending.
+  //
+  // The flow note used to keep the floor whenever a flow existed, on the
+  // grounds that politeness mid-conversation is not the end of one. But a
+  // member who says only "ขอบคุณครับ" has been answered by somebody, and in a
+  // chat staff read that somebody is often staff — whose messages never reach
+  // this bot. Asking again for what the flow is still missing is then the
+  // fourth time of asking for something that is already on the member's
+  // screen. See PENDING_RULES in lib/closingReply.ts.
+  const hasPendingFlow = pending !== null || pendingService !== null || pendingLookup !== null;
+  const closing = isAcknowledgement ? closingNote(true, recentAction, hasPendingFlow) : "";
 
   // What the bot said a moment ago, so two messages typed in the same breath
   // do not get two answers saying the same thing.
