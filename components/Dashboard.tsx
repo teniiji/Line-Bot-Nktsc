@@ -270,6 +270,7 @@ export default function Dashboard() {
                     onDeleteRequest={setPendingDelete}
                     onVerifyRequest={setPendingVerify}
                     onExportCsv={handleExportCsv}
+                    editingId={editingExpense?.id ?? null}
                   />
                 )}
 

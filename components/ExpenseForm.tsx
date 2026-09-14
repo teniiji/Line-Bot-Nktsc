@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { CATEGORIES } from "@/lib/categories";
 import { formatAmount, formatStatementDate, formatStatementTime } from "@/lib/format";
 import { CHANNEL_LABELS } from "@/lib/statementLines";
@@ -72,6 +72,11 @@ export default function ExpenseForm({
   // amount and the date then come off the statement rather than out of the
   // form — see app/api/statement-lines/[id]/record.
   const [fromLine, setFromLine] = useState<MemberDeposit | null>(null);
+  // The form sits under the table, so pressing แก้ไข on a row filled it in
+  // somewhere off the bottom of the screen and nothing moved where the eye
+  // was — which reads as a button that does not work, and was reported as
+  // one. The click now takes you to the form it filled.
+  const formRef = useRef<HTMLFormElement>(null);
 
   useEffect(() => {
     if (editingExpense) {
@@ -91,6 +96,11 @@ export default function ExpenseForm({
     }
     setLookup(null);
     setFromLine(null);
+    // Only when an edit starts. Scrolling on every render would drag the page
+    // about while somebody is typing a new entry.
+    if (editingExpense) {
+      formRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+    }
   }, [editingExpense]);
 
   // Looking a member up is what the number is for. Debounced rather than done
@@ -188,12 +198,27 @@ export default function ExpenseForm({
 
   return (
     <form
+      ref={formRef}
       onSubmit={handleSubmit}
-      className="bg-white rounded-lg shadow p-4 space-y-3"
+      className={`bg-white rounded-lg shadow p-4 space-y-3 ${
+        // Said in colour as well as in words: the same form does two jobs,
+        // and editing somebody's ฿10,000 while believing you are adding a new
+        // record is the mistake worth designing against.
+        editingExpense ? "ring-2 ring-amber-400" : ""
+      }`}
     >
       <h2 className="font-semibold text-lg">
         {editingExpense ? "แก้ไขรายการ" : "บันทึกรายการ (โดยเจ้าหน้าที่)"}
       </h2>
+      {editingExpense && (
+        <p className="text-sm text-amber-800 bg-amber-50 rounded px-3 py-2">
+          กำลังแก้ไขรายการของ{" "}
+          <strong>{editingExpense.memberFullName ?? "สมาชิก"}</strong>
+          {editingExpense.memberNumber ? ` (${editingExpense.memberNumber})` : ""} ·{" "}
+          {formatStatementDate(editingExpense.date)} · {formatAmount(editingExpense.amount)} —
+          กด "ยกเลิก" ด้านล่างถ้าไม่ได้ตั้งใจแก้
+        </p>
+      )}
 
       {error && (
         <p className="text-sm text-red-600 bg-red-50 rounded px-3 py-2">

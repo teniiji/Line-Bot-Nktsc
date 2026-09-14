@@ -13,6 +13,9 @@ interface ExpenseListProps {
   onDeleteRequest: (expense: Expense) => void;
   onVerifyRequest: (expense: Expense) => void;
   onExportCsv: () => void;
+  // The row the form below is currently filled with, so the table says which
+  // one is being edited rather than leaving it to be remembered.
+  editingId?: string | null;
 }
 
 // A transaction's date is the cooperative's wall clock held in UTC, the same
@@ -43,6 +46,7 @@ export default function ExpenseList({
   onDeleteRequest,
   onVerifyRequest,
   onExportCsv,
+  editingId = null,
 }: ExpenseListProps) {
   if (total === 0) {
     return (
@@ -85,7 +89,12 @@ export default function ExpenseList({
           </thead>
           <tbody>
             {expenses.map((expense) => (
-              <tr key={expense.id} className="border-t border-slate-100">
+              <tr
+                key={expense.id}
+                className={`border-t border-slate-100 ${
+                  expense.id === editingId ? "bg-amber-50" : ""
+                }`}
+              >
                 <td className="px-4 py-2 whitespace-nowrap">
                   {formatDate(expense.date)}
                 </td>
@@ -153,14 +162,25 @@ export default function ExpenseList({
                   {formatAmount(expense.amount)}
                 </td>
                 <td className="px-4 py-2 whitespace-nowrap text-right space-x-3">
-                  {!expense.memberVerified && expense.memberNumber && (
-                    <button
-                      onClick={() => onVerifyRequest(expense)}
-                      className="text-green-700 hover:underline py-1"
-                    >
-                      ยืนยันตัวตน
-                    </button>
-                  )}
+                  {!expense.memberVerified &&
+                    (expense.memberNumber ? (
+                      <button
+                        onClick={() => onVerifyRequest(expense)}
+                        className="text-green-700 hover:underline py-1"
+                      >
+                        ยืนยันตัวตน
+                      </button>
+                    ) : (
+                      // Nothing to check against the roster, so there is
+                      // nothing to press — which left the review queue showing
+                      // rows with no way out of it. Say what the next step is.
+                      <span
+                        className="text-xs text-slate-400"
+                        title="รายการนี้ไม่มีเลขสมาชิก จึงเทียบกับทะเบียนไม่ได้ — กด “แก้ไข” เพื่อใส่เลขสมาชิก แล้วจะยืนยันได้"
+                      >
+                        ใส่เลขสมาชิกก่อน
+                      </span>
+                    ))}
                   <button
                     onClick={() => onEdit(expense)}
                     className="text-slate-600 hover:underline py-1"
