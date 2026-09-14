@@ -132,14 +132,51 @@ const CLOSING_RULES =
   "ให้ตอบสั้นๆ เพื่อปิดบทสนทนาให้จบ **ห้ามทักทายใหม่ (ห้ามขึ้นต้นว่า \"สวัสดีค่ะ\") " +
   "ห้ามแนะนำตัวหรือไล่รายการสิ่งที่ช่วยได้ ห้ามถามว่ามีอะไรให้ช่วยอีกไหม และห้ามเรียก tool ใดๆ**";
 
+// Thai that people actually say.
+//
+// "ไม่ประเด็นค่ะ" reached a member — a word-for-word translation of "no
+// problem" that is not a phrase in this language — in the same reply that
+// asked him a fourth time for a name a staff member had already typed into
+// that chat.
+const CLOSING_WORDS =
+  "คำรับคำขอบคุณให้ใช้คำไทยที่คนพูดกันจริง เช่น \"ยินดีค่ะ\" หรือ \"ด้วยความยินดีค่ะ\" " +
+  "**ห้ามแปลสำนวนภาษาอื่นมาตรงๆ เช่น \"ไม่ประเด็นค่ะ\" เด็ดขาด**";
+
+// Why the pending flow loses the floor here.
+//
+// A member asked about an emergency loan, sent his salary document, and was
+// asked what he wanted — three times, because each message is handled on its
+// own and each time the flow note said the request was still short of a name
+// and a member number. A staff member then answered him in the same chat:
+// typed his name and number for him, and told him what he could borrow. He
+// said "ขอบคุณครับ" — and the bot, which cannot see anything staff type in
+// chat.line.biz, asked for his name and member number a fourth time.
+//
+// The floor used to go to the pending flow whenever one existed, on the
+// grounds that politeness mid-conversation is not the end of a conversation.
+// It is when the member is thanking somebody: they have been answered, and
+// whoever answered them is in this chat. Nothing is lost by staying quiet
+// about what is still missing — the unfinished request sits in the dashboard's
+// own รายการค้าง panel, which is where staff pick it up.
+const PENDING_RULES =
+  "**แม้หมายเหตุระบบด้านบนจะบอกว่ามีเรื่องค้างและยังขาดข้อมูลอยู่ " +
+  "ห้ามถามสิ่งที่ขาดซ้ำในข้อความนี้เด็ดขาด และห้ามทวนว่ายังขาดอะไร** " +
+  "สมาชิกเพิ่งขอบคุณ แปลว่าเรื่องของเขาได้คำตอบแล้ว — บ่อยครั้งเจ้าหน้าที่เป็นคนตอบเองในแชทนี้ " +
+  "ซึ่งเป็นข้อความที่คุณมองไม่เห็น ถ้าเรื่องยังไม่ครบจริง เจ้าหน้าที่ก็เห็นรายการค้างนั้นในระบบอยู่แล้ว";
+
 /**
  * The หมายเหตุระบบ appended to the dynamic half of the system prompt when the
  * member's message is only an acknowledgement. Empty string when it isn't, so
  * the caller can drop it in unconditionally.
+ *
+ * `hasPendingFlow` says whether a transaction, service request or lookup is
+ * still waiting on something — see PENDING_RULES for why that is a reason to
+ * say *less*, not more.
  */
 export function closingNote(
   isAcknowledgement: boolean,
-  recent: RecentAction | null
+  recent: RecentAction | null,
+  hasPendingFlow: boolean = false
 ): string {
   if (!isAcknowledgement) return "";
   const context = recent
@@ -148,6 +185,7 @@ export function closingNote(
     : "ระบบไม่มีข้อมูลว่าเพิ่งทำเรื่องอะไรให้สมาชิกคนนี้ ให้ตอบรับคำขอบคุณอย่างสุภาพโดยไม่เดาว่าเป็นเรื่องอะไร";
   return (
     "\n\nหมายเหตุระบบ (สำคัญ): ข้อความนี้เป็นคำขอบคุณ/คำรับทราบล้วนๆ ไม่มีคำถามหรือเรื่องใหม่ " +
-    `${CLOSING_RULES} ${context}`
+    `${CLOSING_RULES} ${CLOSING_WORDS} ${context}` +
+    (hasPendingFlow ? ` ${PENDING_RULES}` : "")
   );
 }

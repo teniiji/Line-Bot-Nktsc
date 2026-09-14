@@ -121,3 +121,45 @@ describe("closingNote", () => {
     expect(note).not.toContain("NaN");
   });
 });
+
+// The conversation that made the rest of this file stricter, on 14 Sep. A
+// member asked about an emergency loan, sent his salary document, and was
+// asked what he wanted three times over. A staff member then answered him in
+// the same chat — typed his name and member number for him, and told him what
+// he could borrow. He said "ขอบคุณครับ", and the bot asked for his name and
+// member number a fourth time.
+describe("a thank-you while something is still pending", () => {
+  it("forbids asking again for what the flow is missing", () => {
+    const note = closingNote(true, null, true);
+    expect(note).toContain("ห้ามถามสิ่งที่ขาดซ้ำในข้อความนี้เด็ดขาด");
+  });
+
+  it("says why: somebody answered them, and it was probably staff", () => {
+    // Staff replies are typed in chat.line.biz and never reach this bot, so
+    // "the member went quiet" and "the member was helped" look identical here.
+    expect(closingNote(true, null, true)).toContain("เจ้าหน้าที่เป็นคนตอบเองในแชทนี้");
+  });
+
+  it("says the unfinished request is not lost by staying quiet", () => {
+    expect(closingNote(true, null, true)).toContain("เห็นรายการค้างนั้นในระบบอยู่แล้ว");
+  });
+
+  it("leaves the note alone when nothing is pending", () => {
+    const note = closingNote(true, null, false);
+    expect(note).not.toContain("ห้ามถามสิ่งที่ขาดซ้ำ");
+    expect(note).toContain("ข้อความนี้เป็นคำขอบคุณ");
+  });
+
+  it("still says nothing at all when the message was not a sign-off", () => {
+    expect(closingNote(false, null, true)).toBe("");
+  });
+
+  it("asks for Thai a person would actually say", () => {
+    // "ไม่ประเด็นค่ะ" reached a member. It is "no problem" translated word for
+    // word, and it is not a phrase in this language.
+    const note = closingNote(true, null, false);
+    expect(note).toContain("ยินดีค่ะ");
+    expect(note).toContain("ไม่ประเด็นค่ะ");
+    expect(note).toContain("ห้ามแปลสำนวนภาษาอื่นมาตรงๆ");
+  });
+});
