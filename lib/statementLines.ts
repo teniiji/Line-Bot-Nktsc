@@ -43,6 +43,15 @@ const MEMBER_CHANNELS: Record<string, string> = {
   MORPSD: "mobile",
   PTSDT: "ewallet", // "TR from EWALLETID ..."
   SDCH: "cheque",
+  // Money collected through the cooperative's ถุงเงิน account — a member
+  // paying in by QR. It arrived as ฿10,500 sitting in "รายการอื่น" with no
+  // way to record it, because an unrecognised code is treated as
+  // institutional money and the daily view only offers to record a member's.
+  // Its description ("010753700088205-BU0994005S00999915K") names no paying
+  // account in any form extractSenderAccount can read, so these lines reach
+  // staff as money whose payer is unknown — which is exactly what the
+  // ring-round-and-record flow is for.
+  NMPSDP: "qr",
 };
 
 export const OTHER_CHANNEL = "other";
@@ -56,6 +65,7 @@ export const CHANNEL_LABELS: Record<string, string> = {
   mobile: "โอนผ่านมือถือ",
   ewallet: "e-Wallet",
   cheque: "เช็ค",
+  qr: "ถุงเงิน/QR",
   [OTHER_CHANNEL]: "อื่นๆ",
 };
 

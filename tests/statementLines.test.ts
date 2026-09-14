@@ -35,6 +35,18 @@ describe("classifyChannel", () => {
     expect(classifyChannel("PTSDT", 5000)).toBe("ewallet");
   });
 
+  it("counts money collected through ถุงเงิน as a member paying in", () => {
+    // ฿10,500 arrived on this code and sat in รายการอื่น with no way to
+    // record it, because an unrecognised code is treated as institutional
+    // money and only a member's payment can be recorded.
+    expect(classifyChannel("NMPSDP", 10500)).toBe("qr");
+    expect(isMemberDeposit(classifyChannel("NMPSDP", 10500))).toBe(true);
+  });
+
+  it("still refuses a ถุงเงิน code on money going out", () => {
+    expect(classifyChannel("NMPSDP", -10500)).toBe("other");
+  });
+
   it("leaves a code nobody has seen in อื่นๆ rather than guessing", () => {
     // Guessing the other way would put institutional money into a member's
     // reconciliation, which is the more expensive mistake.
@@ -48,7 +60,17 @@ describe("classifyChannel", () => {
   });
 
   it("has a label for every channel it can produce", () => {
-    const produced = ["NBSDT", "IORSDT", "ATSDT", "ATSDC", "MORPSD", "PTSDT", "SDCH", "ZZNEW"].map(
+    const produced = [
+      "NBSDT",
+      "IORSDT",
+      "ATSDT",
+      "ATSDC",
+      "MORPSD",
+      "PTSDT",
+      "SDCH",
+      "NMPSDP",
+      "ZZNEW",
+    ].map(
       (code) => classifyChannel(code, 1)
     );
     for (const channel of produced) expect(CHANNEL_LABELS[channel]).toBeTruthy();
