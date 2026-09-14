@@ -1,6 +1,7 @@
 "use client";
 
 import { CATEGORIES } from "@/lib/categories";
+import DateField from "@/components/DateField";
 import {
   cooperativeToday,
   endOfMonth,
@@ -126,24 +127,18 @@ export default function ExpenseFilters({
             <option value="true">ยืนยันแล้ว</option>
           </select>
         </div>
-        <div className="w-full sm:w-auto">
-          <label className="block text-sm text-slate-600 mb-1">ตั้งแต่วันที่</label>
-          <input
-            type="date"
-            value={filters.from}
-            onChange={(e) => onChange({ ...filters, from: e.target.value })}
-            className="w-full sm:w-auto border border-slate-300 rounded px-3 py-2"
-          />
-        </div>
-        <div className="w-full sm:w-auto">
-          <label className="block text-sm text-slate-600 mb-1">ถึงวันที่</label>
-          <input
-            type="date"
-            value={filters.to}
-            onChange={(e) => onChange({ ...filters, to: e.target.value })}
-            className="w-full sm:w-auto border border-slate-300 rounded px-3 py-2"
-          />
-        </div>
+        <DateField
+          label="ตั้งแต่วันที่"
+          value={filters.from}
+          onChange={(from) => onChange({ ...filters, from })}
+          className="w-full sm:w-auto border border-slate-300 rounded px-3 py-2"
+        />
+        <DateField
+          label="ถึงวันที่"
+          value={filters.to}
+          onChange={(to) => onChange({ ...filters, to })}
+          className="w-full sm:w-auto border border-slate-300 rounded px-3 py-2"
+        />
         {hasActiveFilters && (
           <button
             onClick={() =>

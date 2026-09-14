@@ -63,3 +63,20 @@ export const formatStatementDateTime = (iso: string | null): string => {
   const time = formatStatementTime(iso);
   return time ? `${date} ${time}` : date;
 };
+
+// The Buddhist-era reading of a plain day ("2026-09-14" → "14 ก.ย. 2569").
+//
+// A native <input type="date"> is Gregorian and always will be: the value it
+// holds is an ISO day, and what it draws in the box is the browser's own
+// widget, in whatever calendar the device is set to. Staff here read พ.ศ. —
+// every date this dashboard prints elsewhere is พ.ศ., because th-TH means the
+// Buddhist calendar — so a row of boxes reading 14/09/2026 is the one place
+// the year jumps five centuries.
+//
+// The box cannot be changed, so the reading goes beside it. Empty for a day
+// that is empty or unreadable, so a caller can render it unconditionally.
+export const formatThaiDay = (day: string): string => {
+  if (!day) return "";
+  const date = new Date(`${day}T00:00:00.000Z`);
+  return Number.isNaN(date.getTime()) ? "" : date.toLocaleDateString("th-TH", DATE_PARTS);
+};

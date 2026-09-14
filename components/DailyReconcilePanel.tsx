@@ -17,6 +17,7 @@ import { dayTally, flowByAccount, flowTotal, inByCategory } from "@/lib/statemen
 import { bankFromDescription } from "@/lib/thaiBanks";
 import { cooperativeToday, shiftDay } from "@/lib/cooperativeClock";
 import PanelHelp from "@/components/PanelHelp";
+import DateField from "@/components/DateField";
 import {
   depositHaystack,
   filterBy,
@@ -460,11 +461,9 @@ export default function DailyReconcilePanel() {
         >
           ← วันก่อน
         </button>
-        <input
-          type="date"
+        <DateField
           value={from}
-          onChange={(e) => {
-            const value = e.target.value;
+          onChange={(value) => {
             if (!value) return;
             setFrom(value);
             // Dragging the start past the end is a mistake, not a request for
@@ -474,11 +473,9 @@ export default function DailyReconcilePanel() {
           className="border border-slate-300 rounded-md px-3 py-1.5"
         />
         <span className="text-slate-400">ถึง</span>
-        <input
-          type="date"
+        <DateField
           value={to}
-          onChange={(e) => {
-            const value = e.target.value;
+          onChange={(value) => {
             if (!value) return;
             setTo(value);
             if (value < from) setFrom(value);
