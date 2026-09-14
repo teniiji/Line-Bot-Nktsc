@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { formatAmount } from "@/lib/format";
 import ConfirmDialog from "@/components/ConfirmDialog";
+import PanelHelp from "@/components/PanelHelp";
 
 interface PendingTransactionEntry {
   id: string;
@@ -67,12 +68,16 @@ export default function PendingTransactionsPanel() {
     <div className="bg-white rounded-lg shadow">
       <div className="px-4 py-3 border-b border-slate-100">
         <h2 className="font-semibold">รายการค้าง ({entries.length})</h2>
-        <p className="text-xs text-slate-500 mt-1">
-          สลิปที่บอทรับแล้วแต่ยังบันทึกไม่สำเร็จ — รอสมาชิกตอบข้อมูลที่ขาดอยู่ ยังไม่ขึ้นในตาราง "ธุรกรรม"
-          ด้านล่างจนกว่าจะครบ ถ้าสมาชิกเงียบไปแล้วไม่ตอบ ลบทิ้งได้เลย (ไม่กระทบข้อมูลที่บันทึกสำเร็จแล้ว)
-          รายการที่ขึ้นว่า <span className="text-slate-600">"เลิกรอแล้ว"</span> คือค้างเกิน 30 นาที
-          บอทเลิกรอไปแล้ว ถ้าสมาชิกกลับมาคุยต่อจะเริ่มส่งสลิปใหม่ตั้งแต่ต้น — ควรติดต่อกลับหรือลบทิ้ง
-        </p>
+        <PanelHelp summary="สลิปที่บอทรับแล้วแต่ยังบันทึกไม่สำเร็จ — รอสมาชิกตอบข้อมูลที่ขาดอยู่">
+          <p>
+            ยังไม่ขึ้นในตาราง "ธุรกรรม" ด้านล่างจนกว่าจะครบ ถ้าสมาชิกเงียบไปแล้วไม่ตอบ ลบทิ้งได้เลย
+            (ไม่กระทบข้อมูลที่บันทึกสำเร็จแล้ว)
+          </p>
+          <p>
+            รายการที่ขึ้นว่า <span className="text-slate-500">"เลิกรอแล้ว"</span> คือค้างเกิน 30 นาที
+            บอทเลิกรอไปแล้ว ถ้าสมาชิกกลับมาคุยต่อจะเริ่มส่งสลิปใหม่ตั้งแต่ต้น — ควรติดต่อกลับหรือลบทิ้ง
+          </p>
+        </PanelHelp>
       </div>
       <div className="overflow-x-auto">
         <table className="w-full text-sm min-w-[700px]">

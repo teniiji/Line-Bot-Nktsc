@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { FeatureFlagEntry } from "@/lib/types";
+import PanelHelp from "@/components/PanelHelp";
 
 export default function FeatureFlagsPanel() {
   const [flags, setFlags] = useState<FeatureFlagEntry[]>([]);
@@ -73,12 +74,15 @@ export default function FeatureFlagsPanel() {
     <div className="bg-white rounded-lg shadow">
       <div className="px-4 py-3 border-b border-slate-100">
         <h2 className="font-semibold">ตั้งค่าระบบ</h2>
-        <p className="text-xs text-slate-500 mt-1">
-          เปิด/ปิดฟังก์ชันของบอทเองได้ทันที ไม่ต้องรอ deploy (มีผลภายในประมาณ 15 วินาที) —
-          ปิดฟังก์ชันหลักไว้ บอทจะขอโทษสมาชิกตรงๆ ว่าปิดใช้งานชั่วคราว แทนที่จะทำงานครึ่งๆ กลางๆ
-          ส่วนสวิตช์ "ถามคำถาม..." แต่ละข้อ ปิดไว้แค่ข้ามคำถามนั้นไปเฉยๆ (บันทึกธุรกรรมได้แม้ข้อมูลข้อนั้นยังว่างอยู่)
-          ไม่มีข้อความแจ้งสมาชิก
-        </p>
+        <PanelHelp summary="เปิด/ปิดฟังก์ชันของบอทเองได้ทันที ไม่ต้องรอ deploy (มีผลภายในประมาณ 15 วินาที)">
+          <p>
+            ปิดฟังก์ชันหลักไว้ บอทจะขอโทษสมาชิกตรงๆ ว่าปิดใช้งานชั่วคราว แทนที่จะทำงานครึ่งๆ กลางๆ
+          </p>
+          <p>
+            ส่วนสวิตช์ "ถามคำถาม..." แต่ละข้อ ปิดไว้แค่ข้ามคำถามนั้นไปเฉยๆ
+            (บันทึกธุรกรรมได้แม้ข้อมูลข้อนั้นยังว่างอยู่) ไม่มีข้อความแจ้งสมาชิก
+          </p>
+        </PanelHelp>
       </div>
 
       {error && (

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { statedMemberNumber } from "@/lib/memberIdentity";
 import { CATEGORIES } from "@/lib/categories";
 
 export async function PUT(
@@ -32,10 +33,7 @@ export async function PUT(
       select: { memberNumber: true, memberVerified: true },
     });
 
-    const trimmedNumber =
-      typeof memberNumber === "string" && memberNumber.trim()
-        ? memberNumber.trim()
-        : null;
+    const trimmedNumber = statedMemberNumber(memberNumber);
 
     // Changing the member number invalidates the previous verification;
     // re-check the new number against the roster the same way the agent

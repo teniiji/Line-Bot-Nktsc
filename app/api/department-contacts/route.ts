@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { DEPARTMENTS } from "@/lib/departments";
+import { LINE_TARGET_FORMAT_ERROR, lineTargetKind } from "@/lib/lineGroups";
 
 export const dynamic = "force-dynamic";
 
@@ -32,6 +33,12 @@ export async function POST(request: NextRequest) {
   }
   if (typeof lineUserId !== "string" || !lineUserId.trim()) {
     return NextResponse.json({ error: "ต้องระบุ LINE UserId" }, { status: 400 });
+  }
+  // A department can be pointed at a person or at a group chat; the shape
+  // check catches a display name or a half-copied id here rather than as a
+  // request that fails to reach anyone.
+  if (!lineTargetKind(lineUserId.trim())) {
+    return NextResponse.json({ error: LINE_TARGET_FORMAT_ERROR }, { status: 400 });
   }
 
   try {

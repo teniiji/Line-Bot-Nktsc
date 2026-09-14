@@ -17,6 +17,9 @@ export interface Expense {
   // (dept_notify_* flag), so it isn't a problem to flag.
   forwardStatus: "forwarded" | "failed" | "unconfigured" | "muted";
   forwardedTo: string | null;
+  // Why the push failed, when it did — see lib/pushError.ts. Null unless the
+  // forward failed.
+  forwardError: string | null;
   user: { displayName: string | null; nickname: string | null } | null;
 }
 
@@ -41,6 +44,17 @@ export interface LineUser {
   fullName: string | null;
   memberNumber: string | null;
   unitName: string | null;
+  // The roster's own spelling of this member's name, joined in by
+  // memberNumber the same way unitName is. Kept apart from fullName rather
+  // than folded into it: fullName is what the member typed into the chat and
+  // is what the edit box writes back, while this is the cooperative's record
+  // — the two disagree in small ways ("หมื่นหาวงศ์" against "หมื่นหาวงค์")
+  // and it matters which one is being changed.
+  rosterName: string | null;
+  // Whether MemberRoster has a row for this member number at all — which is
+  // what tells "no member number yet" apart from "that number is not in the
+  // roster", two blanks with completely different fixes.
+  inRoster: boolean;
   botPaused: boolean;
   createdAt: string;
 }
@@ -56,6 +70,24 @@ export interface MemberRosterEntry {
   // themselves to the bot at least once. Staff can only clear it, never set
   // it — see the PUT handler in app/api/member-roster/[memberNumber].
   lineUserId: string | null;
+  // True when nationalId above is the masked form, not what is stored — the
+  // API masks it while browsing the whole roster and returns it in full for a
+  // search that names who you are looking at. See lib/memberPrivacy.ts.
+  nationalIdMasked: boolean;
+  // Every bank account bound to this member, so "who is this and what do they
+  // transfer from" is one lookup instead of two panels in two tabs.
+  bankAccounts: string[];
+  // Which LINE account the binding above points at — the member's nickname if
+  // they set one through the bot, otherwise their LINE profile name. null when
+  // nothing is bound, and also when the binding points at an account this app
+  // has no record of.
+  lineDisplayName: string | null;
+  // False when lineUserId names an account that no longer exists here. A LINE
+  // userId is scoped to the OA channel that issued it, so every binding made
+  // under an earlier channel is now a lock on the member rather than a
+  // convenience — the impersonation guard refuses their transactions until
+  // staff clear it.
+  lineAccountExists: boolean;
 }
 
 export interface ServiceRequestLogEntry {
@@ -70,8 +102,14 @@ export interface ServiceRequestLogEntry {
   department: string | null;
   imageUrl: string | null;
   forwardedTo: string | null;
+  // Why the push failed, when it did — see lib/pushError.ts. Null unless the
+  // forward failed.
+  forwardError: string | null;
   status: "forwarded" | "failed" | "unconfigured" | "muted";
   createdAt: string;
+  // When staff last sent this request to the officer again from the dashboard.
+  // Null for every request nobody had to.
+  resentAt: string | null;
 }
 
 export interface FeatureFlagEntry {
@@ -80,4 +118,246 @@ export interface FeatureFlagEntry {
   label: string;
   enabled: boolean;
   updatedAt: string;
+}
+
+// A month's round of รายการหัก plus how far along it is, for the round
+// switcher in DeductionRoundsPanel.
+export interface DeductionRoundSummary {
+  id: string;
+  period: string;
+  label: string;
+  note: string | null;
+  closedAt: string | null;
+  createdAt: string;
+  totalUnits: number;
+  readyUnits: number;
+  sentUnits: number;
+  failedUnits: number;
+}
+
+// One unit's row within a round. Contact details are joined in from
+// OrganizationUnit by the API — hasLineId rather than the id itself, since
+// the table only needs to know whether LINE delivery is possible.
+export interface DeductionUnitRow {
+  id: string;
+  unitName: string;
+  groupName: string | null;
+  contactName: string | null;
+  email: string | null;
+  hasLineId: boolean;
+  contactMethod: string | null;
+  fileName: string | null;
+  fileUrl: string | null;
+  amount: number | null;
+  memberCount: number | null;
+  sendStatus: string;
+  sentAt: string | null;
+  sentVia: string | null;
+  sendError: string | null;
+}
+
+// A unit that receives รายการหัก each month, with the contact details the
+// send step uses. Editable from the dashboard (OrganizationUnitsPanel) as
+// well as by scripts/import-org-data.ts.
+export interface OrganizationUnitEntry {
+  id: string;
+  name: string;
+  groupName: string | null;
+  contactName: string | null;
+  email: string | null;
+  lineUserId: string | null;
+  contactMethod: string | null;
+  note: string | null;
+}
+
+export interface StatementRoundSummary {
+  id: string;
+  period: string;
+  label: string;
+  createdAt: string;
+  totalMembers: number;
+  paidMembers: number;
+  overpaidMembers: number;
+  unpaidMembers: number;
+  // Units in the uploaded sheet that had not reported a deduction result yet.
+  // Their members are not on the round's list — nobody knows whether they
+  // paid — so the round only covers part of the month until they come in.
+  awaitingUnits: number;
+  awaitingMembers: number;
+  awaitingAmount: number;
+}
+
+export interface StatementMemberRow {
+  id: string;
+  memberNumber: string;
+  name: string;
+  unitName: string | null;
+  hCode: string | null;
+  note: string | null;
+  accountNumber: string | null;
+  amountDue: number;
+  amountPaid: number;
+  paidAt: string | null;
+  paidBranch: string | null;
+  status: string;
+}
+
+// One entry in the directory of "this bank account belongs to this member".
+export interface MemberBankAccountEntry {
+  id: string;
+  accountNumber: string;
+  memberNumber: string;
+  memberName: string | null;
+  unitName: string | null;
+  inRoster: boolean;
+  note: string | null;
+  updatedAt: string;
+}
+
+// One statement file a round has been built from. Uploads accumulate, so
+// this is how staff see what is already loaded before adding the next export.
+export interface StatementFileSummary {
+  account: string;
+  branch: string;
+  sourceFile: string | null;
+  transfers: number;
+  amount: number;
+}
+
+// One line read out of a bank statement, with everything the tab needs to
+// decide whether it was really paying off a failed deduction.
+export interface StatementTransferRow {
+  id: string;
+  memberNumber: string | null;
+  accountNumber: string;
+  amount: number;
+  transferredAt: string | null;
+  branch: string | null;
+  description: string | null;
+  // Set once staff say this money was for ซื้อหุ้น, ชำระหนี้, ฝากเงิน …
+  excludedReason: string | null;
+  // A slip the member filed through the bot under some other purpose that
+  // lines up with this transfer — a prompt to check, never a decision.
+  slipHint: { category: string; amount: number; date: string } | null;
+}
+
+// A transfer that matched nobody on the round's list — money that arrived
+// under an account number the หักไม่ได้ sheet doesn't carry.
+export interface StatementUnmatchedRow {
+  id: string;
+  accountNumber: string;
+  amount: number;
+  transferredAt: string | null;
+  branch: string | null;
+  description: string | null;
+}
+
+// One line of money arriving in a cooperative account, for the daily
+// reconciliation against slips. Wider than StatementTransferRow: this counts
+// counter deposits, ATM and the rest, not only transfers made in the app.
+export interface DailyDepositRow {
+  id: string;
+  amount: number;
+  postedAt: string | null;
+  senderAccount: string | null;
+  channel: string;
+  branch: string;
+  description: string;
+  // Who the bank-account directory says the paying account belongs to.
+  memberNumber: string | null;
+}
+
+// One slip a member filed through the bot — or, when statementLineId is set,
+// a payment staff recorded from a bank line because no slip was ever sent.
+export interface DailySlipRow {
+  id: string;
+  amount: number;
+  date: string;
+  memberNumber: string | null;
+  memberFullName: string | null;
+  category: string | null;
+  // Read off the slip when it showed them: the time as "HH:MM" on the slip's
+  // own clock, and the paying account exactly as printed, mask and all.
+  transferTime: string | null;
+  senderAccount: string | null;
+  slipImageUrl: string | null;
+  // The bank line a person recorded this from, when it was recorded that way.
+  // null for a slip the member sent, which is nearly all of them.
+  statementLineId: string | null;
+}
+
+// A statement line that is not a member paying in — the cooperative's own
+// transfers, fees, pension postings. Kept visible rather than dropped.
+export interface DailyOtherLineRow {
+  id: string;
+  amount: number;
+  postedAt: string | null;
+  txnCode: string;
+  description: string;
+  branch: string;
+}
+
+// One line of the bank's statement, as the bank wrote it, plus the
+// conclusion the daily reconciliation reached about it. Every stored line of
+// the day appears here exactly once — see lib/statementDayView.ts.
+export interface DailyStatementRow {
+  id: string;
+  postedAt: string | null;
+  txnCode: string;
+  description: string;
+  amount: number;
+  balance: number | null;
+  account: string;
+  branch: string;
+  channel: string;
+  senderAccount: string | null;
+  status: "matched" | "knownPayer" | "unknownPayer" | "notMemberMoney";
+  memberNumber: string | null;
+  // Joined in from MemberRoster by memberNumber, falling back to the name on
+  // the paired slip. Both null for a line nobody has been matched to.
+  memberName: string | null;
+  // The member's unit, which is who staff contact about an unclaimed payment.
+  unitName: string | null;
+  // What the payment was for, off the slip that was paired with this line —
+  // ฝากเงิน, ชำระหนี้, ซื้อหุ้น. Null while nothing has been paired with it,
+  // which is most lines on a day nobody has worked through yet.
+  category: string | null;
+}
+
+export interface DailyReconcileResult {
+  date: string;
+  // The whole day in the bank's order, for reading against the statement
+  // itself rather than by what the system concluded.
+  statement: DailyStatementRow[];
+  matched: {
+    deposit: DailyDepositRow;
+    slip: DailySlipRow;
+    // How the pair was arrived at, strongest first. "staff" — a person
+    // recorded the transaction from this exact bank line, so the pairing was
+    // never inferred at all. "account" — the directory confirmed the payer.
+    // "slipAccount" — the account printed on the slip agrees with the one the
+    // bank named, which needs no directory. "time" — the amounts agree and
+    // the two clocks are within the hour. "amount" — the amounts agree and
+    // nothing else is known, which is a guess on a day holding more than one
+    // payment that size.
+    basis: "staff" | "account" | "slipAccount" | "time" | "amount";
+    dayApart: boolean;
+    // Minutes between the slip's clock and the bank's posting, when both are
+    // known. null for every slip logged before the time was read.
+    minutesApart: number | null;
+  }[];
+  slipsWithoutMoney: DailySlipRow[];
+  depositsWithoutSlip: DailyDepositRow[];
+  otherLines: DailyOtherLineRow[];
+  totals: {
+    depositCount: number;
+    depositAmount: number;
+    slipCount: number;
+    slipAmount: number;
+    matchedCount: number;
+    matchedAmount: number;
+  };
+  // False when no statement covering this day has been uploaded yet — a
+  // different thing from a day on which no money arrived.
+  loaded: boolean;
 }

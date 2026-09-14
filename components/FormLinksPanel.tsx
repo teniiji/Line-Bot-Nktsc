@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import ConfirmDialog from "@/components/ConfirmDialog";
+import { filterBy, formLinkHaystack } from "@/lib/listSearch";
 
 interface FormLink {
   id: string;
@@ -27,6 +28,9 @@ export default function FormLinksPanel() {
 
   const [error, setError] = useState<string | null>(null);
   const [pendingDelete, setPendingDelete] = useState<FormLink | null>(null);
+  // Sixty-odd links in one list, edited by scrolling until the right name
+  // goes past. See lib/listSearch.ts.
+  const [search, setSearch] = useState("");
 
   const fetchLinks = async () => {
     setLoading(true);
@@ -114,6 +118,8 @@ export default function FormLinksPanel() {
     await fetchLinks();
   };
 
+  const shown = filterBy(links, search, formLinkHaystack);
+
   return (
     <div className="bg-white rounded-lg shadow">
       <div className="px-4 py-3 border-b border-slate-100">
@@ -168,15 +174,39 @@ export default function FormLinksPanel() {
         <p className="text-sm text-red-600 bg-red-50 rounded px-3 py-2 mx-4 mt-3">{error}</p>
       )}
 
+      {!loading && links.length > 0 && (
+        <div className="flex flex-wrap items-center gap-2 px-4 py-2.5 border-b border-slate-100">
+          <input
+            type="search"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="ค้นหาชื่อแบบฟอร์ม key หรือลิงก์…"
+            className="border border-slate-300 rounded px-3 py-1.5 text-sm w-full sm:w-80"
+          />
+          <span className="text-xs text-slate-500">
+            {search.trim() ? (
+              <>
+                แสดง <strong className="text-slate-900">{shown.length}</strong> จาก {links.length}{" "}
+                รายการ
+              </>
+            ) : (
+              <>ทั้งหมด {links.length} รายการ</>
+            )}
+          </span>
+        </div>
+      )}
+
       {loading ? (
         <p className="text-slate-500 text-sm py-8 text-center">กำลังโหลด…</p>
       ) : links.length === 0 ? (
         <p className="text-slate-500 text-sm py-8 text-center">
           ยังไม่มีลิงก์แบบฟอร์ม — เพิ่มด้วยฟอร์มด้านบน
         </p>
+      ) : shown.length === 0 ? (
+        <p className="text-slate-500 text-sm py-8 text-center">ไม่มีแบบฟอร์มที่ตรงกับที่ค้นหา</p>
       ) : (
         <ul className="divide-y divide-slate-100">
-          {links.map((link) => (
+          {shown.map((link) => (
             <li key={link.id} className="px-4 py-3">
               {editingId === link.id ? (
                 <div className="space-y-2">

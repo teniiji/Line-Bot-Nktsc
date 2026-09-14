@@ -46,6 +46,16 @@ export const tools: Anthropic.Tool[] = [
           description:
             "The name shown in the slip's \"จาก\" (sender/from) field — the person or account the money is moving FROM — if a slip image or PDF is present and clearly shows one. Copy exactly as printed, including any title (นาย/นาง/นางสาว). Omit if not visible, not applicable, or this message has no slip attached. Never guess.",
         },
+        transferTime: {
+          type: "string",
+          description:
+            "The time of day printed on the slip, as HH:MM on a 24-hour clock (e.g. \"09:07\" or \"14:32\"). Copy what is printed — if the slip shows seconds, they are ignored. This is what lets staff tell apart several members who transferred the same amount on the same day, so report it whenever a slip shows one. Omit if no time is visible, or this message has no slip. Never guess.",
+        },
+        senderAccount: {
+          type: "string",
+          description:
+            "The paying account number shown next to the slip's \"จาก\" (sender/from) name — the account the money left. Copy it EXACTLY as printed, including the hyphens and every masking character (e.g. \"xxx-x-x7288-5\"); do not fill in, guess, or drop the hidden digits. This is the account the bank's own statement will name, so even a mostly-masked one is useful. Omit if the slip shows no account number for the sender, or this message has no slip.",
+        },
         recipientName: {
           type: "string",
           description:
@@ -57,20 +67,25 @@ export const tools: Anthropic.Tool[] = [
   {
     name: "submit_member_info",
     description:
-      "Call when the user provides their full name and cooperative member number — either proactively, or in answer to being asked for it. Never call this for any other reason.",
+      "Call when the user provides their full name and/or cooperative member number — either proactively, or in answer to being asked for it. Send whatever they actually stated, even if that is only one of the two: the system stores each piece as it arrives and tells you which is still outstanding. Members routinely give the number in one message and the name in the next. Never call this for any other reason.",
     input_schema: {
       type: "object",
       properties: {
         fullName: {
           type: "string",
-          description: "The member's full name (ชื่อ-นามสกุล), copied as stated.",
+          description:
+            "The member's full name (ชื่อ-นามสกุล), copied as stated. Omit the field entirely if they have not stated a name yet — never send a placeholder, and never repeat a name the system says it already holds.",
         },
         memberNumber: {
           type: "string",
-          description: "The member's cooperative member number (เลขสมาชิก), copied as stated.",
+          description:
+            "The member's cooperative member number (เลขสมาชิก), copied as stated. Omit the field entirely if they have not stated one yet — never send a placeholder, and never send their national ID (13 digits) in its place.",
         },
       },
-      required: ["fullName", "memberNumber"],
+      // Deliberately neither is required. Requiring both is what made the
+      // model fill the missing one with "<UNKNOWN>" rather than leave it out,
+      // and what made a member who answered one question per message get both
+      // answers thrown away and be asked for each of them twice.
     },
   },
   {
@@ -137,7 +152,7 @@ export const tools: Anthropic.Tool[] = [
   {
     name: "decline_unreadable_image",
     description:
-      "Use only for an image or PDF that genuinely isn't a bank/wallet transaction slip and isn't one of the known supporting-document types either (a random unrelated photo, or a slip whose own text explicitly says the transaction failed/is pending/was cancelled). For a payslip, ID card copy, house registration copy, or marriage certificate, use flag_supporting_document instead — those aren't declined, they're routed to ask what the user needs. Call this instead of replying with plain text — your reply text afterward explains why to the user.",
+      "Use only for an image or PDF that genuinely isn't a bank/wallet transaction slip and isn't one of the known supporting-document types either (a random unrelated photo, or a slip whose own text explicitly says the transaction failed/is pending/was cancelled). For a payslip, ID card copy, house registration copy, or marriage certificate, use flag_supporting_document instead — those aren't declined, they're routed to ask what the user needs. Call this instead of replying with plain text — the tool result tells you what your reply must do. Note it does NOT always mean asking for a slip: when nothing is waiting for one, an everyday photo (an envelope, a letter, a screenshot) means saying what you see and asking what the member needs, because they may never have been trying to send a payment at all.",
     input_schema: {
       type: "object",
       properties: {
@@ -190,7 +205,7 @@ export const tools: Anthropic.Tool[] = [
   {
     name: "request_staff_help",
     description:
-      "Call when the member has a request that needs cooperative staff to act on, but there is NO document to attach and none is needed — most commonly a forgotten app/system password or being unable to log in (ลืมรหัสผ่าน, เข้าแอปไม่ได้). Never attempt to reset a password or explain a self-service reset flow yourself — this bot has no such capability, and the cooperative's own process is for staff to reset it manually after confirming identity. Do not use this for a request that came with an attached document (use flag_supporting_document for those instead) or for anything already covered by a more specific tool (transaction logging, loan/rate questions answerable from the reference data). Starts the same identity + callback-phone collection flow as a document-based request, then forwards to the right department.",
+      "Call when the member has a request that needs cooperative staff to act on, but there is NO document to attach and none is needed — most commonly a forgotten app/system password or being unable to log in (ลืมรหัสผ่าน, เข้าแอปไม่ได้). Never attempt to reset a password or explain a self-service reset flow yourself — this bot has no such capability, and the cooperative's own process is for staff to reset it manually after confirming identity. Do not use this for a request that came with an attached document — use flag_supporting_document for those, and submit_service_purpose to say what an already-attached document is for. If the member has sent a document at any point in this conversation, this is the wrong tool and submit_service_purpose is the right one. Do not use it either for anything already covered by a more specific tool (transaction logging, loan/rate questions answerable from the reference data). Starts the same identity + callback-phone collection flow as a document-based request, then forwards to the right department.",
     input_schema: {
       type: "object",
       properties: {
@@ -207,6 +222,22 @@ export const tools: Anthropic.Tool[] = [
         },
       },
       required: ["purpose", "department"],
+    },
+  },
+  {
+    name: "leave_to_staff",
+    description:
+      "Call when the member has asked something this bot cannot actually answer, and say nothing to them — staff read this chat and will reply. Use it for exactly three things: (1) a request to APPROVE, WAIVE, or make an EXCEPTION to a rule — including a postponement that would run past the cooperative's own month-end deadline; (2) a complaint or dispute about money — a transfer that did not arrive, a refund not paid, a figure the member says is wrong — where confirming or denying it without checking would be a guess, and money is too sensitive to guess about; (3) a message where you genuinely do not know what the member is referring to — but when a system note quotes the message the member tapped ตอบกลับ on, they have said what they are referring to, so this third reason does not apply. NEVER use it for anything else. In particular: a member telling you which day they will remit, or asking whether an ordinary date inside the normal schedule is alright, is NOT an approval request — staff simply acknowledge those, so acknowledge it briefly yourself. A question about the member's own borrowing limit or balance is NOT this either — explain what the figure depends on, using the reference data, and say staff confirm the actual number in the system; never state a number, but never go silent on it. And never use this for anything the reference data already answers, for a transfer slip or any transaction step, for a thank-you, or while any transaction, service request, or member-number lookup is in progress. The test is whether an answer from you would be a guess about that member's own money, or a decision that is not yours to make.",
+    input_schema: {
+      type: "object",
+      properties: {
+        reason: {
+          type: "string",
+          description:
+            "Short note, in Thai, on what the member asked and why it is staff's to answer. Recorded in the logs only — the member never sees it.",
+        },
+      },
+      required: ["reason"],
     },
   },
   {

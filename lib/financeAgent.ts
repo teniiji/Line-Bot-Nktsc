@@ -7,15 +7,23 @@ import type Anthropic from "@anthropic-ai/sdk";
 import { anthropic } from "./anthropicClient";
 import { getKnowledgeText } from "./knowledge";
 import { getFormLinksData } from "./formLinks";
-import { stripDisallowedLinks } from "./links";
+import { sanitiseReplyText } from "./replyText";
 import { tools } from "./agent/tools";
+import { forcedToolChoice, toolsForMessage } from "./agent/toolChoice";
 import { buildSystemPrompt } from "./agent/prompts";
+import { isAcknowledgementOnly, closingNote } from "./closingReply";
+import { recentReplyNote } from "./recentReply";
+import { messageHintNote } from "./messageHints";
+import { quotedMessageNote } from "./quotedMessage";
 import {
   loadLineUser,
-  loadPending,
+  loadAllPending,
   loadPendingServiceRequest,
   loadPendingLookup,
   loadDisabledRequirements,
+  loadRecentAction,
+  loadPreviousReply,
+  loadQuotedMessage,
   computeNextRequirement,
   computeServiceRequirement,
   computeLookupRequirement,
@@ -24,6 +32,7 @@ import {
 import { executeTool } from "./agent/handlers";
 import { buildInitialUserMessage } from "./agent/messages";
 import type { FinanceAgentReply, ToolContext } from "./agent/types";
+import type { ReplyKind } from "./replyKind";
 
 export type { FinanceAgentReply } from "./agent/types";
 
@@ -49,22 +58,47 @@ function hasAttachmentContent(content: Anthropic.MessageParam["content"]): boole
   );
 }
 
+// The member's message as plain text, or null when anything else came with
+// it — a photo is never a bare "ขอบคุณค่ะ", whatever caption is attached.
+function plainTextOf(content: Anthropic.MessageParam["content"]): string | null {
+  if (typeof content === "string") return content;
+  if (content.some((block) => block.type !== "text")) return null;
+  return content.map((block) => (block.type === "text" ? block.text : "")).join(" ");
+}
+
 export async function runFinanceAgent(
   userContent: Anthropic.MessageParam["content"],
   lineUserId: string,
   slipImageUrlPromise: Promise<string | null> = Promise.resolve(null),
   slipImageHash: string | null = null,
-  slipIsPdf: boolean = false
+  slipIsPdf: boolean = false,
+  // The id of the message this one was sent as a reply to, straight off the
+  // webhook event — null on the great majority of messages, which quote
+  // nothing.
+  quotedMessageId: string | null = null
 ): Promise<FinanceAgentReply> {
-  const [lineUser, pending, pendingService, pendingLookup, knowledgeText, formLinksData, disabledRequirements] =
+  // Decided before the loads so the recent-action lookup joins them in the
+  // same round trip instead of adding a second one — and is skipped entirely
+  // on every ordinary message, which is nearly all of them.
+  const messageText = plainTextOf(userContent);
+  const isAcknowledgement = messageText !== null && isAcknowledgementOnly(messageText);
+
+  const [lineUser, queuedPending, pendingService, pendingLookup, knowledgeText, formLinksData, disabledRequirements, recentAction, previousReply, quoted] =
     await Promise.all([
       loadLineUser(lineUserId),
-      loadPending(lineUserId),
+      loadAllPending(lineUserId),
       loadPendingServiceRequest(lineUserId),
       loadPendingLookup(lineUserId),
       getKnowledgeText(),
       getFormLinksData(),
       loadDisabledRequirements(),
+      isAcknowledgement ? loadRecentAction(lineUserId) : Promise.resolve(null),
+      loadPreviousReply(lineUserId),
+      // Joins the same round trip, and is skipped entirely on a message that
+      // quotes nothing — nearly all of them.
+      quotedMessageId
+        ? loadQuotedMessage(lineUserId, quotedMessageId)
+        : Promise.resolve(null),
     ]);
 
   // The caller kicks off the Blob upload before calling this function but
@@ -79,6 +113,35 @@ export async function runFinanceAgent(
     return resolvedSlipImageUrl;
   }
 
+  // The oldest waiting payment is the one the bot is asking about; the count
+  // tells the model not to answer as though only one slip had arrived.
+  const pending = queuedPending[0] ?? null;
+
+  // A pending flow outranks a sign-off: "ขอบคุณค่ะ" while the bot is still
+  // waiting for a slip is politeness mid-conversation, not the end of one,
+  // and the flow note has to keep the floor.
+  const closing =
+    isAcknowledgement && !pending && !pendingService && !pendingLookup
+      ? closingNote(true, recentAction)
+      : "";
+
+  // What the bot said a moment ago, so two messages typed in the same breath
+  // do not get two answers saying the same thing.
+  const previousNote = recentReplyNote(previousReply, new Date());
+
+  // What this message already answered. Only ever asked about things still
+  // outstanding: a hint about a name already on record would invite the model
+  // to overwrite the roster's spelling with one read out of a sentence.
+  const hints = messageHintNote({
+    text: messageText,
+    needsName: !lineUser?.fullName,
+    needsCategory: pending !== null && !pending.category,
+  });
+
+  // The message the member tapped ตอบกลับ on — the subject of the sentence
+  // they just typed, which the model has no other way of seeing.
+  const quotedNote = quotedMessageNote(quotedMessageId !== null, quoted);
+
   const { base, dynamic } = buildSystemPrompt(
     lineUser,
     pending,
@@ -86,7 +149,12 @@ export async function runFinanceAgent(
     pendingLookup,
     knowledgeText,
     formLinksData.text,
-    disabledRequirements
+    disabledRequirements,
+    queuedPending.length,
+    closing,
+    previousNote,
+    hints,
+    quotedNote
   );
   // A cache breakpoint on the static base block caches everything before it
   // in the request (all tool definitions + this base system prompt), since
@@ -104,48 +172,43 @@ export async function runFinanceAgent(
   // buildInitialUserMessage adds a second cache breakpoint on a slip
   // attachment so the loop's later calls read the image from cache.
   const messages: Anthropic.MessageParam[] = [buildInitialUserMessage(userContent)];
+  // A tool that can only be about a picture is not offered on a message that
+  // has none — see toolsForMessage.
+  const availableTools = toolsForMessage(
+    tools,
+    hasAttachmentContent(userContent),
+    pending !== null || pendingService !== null || pendingLookup !== null
+  );
+
+  // Set by a tool whose reply can repeat itself into noise, and read by the
+  // caller to decide whether to send this one at all — see lib/replyKind.ts.
+  let replyKind: ReplyKind = null;
 
   for (let turn = 0; turn < MAX_TOOL_TURNS; turn++) {
-    // The model tends to respond with plain text instead of calling a tool
-    // when it wants to ask something. Force the specific tool the pending
-    // transaction is waiting on so a text reply naming member info / loan
-    // type is never silently dropped as a bare text response. Images
-    // always need vision judgement (real slip vs. not), so those force
-    // "any" tool rather than a single named one.
-    let toolChoice: Anthropic.ToolChoice | undefined;
-    const next = pending ? computeNextRequirement(lineUser, pending, disabledRequirements) : null;
+    // Which tool call, if any, this turn is required to make — see
+    // lib/agent/toolChoice.ts for why turn 0 is forced and why only the
+    // member-number lookup is pinned to one named tool.
+    const next = pending
+      ? computeNextRequirement(lineUser, pending, disabledRequirements)
+      : null;
     const serviceNext =
       !pending && pendingService ? computeServiceRequirement(lineUser, pendingService) : null;
     const lookupNext =
       !pending && !pendingService && pendingLookup
         ? computeLookupRequirement(pendingLookup)
         : null;
-    if (turn === 0 && next === "member_info" && !hasAttachmentContent(userContent)) {
-      toolChoice = { type: "tool", name: "submit_member_info" };
-    } else if (turn === 0 && next === "category" && !hasAttachmentContent(userContent)) {
-      toolChoice = { type: "tool", name: "report_transaction" };
-    } else if (turn === 0 && next === "loan_type" && !hasAttachmentContent(userContent)) {
-      toolChoice = { type: "tool", name: "submit_loan_type" };
-    } else if (turn === 0 && next === "deposit_account" && !hasAttachmentContent(userContent)) {
-      toolChoice = { type: "tool", name: "submit_deposit_account" };
-    } else if (turn === 0 && next === "confirm_sender_name" && !hasAttachmentContent(userContent)) {
-      toolChoice = { type: "tool", name: "confirm_transaction_sender" };
-    } else if (turn === 0 && serviceNext === "purpose" && !hasAttachmentContent(userContent)) {
-      toolChoice = { type: "tool", name: "submit_service_purpose" };
-    } else if (turn === 0 && serviceNext === "member_info" && !hasAttachmentContent(userContent)) {
-      toolChoice = { type: "tool", name: "submit_member_info" };
-    } else if (turn === 0 && serviceNext === "phone" && !hasAttachmentContent(userContent)) {
-      toolChoice = { type: "tool", name: "submit_contact_phone" };
-    } else if (turn === 0 && lookupNext !== null && !hasAttachmentContent(userContent)) {
-      toolChoice = { type: "tool", name: "submit_lookup_info" };
-    } else if (turn === 0 && hasAttachmentContent(userContent)) {
-      toolChoice = { type: "any" };
-    }
+    const toolChoice = forcedToolChoice({
+      turn,
+      hasAttachment: hasAttachmentContent(userContent),
+      next,
+      serviceNext,
+      lookupNext,
+    });
     const response = await anthropic.messages.create({
       model,
       max_tokens: 1024,
       system,
-      tools,
+      tools: availableTools,
       messages,
       ...(toolChoice ? { tool_choice: toolChoice } : {}),
     });
@@ -193,11 +256,12 @@ export async function runFinanceAgent(
         );
       }
       return {
-        text: stripDisallowedLinks(
+        text: sanitiseReplyText(
           text || "ขอโทษค่ะ ไม่สามารถตอบได้ในตอนนี้",
           formLinksData.hosts
         ),
         quickReplies: await computeQuickReplies(lineUserId),
+        replyKind,
       };
     }
 
@@ -205,6 +269,9 @@ export async function runFinanceAgent(
 
     const ctx: ToolContext = {
       lineUserId,
+      noteReplyKind: (kind) => {
+        replyKind = kind;
+      },
       slipImageUrl: await resolveSlipImageUrl(),
       slipImageHash,
       hasSlipImage: hasAttachmentContent(userContent),
@@ -237,11 +304,12 @@ export async function runFinanceAgent(
     (block): block is Anthropic.TextBlock => block.type === "text"
   );
   return {
-    text: stripDisallowedLinks(
+    text: sanitiseReplyText(
       finalText?.text.trim() || "ขอโทษค่ะ ดำเนินการไม่สำเร็จ ลองใหม่อีกครั้งนะคะ",
       formLinksData.hosts
     ),
     quickReplies: await computeQuickReplies(lineUserId),
+    replyKind,
   };
 }
 

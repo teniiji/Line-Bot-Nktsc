@@ -1,0 +1,1469 @@
+"use client";
+
+import { Fragment, useCallback, useEffect, useState } from "react";
+import {
+  formatAmount,
+  formatStatementDate,
+  formatStatementTime,
+  formatStatementTimeExact,
+} from "@/lib/format";
+import { CATEGORIES } from "@/lib/categories";
+import { accountCaveat, canBindAccount } from "@/lib/depositRecord";
+import { CHANNEL_LABELS } from "@/lib/statementLines";
+import { STATUS_LABELS } from "@/lib/statementDayView";
+import { STATEMENT_ACCOUNTS } from "@/lib/statementReconcile";
+import { branchesIn, missingBranches, summariseByAccount } from "@/lib/dailyAccountSummary";
+import { dayTally, flowByAccount, flowTotal, inByCategory } from "@/lib/statementTotals";
+import { bankFromDescription } from "@/lib/thaiBanks";
+import { cooperativeToday, shiftDay } from "@/lib/cooperativeClock";
+import PanelHelp from "@/components/PanelHelp";
+import {
+  depositHaystack,
+  filterBy,
+  filterStatementRows,
+  matchedPairHaystack,
+  otherLineHaystack,
+  slipHaystack,
+} from "@/lib/statementSearch";
+import {
+  DailyDepositRow,
+  DailyOtherLineRow,
+  DailyReconcileResult,
+  DailySlipRow,
+  DailyStatementRow,
+} from "@/lib/types";
+
+// The day it is at the cooperative, not on this device: the tab opens on
+// today's money, and a browser reading UTC opens on yesterday's until seven in
+// the morning. shiftDay is the same day arithmetic this file had, moved into
+// lib/cooperativeClock.ts so every preset in the dashboard agrees on it.
+const todayISO = () => cooperativeToday();
+
+const Money = ({ value, className = "" }: { value: number; className?: string }) => (
+  <span className={`num whitespace-nowrap ${className}`}>{formatAmount(value)}</span>
+);
+
+// Over more than one day every table has the same problem the statement one
+// had: rows ordered by the full timestamp read 11:12, then 20:12, then 07:01,
+// and nothing on screen says why.
+const Clock = ({ iso, withDate = false }: { iso: string | null; withDate?: boolean }) => {
+  const time = formatStatementTime(iso);
+  if (!time) return <span className="num text-slate-500">{formatStatementDate(iso)}</span>;
+  if (!withDate) return <span className="num text-slate-500">{time}</span>;
+  return (
+    <span className="num block leading-tight text-slate-500">
+      <span className="block text-xs text-slate-400">{formatStatementDate(iso)}</span>
+      <span className="block">{time}</span>
+    </span>
+  );
+};
+
+// "(21 รายการ)" while everything is shown, "(3 จาก 21 รายการ)" while a search
+// is narrowing it — so a heading never quietly reports a filtered count as if
+// it were the whole thing.
+const countLabel = (shown: number, total: number, unit: string) =>
+  shown === total ? `${total} ${unit}` : `${shown} จาก ${total} ${unit}`;
+
+// The same, with the seconds kept. Only the statement table uses it: that is
+// the one read line by line against the bank's printout, where the seconds
+// separate two postings in the same minute.
+//
+// Over more than one day the date has to come with it. The rows are ordered
+// by the full timestamp, so across days the times read 11:12, then 20:12,
+// then 07:01 — which looks like a sorting fault rather than a new day, and
+// two postings from the same payer account on different days read as one
+// duplicated line.
+const ExactClock = ({ iso, withDate = false }: { iso: string | null; withDate?: boolean }) => {
+  const time = formatStatementTimeExact(iso);
+  if (!time) return <span className="num text-slate-500">{formatStatementDate(iso)}</span>;
+  if (!withDate) return <span className="num text-slate-500">{time}</span>;
+  return (
+    <span className="num block leading-tight text-slate-500">
+      <span className="block text-xs text-slate-400">{formatStatementDate(iso)}</span>
+      <span className="block">{time}</span>
+    </span>
+  );
+};
+
+// The bank's own text for a line, with the paying bank spelled out when the
+// line names one. A counter deposit arrives as "014-8592630385": the three
+// digits are the paying bank's interbank code, so the line already says which
+// bank the member used — it just says it in a form nobody reads at a glance,
+// and "which bank did you pay from" is the question staff ring to ask.
+//
+// The raw text stays exactly as the bank wrote it, because it is what a
+// person ties out against the printout; the name is added beside it.
+const StatementDetail = ({ description }: { description: string }) => {
+  const bank = bankFromDescription(description);
+  return (
+    <span>
+      <span className="font-mono text-xs text-slate-400">{description}</span>
+      {bank && <span className="text-xs text-slate-600"> · ธ.{bank.name}</span>}
+    </span>
+  );
+};
+
+// Who a payment came from, as far as anything knows. The account number is
+// what staff match against the bank; the member number is only there when the
+// directory recognised it.
+const Payer = ({ deposit }: { deposit: DailyDepositRow }) => (
+  <span>
+    {deposit.memberNumber ? (
+      <span className="num">{deposit.memberNumber}</span>
+    ) : (
+      <span className="text-slate-400">ไม่รู้ว่าใคร</span>
+    )}
+    {deposit.senderAccount && (
+      <span className="font-mono text-xs text-slate-400"> · {deposit.senderAccount}</span>
+    )}
+  </span>
+);
+
+// The slip behind a transaction, or why there is no image to open. Shared by
+// every table that shows one, so "no slip" and "never had a slip" keep saying
+// two different things wherever they appear.
+const SlipLink = ({ slip }: { slip: DailySlipRow }) =>
+  slip.slipImageUrl ? (
+    <a
+      href={slip.slipImageUrl}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="text-slate-900 hover:underline"
+    >
+      ดูสลิป
+    </a>
+  ) : slip.statementLineId ? (
+    // Not a missing file: this one never had a slip, staff recorded it from
+    // the statement. Saying so stops it reading as an error.
+    <span className="text-xs text-slate-500">เจ้าหน้าที่บันทึกเอง</span>
+  ) : (
+    <span className="text-slate-400">—</span>
+  );
+
+// Why this pair was made, said plainly enough that a person can decide
+// whether to trust it. The five are genuinely different levels of evidence,
+// so they get five different labels rather than a tick.
+const MatchBasis = ({
+  basis,
+  minutesApart,
+}: {
+  basis: DailyReconcileResult["matched"][number]["basis"];
+  minutesApart: number | null;
+}) => {
+  if (basis === "staff") {
+    return (
+      <span
+        className="text-green-700"
+        title="เจ้าหน้าที่บันทึกรายการนี้จากเงินเข้าก้อนนี้โดยตรง ไม่ได้เดาจากยอดหรือเวลา"
+      >
+        เจ้าหน้าที่บันทึกเอง
+      </span>
+    );
+  }
+  if (basis === "account") {
+    return (
+      <span className="text-green-700" title="เลขบัญชีผู้โอนตรงกับทะเบียนเลขบัญชีของสมาชิกคนนี้">
+        เลขบัญชีตรง
+      </span>
+    );
+  }
+  if (basis === "slipAccount") {
+    return (
+      <span
+        className="text-green-700"
+        title="เลขบัญชีที่พิมพ์อยู่บนสลิป (เท่าที่ไม่ถูกปิดบัง) ตรงกับเลขบัญชีผู้โอนใน statement — ไม่ต้องพึ่งทะเบียนเลขบัญชี"
+      >
+        บัญชีในสลิปตรง
+      </span>
+    );
+  }
+  if (basis === "time") {
+    return (
+      <span
+        className="text-sky-700"
+        title="ยอดตรงและเวลาบนสลิปใกล้กับเวลาที่ธนาคารบันทึก — ยังไม่ยืนยันเลขบัญชี"
+      >
+        เวลาใกล้กัน
+        {minutesApart !== null && <span className="text-slate-400"> ({minutesApart} นาที)</span>}
+      </span>
+    );
+  }
+  return (
+    <span
+      className="text-amber-700"
+      title="จับคู่จากยอดเงินอย่างเดียว — ถ้าวันนี้มีคนโอนยอดเท่ากันหลายคน คู่นี้อาจสลับกันได้"
+    >
+      ยอดตรงเท่านั้น
+    </span>
+  );
+};
+
+export default function DailyReconcilePanel() {
+  // A range, defaulting to the single day this tab has always shown. Staff
+  // chasing a payment do not always know which day it landed on.
+  const [from, setFrom] = useState(todayISO);
+  const [to, setTo] = useState(todayISO);
+  const [search, setSearch] = useState("");
+  // "" is both accounts together, which is how the tab has always opened.
+  const [branch, setBranch] = useState("");
+  const [data, setData] = useState<DailyReconcileResult | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [showOther, setShowOther] = useState(false);
+  const [showStatement, setShowStatement] = useState(false);
+  const [showReport, setShowReport] = useState(false);
+  const [showKnown, setShowKnown] = useState(false);
+  // Uploading right here rather than sending staff to the round tab: checking
+  // one day's money has nothing to do with the month-end round.
+  const [account, setAccount] = useState("413");
+  const [uploading, setUploading] = useState(false);
+  const [uploadNotice, setUploadNotice] = useState<string | null>(null);
+  // Which unclaimed deposit has its form open, and which of the two answers
+  // it is being given. Only one at a time — the work is one payment, one
+  // phone call.
+  const [acting, setActing] = useState<{ id: string; kind: "bind" | "record" } | null>(null);
+  const [actMemberNumber, setActMemberNumber] = useState("");
+  // Starts unchosen on purpose. Defaulting to the first category would let a
+  // distracted click file a ฿90,000 payment as ซื้อหุ้น without anyone having
+  // decided that — the category is what routes the payment to a department.
+  const [actCategory, setActCategory] = useState<string>("");
+  // Only used when the roster does not know the number. Optional on purpose:
+  // most numbers are in the roster and the name comes from there, so making
+  // it required would tax every recording for the sake of the few.
+  const [actMemberName, setActMemberName] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [actionNotice, setActionNotice] = useState<string | null>(null);
+
+  const fetchDay = useCallback(async (start: string, end: string) => {
+    setLoading(true);
+    setError(null);
+    const res = await fetch(`/api/daily-reconcile?from=${start}&to=${end}`);
+    const body = await res.json();
+    setLoading(false);
+    if (!res.ok) {
+      setError(body.error || "โหลดข้อมูลไม่สำเร็จ");
+      setData(null);
+      return;
+    }
+    setData(body);
+  }, []);
+
+  useEffect(() => {
+    fetchDay(from, to);
+  }, [from, to, fetchDay]);
+
+  const uploadStatement = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+
+    setUploading(true);
+    setError(null);
+    setUploadNotice(null);
+    try {
+      const form = new FormData();
+      form.append("file", file);
+      form.append("account", account);
+      const res = await fetch("/api/statement-lines", { method: "POST", body: form });
+      const body = await res.json();
+      if (!res.ok) {
+        setError(body.error || "อ่าน Statement ไม่สำเร็จ");
+        return;
+      }
+      const covers =
+        body.from && body.to
+          ? ` ครอบคลุม ${formatStatementDate(body.from)} ถึง ${formatStatementDate(body.to)}`
+          : "";
+      setUploadNotice(`บัญชี ${body.account} ${body.branch}: อ่านได้ ${body.lines} รายการ${covers}`);
+      // Reloads the day on screen, which is the one the person came to look at.
+      await fetchDay(from, to);
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  const closeForm = () => {
+    setActing(null);
+    setActMemberNumber("");
+    setActMemberName("");
+    setActCategory("");
+  };
+
+  // "That account is นาง X's" — a fact about an account, so it goes to the
+  // directory and holds for every future transfer from it. Deliberately not
+  // combined with recording the payment: the same call often answers only one
+  // of the two, and pretending otherwise would file a transaction nobody
+  // asked for.
+  const bindAccount = async (accountNumber: string) => {
+    setSaving(true);
+    setError(null);
+    setActionNotice(null);
+    try {
+      const res = await fetch("/api/member-bank-accounts", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          accountNumber,
+          memberNumber: actMemberNumber.trim(),
+          note: "ระบุจากหน้าเงินเข้าประจำวัน",
+        }),
+      });
+      const body = await res.json();
+      if (!res.ok) {
+        setError(body.error || "ผูกบัญชีไม่สำเร็จ");
+        return;
+      }
+      setActionNotice(
+        `ผูกบัญชี ${body.accountNumber} เข้ากับ ${body.memberNumber} ${body.memberName ?? ""} แล้ว` +
+          (body.inRoster ? "" : " — ⚠️ ไม่พบเลขสมาชิกนี้ในทะเบียนสมาชิก ตรวจสอบอีกครั้ง") +
+          (body.rounds ? ` · จับคู่รอบเก็บไม่ได้ใหม่ ${body.rounds} รอบ` : "") +
+          " · ครั้งต่อไปรู้เองไม่ต้องระบุซ้ำ"
+      );
+      closeForm();
+      await fetchDay(from, to);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  // "That money was นาง X paying her หักไม่ได้" — a fact about this one
+  // payment, so it becomes a transaction. The amount and the date come from
+  // the stored bank line inside the route, not from here.
+  const recordDeposit = async (depositId: string) => {
+    setSaving(true);
+    setError(null);
+    setActionNotice(null);
+    try {
+      const res = await fetch(`/api/statement-lines/${depositId}/record`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          memberNumber: actMemberNumber.trim(),
+          memberName: actMemberName.trim(),
+          category: actCategory,
+        }),
+      });
+      const body = await res.json();
+      if (!res.ok) {
+        setError(body.error || "บันทึกรายการไม่สำเร็จ");
+        return;
+      }
+      setActionNotice(
+        `บันทึก ${formatAmount(body.amount)} เป็น "${body.category}" ให้ ` +
+          `${body.memberNumber} ${body.memberFullName ?? ""} แล้ว` +
+          (body.inRoster ? "" : " — ⚠️ ไม่พบเลขสมาชิกนี้ในทะเบียนสมาชิก ตรวจสอบอีกครั้ง")
+      );
+      closeForm();
+      await fetchDay(from, to);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  // Both ends move together, so the arrows still step through days at
+  // whatever width the range is set to.
+  const shiftRange = (days: number) => {
+    setFrom(shiftDay(from, days));
+    setTo(shiftDay(to, days));
+  };
+
+  // The two accounts are different people's work and different statements to
+  // tie out against, so the day is reported per account and can be narrowed
+  // to one. Derived from the day itself rather than a hardcoded 413/447, so a
+  // third account would appear rather than vanish.
+  const day = {
+    matched: data?.matched ?? [],
+    depositsWithoutSlip: data?.depositsWithoutSlip ?? [],
+    otherLines: data?.otherLines ?? [],
+  };
+  const branches = branchesIn(day);
+  const perAccount = summariseByAccount(day);
+  const absentBranches = missingBranches(day, Object.values(STATEMENT_ACCOUNTS));
+  const inBranch = <T extends { branch: string }>(rows: T[]) =>
+    branch ? rows.filter((r) => r.branch === branch) : rows;
+
+  // Money nobody claimed, split by whether anything knows who paid it.
+  const claimable = inBranch(data?.depositsWithoutSlip ?? []);
+  const unknownPayer = claimable.filter((d) => !d.memberNumber);
+  const knownPayer = claimable.filter((d) => d.memberNumber);
+
+  // One box over every section, not one per table: a person looking for
+  // member 26018 does not know which of the five conclusions their payment
+  // ended up under — that is usually the whole reason they are looking.
+  // Filtered here rather than server-side, so it answers as you type.
+  const statementRows = filterStatementRows(
+    branch ? (data?.statement ?? []).filter((r) => r.branch === branch) : (data?.statement ?? []),
+    search
+  );
+  // Money in and money out over exactly the rows on screen — the account
+  // filter and the search box included. What is printed is what was being
+  // looked at; the report says which filters were on so the page can be read
+  // on its own later.
+  const flowRows = flowByAccount(statementRows);
+  const flowAll = flowTotal(statementRows);
+  const categories = inByCategory(statementRows);
+
+  const matchedRows = filterBy(
+    branch ? day.matched.filter((p) => p.deposit.branch === branch) : day.matched,
+    search,
+    matchedPairHaystack
+  );
+  // Slips are never filtered by account: a slip with no money behind it has
+  // no account by definition — that is what makes it unmatched.
+  const unmatchedSlips = filterBy(data?.slipsWithoutMoney ?? [], search, slipHaystack);
+  const unknownRows = filterBy(unknownPayer, search, depositHaystack);
+  const knownRows = filterBy(knownPayer, search, depositHaystack);
+  const otherRows = filterBy(inBranch(data?.otherLines ?? []), search, otherLineHaystack);
+  const searching = search.trim().length > 0;
+  const totalHits =
+    statementRows.length +
+    matchedRows.length +
+    unmatchedSlips.length +
+    unknownRows.length +
+    knownRows.length +
+    otherRows.length;
+
+  // Counted over the rows on screen, so the strip at the top says the same
+  // thing as the tables under it — see dayTally for what the account filter
+  // does to "สลิป" and "ส่วนต่าง", which used to sit here counting a whole
+  // day beside a list showing one account's share of it.
+  const tally = dayTally(statementRows);
+  const narrowed = branch !== "" || searching;
+
+  return (
+    <section className="bg-white rounded-lg border border-slate-200">
+      <div className="px-4 py-3 border-b border-slate-100">
+        <h2 className="font-semibold">เงินเข้าประจำวัน (เทียบกับสลิปที่ส่งมาทางไลน์)</h2>
+        <PanelHelp summary="เทียบเงินที่เข้าบัญชีสหกรณ์วันนั้น กับสลิปที่สมาชิกส่งเข้าบอท เพื่อจับสลิปที่ไม่มีเงินเข้าจริง และเงินที่เข้ามาโดยไม่มีใครแจ้ง">
+          <p>
+            <strong>อัปโหลด Statement ได้ที่นี่เลย ไม่ต้องสร้างรอบเก็บไม่ได้</strong>{" "}
+            (ไฟล์ที่เคยอัปในแท็บ "เทียบ Statement" ก็ใช้ได้ ไม่ต้องอัปซ้ำ)
+          </p>
+          <p className="text-amber-700">
+            ⚠️ ช่อง <strong>"จับคู่จาก"</strong> บอกว่าคู่นั้นเชื่อได้แค่ไหน —
+            <strong>เลขบัญชีตรง</strong> กับ <strong>บัญชีในสลิปตรง</strong> แน่นอนเกือบ 100%,
+            <strong>เวลาใกล้กัน</strong> ค่อนข้างแน่, ส่วน <strong>ยอดตรงเท่านั้น</strong> คือ
+            <strong>เดา</strong> — วันที่มีคนโอนยอดเท่ากันหลายคนอาจสลับคู่กันได้
+            ให้ถือว่าเป็นรายการให้ไล่ดู ไม่ใช่คำตอบสุดท้าย
+          </p>
+          <p className="text-slate-500">
+            สลิปที่บอทบันทึก<strong>ตั้งแต่ 7 ก.ย. 69 เป็นต้นไป</strong>จะเก็บเวลาที่โอนและเลขบัญชีผู้โอน
+            (เท่าที่สลิปแสดง) ไว้ด้วย — รายการเก่ากว่านั้นยังมีแค่วันที่กับยอดเงิน จึงจับคู่ได้แค่ "ยอดตรงเท่านั้น"
+          </p>
+        </PanelHelp>
+      </div>
+
+      <div className="flex flex-wrap items-center gap-2 px-4 py-3 border-b border-slate-100 text-sm">
+        <button
+          onClick={() => shiftRange(-1)}
+          className="px-2 py-1.5 border border-slate-200 rounded-md hover:bg-slate-50"
+        >
+          ← วันก่อน
+        </button>
+        <input
+          type="date"
+          value={from}
+          onChange={(e) => {
+            const value = e.target.value;
+            if (!value) return;
+            setFrom(value);
+            // Dragging the start past the end is a mistake, not a request for
+            // an empty range — carry the end along instead of erroring.
+            if (value > to) setTo(value);
+          }}
+          className="border border-slate-300 rounded-md px-3 py-1.5"
+        />
+        <span className="text-slate-400">ถึง</span>
+        <input
+          type="date"
+          value={to}
+          onChange={(e) => {
+            const value = e.target.value;
+            if (!value) return;
+            setTo(value);
+            if (value < from) setFrom(value);
+          }}
+          className="border border-slate-300 rounded-md px-3 py-1.5"
+        />
+        <button
+          onClick={() => shiftRange(1)}
+          className="px-2 py-1.5 border border-slate-200 rounded-md hover:bg-slate-50"
+        >
+          วันถัดไป →
+        </button>
+        <button
+          onClick={() => {
+            setFrom(todayISO());
+            setTo(todayISO());
+          }}
+          className="px-3 py-1.5 border border-slate-200 rounded-md hover:bg-slate-50"
+        >
+          วันนี้
+        </button>
+        <button
+          onClick={() => {
+            setFrom(shiftDay(todayISO(), -6));
+            setTo(todayISO());
+          }}
+          className="px-3 py-1.5 border border-slate-200 rounded-md hover:bg-slate-50"
+        >
+          7 วันล่าสุด
+        </button>
+        <span className="ml-auto text-slate-500">
+          {formatStatementDate(`${from}T00:00:00.000Z`)}
+          {from !== to && ` – ${formatStatementDate(`${to}T00:00:00.000Z`)}`}
+        </span>
+      </div>
+
+      {/* One box over the whole screen. Somebody looking for a payment does
+          not know which of the five conclusions it landed under — not knowing
+          is usually why they are looking. */}
+      <div className="flex flex-wrap items-center gap-2 px-4 py-2.5 border-b border-slate-100 text-sm">
+        <select
+          value={branch}
+          onChange={(e) => setBranch(e.target.value)}
+          className="border border-slate-300 rounded-md px-2 py-1.5 bg-white"
+        >
+          <option value="">ทุกบัญชี</option>
+          {branches.map((name) => (
+            <option key={name} value={name}>
+              {name}
+            </option>
+          ))}
+        </select>
+        <input
+          type="search"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="ค้นทุกหัวข้อ: ชื่อ, เลขสมาชิก, ยอด, เลขบัญชี, วันที่, เวลา, รหัส…"
+          className="border border-slate-300 rounded-md px-3 py-1.5 w-full sm:w-[26rem]"
+        />
+        {searching && (
+          <>
+            <span className="text-slate-500">
+              เจอ <strong className="num text-slate-900">{totalHits}</strong> รายการทุกหัวข้อรวมกัน
+            </span>
+            <button onClick={() => setSearch("")} className="text-slate-500 hover:underline">
+              ล้าง
+            </button>
+          </>
+        )}
+      </div>
+
+      {/* Statement upload lives here, not only on the round tab: a day's
+          money-in is an everyday question, and it used to require creating a
+          month-end round and importing a หักไม่ได้ sheet first. */}
+      <div className="flex flex-wrap items-center gap-2 px-4 py-2.5 border-b border-slate-100 text-sm bg-slate-50">
+        <span className="text-slate-500">อัปโหลด Statement:</span>
+        <select
+          value={account}
+          onChange={(e) => setAccount(e.target.value)}
+          className="border border-slate-300 rounded-md px-2 py-1.5 bg-white"
+        >
+          <option value="413">413 หนองคาย</option>
+          <option value="447">447 บึงกาฬ</option>
+        </select>
+        <label className="px-3 py-1.5 border border-slate-300 rounded-md bg-white cursor-pointer hover:bg-slate-50">
+          {uploading ? "กำลังอ่าน…" : "เลือกไฟล์"}
+          <input
+            type="file"
+            accept=".xlsx,.xls"
+            onChange={uploadStatement}
+            disabled={uploading}
+            className="hidden"
+          />
+        </label>
+        <span className="text-xs text-slate-400">
+          อัปทับไฟล์เดิมได้ ไม่นับเงินซ้ำ · อัปกี่วันก็ได้ในไฟล์เดียว
+        </span>
+      </div>
+
+      {uploadNotice && (
+        <p className="px-4 py-2 text-sm text-green-700 bg-green-50">{uploadNotice}</p>
+      )}
+
+      {actionNotice && (
+        <p className="px-4 py-2 text-sm text-green-700 bg-green-50">{actionNotice}</p>
+      )}
+
+      {error && <p className="px-4 py-3 text-sm text-red-600">{error}</p>}
+
+      {loading ? (
+        <p className="text-slate-500 text-sm py-10 text-center">กำลังโหลด…</p>
+      ) : !data ? null : !data.loaded ? (
+        <p className="text-slate-500 text-sm py-10 text-center px-4">
+          ยังไม่มี Statement ที่ครอบคลุม{from === to ? "วันนี้" : "ช่วงที่เลือก"} —
+          อัปโหลดไฟล์ได้ที่แถบด้านบน
+          <br />
+          <span className="text-xs text-slate-400">
+            (ต่างจาก "ไม่มีเงินเข้า" — ระบบยังไม่มีข้อมูลของช่วงนี้เลย)
+          </span>
+        </p>
+      ) : (
+        <>
+          <div className="flex flex-wrap items-center gap-4 px-4 py-2.5 border-b border-slate-100 text-sm bg-slate-50">
+            <span className="text-slate-500">
+              เงินเข้า <strong className="num text-slate-900">{tally.depositCount}</strong> รายการ{" "}
+              <Money value={tally.depositAmount} className="font-semibold text-green-700" />
+            </span>
+            <span className="text-slate-500">
+              ตรงกับสลิป <strong className="num text-slate-900">{tally.matchedCount}</strong>{" "}
+              <Money value={tally.matchedAmount} className="font-semibold" />
+            </span>
+            <span className="text-slate-500">
+              ยังไม่มีสลิป{" "}
+              <strong className="num text-slate-900">{tally.unmatchedCount}</strong>{" "}
+              <Money
+                value={tally.unmatchedAmount}
+                className={`font-semibold ${
+                  tally.unmatchedCount === 0 ? "text-slate-900" : "text-amber-700"
+                }`}
+              />
+            </span>
+            {/* Said out loud, because a total that changes when a filter is
+                set is only readable if the page admits which one it is
+                counting. */}
+            {narrowed && (
+              <span className="text-xs text-slate-400">
+                (เฉพาะ
+                {branch ? `บัญชี ${branch}` : ""}
+                {branch && searching ? " · " : ""}
+                {searching ? "ที่ค้นหา" : ""})
+              </span>
+            )}
+          </div>
+
+          {/* One account in the range is not a reason to say nothing. It
+              usually means the other account's statement has not been
+              uploaded this far, and every total above is then one account's
+              money reading as the whole day's. */}
+          {perAccount.length === 1 && absentBranches.length > 0 && (
+            <div className="px-4 py-2 border-t border-slate-100 text-sm bg-amber-50 text-amber-800">
+              ⚠️ ช่วงนี้มีรายการเฉพาะบัญชี <strong>{perAccount[0].branch}</strong> —{" "}
+              <strong>{absentBranches.join(" และ ")}</strong> ไม่มีรายการเลย
+              <span className="text-xs">
+                {" "}
+                (Statement ของบัญชีนั้นอาจยังไม่ครอบคลุมช่วงนี้ — ตัวเลขด้านบนจึงเป็นของบัญชีเดียว)
+              </span>
+            </div>
+          )}
+
+          {/* The two accounts are reconciled separately, against two
+              different statements, so the day is reported per account before
+              it is reported as a whole. */}
+          {perAccount.length > 1 && (
+            <div className="px-4 py-3 border-t border-slate-100">
+              <h3 className="text-sm font-semibold">📊 แยกตามบัญชีสหกรณ์</h3>
+              <div className="overflow-x-auto mt-2">
+                <table className="w-full text-sm">
+                  <thead className="text-slate-500 text-left text-xs uppercase tracking-wide">
+                    <tr>
+                      <th className="px-2 py-1.5 font-semibold">บัญชี</th>
+                      <th className="px-2 py-1.5 font-semibold text-right">เงินเข้า</th>
+                      <th className="px-2 py-1.5 font-semibold text-right">ยอดรวม</th>
+                      <th className="px-2 py-1.5 font-semibold text-right">ตรงกับสลิป</th>
+                      <th className="px-2 py-1.5 font-semibold text-right">ยังไม่มีสลิป</th>
+                      <th className="px-2 py-1.5 font-semibold text-right">รายการอื่น</th>
+                      <th className="px-2 py-1.5"></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {perAccount.map((a) => (
+                      <tr key={a.branch} className="border-t border-slate-100 hover:bg-slate-50">
+                        <td className="px-2 py-1.5 font-medium whitespace-nowrap">{a.branch}</td>
+                        <td className="px-2 py-1.5 num text-right">{a.depositCount}</td>
+                        <td className="px-2 py-1.5 text-right">
+                          <Money value={a.depositAmount} className="font-semibold text-green-700" />
+                        </td>
+                        <td className="px-2 py-1.5 num text-right text-slate-500">
+                          {a.matchedCount}
+                        </td>
+                        {/* The number that is actually somebody's job today. */}
+                        <td className="px-2 py-1.5 text-right whitespace-nowrap">
+                          <span className={a.unclaimedCount > 0 ? "text-amber-700" : "text-slate-400"}>
+                            <span className="num">{a.unclaimedCount}</span>
+                            {a.unclaimedCount > 0 && (
+                              <span className="text-xs"> · <Money value={a.unclaimedAmount} /></span>
+                            )}
+                          </span>
+                        </td>
+                        <td className="px-2 py-1.5 num text-right text-slate-400">{a.otherCount}</td>
+                        <td className="px-2 py-1.5 text-right whitespace-nowrap">
+                          <button
+                            onClick={() => setBranch(branch === a.branch ? "" : a.branch)}
+                            className="text-xs text-slate-600 hover:underline"
+                          >
+                            {branch === a.branch ? "เลิกกรอง" : "ดูเฉพาะบัญชีนี้"}
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <p className="text-xs text-slate-500 mt-1">
+                สลิปไม่ได้แยกตามบัญชี — สลิปเป็นของสมาชิก ไม่ใช่ของบัญชี และ
+                <strong>สลิปที่ยังไม่เจอเงินเข้าก็ยังไม่มีบัญชีปลายทาง</strong> นั่นคือสาเหตุที่มันยังจับคู่ไม่ได้
+              </p>
+            </div>
+          )}
+
+          {/* The oldest question of the lot, and the one the tab did not
+              answer: how much came in, how much went out, what is it worth
+              now, and what were people paying for. Everything above sorts the
+              day by whether somebody still has work to do; this adds it up.
+
+              Marked print-report so this section, and nothing else on the
+              page, is what reaches paper. */}
+          <div className="px-4 py-3 border-t border-slate-100 print-report">
+            <div className="flex flex-wrap items-center gap-3">
+              <button
+                onClick={() => setShowReport((v) => !v)}
+                className="text-sm text-slate-700 hover:underline font-medium no-print"
+              >
+                {showReport ? "▾" : "▸"} 🧾 สรุปยอดเงินเข้า-เงินออก
+              </button>
+              {showReport && (
+                <button
+                  onClick={() => window.print()}
+                  className="text-xs border border-slate-300 rounded-md px-2 py-1 hover:bg-slate-50 no-print"
+                >
+                  🖨️ พิมพ์รายงาน
+                </button>
+              )}
+            </div>
+
+            {showReport && (
+              <div className="mt-3">
+                {/* Only on paper: on screen the date and the account are in
+                    the boxes above, but a printed page has to say what it is
+                    a report of, filters and all. */}
+                <div className="hidden print:block mb-3">
+                  <h2 className="font-semibold text-base">
+                    สหกรณ์ออมทรัพย์ครูหนองคาย-บึงกาฬ — สรุปยอดเงินเข้า-เงินออก
+                  </h2>
+                  <p className="text-xs text-slate-600">
+                    {from === to
+                      ? formatStatementDate(`${from}T00:00:00.000Z`)
+                      : `${formatStatementDate(`${from}T00:00:00.000Z`)} ถึง ${formatStatementDate(
+                          `${to}T00:00:00.000Z`
+                        )}`}
+                    {branch ? ` · เฉพาะบัญชี ${branch}` : " · ทุกบัญชี"}
+                    {search ? ` · กรองด้วยคำค้น "${search}"` : ""}
+                  </p>
+                </div>
+
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead className="text-slate-500 text-left text-xs uppercase tracking-wide">
+                      <tr>
+                        <th className="px-2 py-1.5 font-semibold">บัญชี</th>
+                        <th className="px-2 py-1.5 font-semibold text-right">เงินเข้า</th>
+                        <th className="px-2 py-1.5 font-semibold text-right">รวมเงินเข้า</th>
+                        <th className="px-2 py-1.5 font-semibold text-right">เงินออก</th>
+                        <th className="px-2 py-1.5 font-semibold text-right">รวมเงินออก</th>
+                        <th className="px-2 py-1.5 font-semibold text-right">สุทธิ</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {flowRows.map((flow) => (
+                        <tr key={flow.branch} className="border-t border-slate-100">
+                          <td className="px-2 py-1.5 font-medium whitespace-nowrap">{flow.branch}</td>
+                          <td className="px-2 py-1.5 num text-right text-slate-500">
+                            {flow.inCount}
+                          </td>
+                          <td className="px-2 py-1.5 text-right">
+                            <Money value={flow.inAmount} className="text-green-700 font-medium" />
+                          </td>
+                          <td className="px-2 py-1.5 num text-right text-slate-500">
+                            {flow.outCount}
+                          </td>
+                          <td className="px-2 py-1.5 text-right">
+                            <Money value={flow.outAmount} className="text-rose-700" />
+                          </td>
+                          <td className="px-2 py-1.5 text-right">
+                            <Money
+                              value={flow.net}
+                              className={flow.net < 0 ? "text-rose-700" : "font-semibold"}
+                            />
+                          </td>
+                        </tr>
+                      ))}
+                      {/* Computed from the lines, not summed from the rows
+                          above — a line whose account was never read still
+                          belongs in the day's total. */}
+                      <tr className="border-t-2 border-slate-300 bg-slate-50">
+                        <td className="px-2 py-1.5 font-semibold">รวมทุกบัญชี</td>
+                        <td className="px-2 py-1.5 num text-right text-slate-500">
+                          {flowAll.inCount}
+                        </td>
+                        <td className="px-2 py-1.5 text-right">
+                          <Money value={flowAll.inAmount} className="text-green-700 font-semibold" />
+                        </td>
+                        <td className="px-2 py-1.5 num text-right text-slate-500">
+                          {flowAll.outCount}
+                        </td>
+                        <td className="px-2 py-1.5 text-right">
+                          <Money value={flowAll.outAmount} className="text-rose-700 font-semibold" />
+                        </td>
+                        <td className="px-2 py-1.5 text-right">
+                          <Money
+                            value={flowAll.net}
+                            className={flowAll.net < 0 ? "text-rose-700 font-semibold" : "font-semibold"}
+                          />
+                        </td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+
+                <h3 className="text-sm font-semibold mt-4">เงินเข้าแยกตามประเภทรายการ</h3>
+                <p className="text-xs text-slate-500">
+                  ประเภทมาจากสลิปที่จับคู่กับบรรทัดนั้นได้แล้วเท่านั้น — สเตทเมนต์บอกแค่ว่าเงินเข้าเท่าไร
+                  ไม่เคยบอกว่าเข้ามาทำอะไร
+                </p>
+                <div className="overflow-x-auto mt-2">
+                  <table className="w-full text-sm">
+                    <thead className="text-slate-500 text-left text-xs uppercase tracking-wide">
+                      <tr>
+                        <th className="px-2 py-1.5 font-semibold">ทำรายการ</th>
+                        <th className="px-2 py-1.5 font-semibold text-right">จำนวน</th>
+                        <th className="px-2 py-1.5 font-semibold text-right">ยอดรวม</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {categories.length === 0 ? (
+                        <tr>
+                          <td colSpan={3} className="px-2 py-4 text-center text-slate-500">
+                            ไม่มีเงินเข้าในช่วงที่เลือก
+                          </td>
+                        </tr>
+                      ) : (
+                        categories.map((entry) => (
+                          <tr key={entry.category} className="border-t border-slate-100">
+                            <td className="px-2 py-1.5">{entry.category}</td>
+                            <td className="px-2 py-1.5 num text-right text-slate-500">
+                              {entry.count}
+                            </td>
+                            <td className="px-2 py-1.5 text-right">
+                              <Money value={entry.amount} className="font-medium" />
+                            </td>
+                          </tr>
+                        ))
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+
+                <h3 className="text-sm font-semibold mt-4">
+                  รายการทั้งหมด ({statementRows.length} รายการ)
+                </h3>
+                <div className="overflow-x-auto mt-2">
+                  <StatementTable rows={statementRows} showDate={from !== to} />
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Placed before the findings, because the first question a person
+              checking the bank's own printout asks is "is everything here?" —
+              and the sections below, sorted by conclusion and half of them
+              collapsed, cannot answer it. */}
+          <div className="px-4 py-3 border-t border-slate-100">
+            <button
+              onClick={() => setShowStatement((v) => !v)}
+              className="text-sm text-slate-700 hover:underline font-medium"
+            >
+              {showStatement ? "▾" : "▸"} 📄 รายการทั้งหมดในสเตทเมนต์
+              {from === to ? "วันนี้" : "ช่วงนี้"} (
+              {countLabel(statementRows.length, data.statement.length, "รายการ")})
+            </button>
+            <p className="text-xs text-slate-500 mt-1">
+              ทุกบรรทัดในช่วงที่เลือก เรียงตามเวลาแบบเดียวกับไฟล์ของธนาคาร พร้อมบอกว่าแต่ละบรรทัด
+              ตกอยู่ในกลุ่มไหนด้านล่าง — ใช้ไล่ทีละบรรทัดกับสเตทเมนต์ที่ปริ้นมาได้เลย
+              <strong>
+                {" "}
+                จำนวนนี้คือจำนวนบรรทัดในไฟล์ทั้งหมด ไม่มีรายการไหนหายไป
+              </strong>{" "}
+              (กลุ่มด้านล่างแบ่งตามข้อสรุป บางกลุ่มพับไว้ เลยดูเหมือนมีน้อยกว่าความเป็นจริง)
+            </p>
+            {showStatement &&
+              /* Said plainly rather than shown as an empty table: "no results"
+                 and "nothing in the file" look identical otherwise, and only
+                 one of them is fixed by clearing the box. */
+              (searching && statementRows.length === 0 ? (
+                <p className="text-sm text-slate-500 py-6 text-center">
+                  ไม่มีบรรทัดไหนตรงกับ &ldquo;{search}&rdquo; ในช่วงวันที่เลือก —
+                  ลองขยายช่วงวันที่ หรือค้นด้วยคำที่สั้นลง
+                </p>
+              ) : (
+                <div className="overflow-x-auto mt-2">
+                  <StatementTable rows={statementRows} showDate={from !== to} />
+                </div>
+              ))}
+          </div>
+
+          <Section
+            title={`✅ ตรงกัน (${countLabel(matchedRows.length, data.matched.length, "รายการ")})`}
+            tone="text-green-800"
+            note={
+              "เงินเข้าและสลิปคู่กันได้ — ไม่ต้องทำอะไร · " +
+              'กด "ดูสลิป" เพื่อตรวจคู่ที่ยังไม่แน่ใจได้ โดยเฉพาะแถวที่จับคู่จาก "ยอดตรงเท่านั้น"'
+            }
+            empty={matchedRows.length === 0}
+          >
+            <table className="w-full text-sm">
+              <thead className="text-slate-500 text-left text-xs uppercase tracking-wide">
+                <tr>
+                  <th className="px-2 py-1.5 font-semibold">{from !== to ? "วันที่ / เวลา" : "เวลา"}</th>
+                  <th className="px-2 py-1.5 font-semibold text-right">ยอด</th>
+                  <th className="px-2 py-1.5 font-semibold">ผู้โอน</th>
+                  <th className="px-2 py-1.5 font-semibold">ช่องทาง</th>
+                  <th className="px-2 py-1.5 font-semibold">สลิปแจ้งว่า</th>
+                  <th className="px-2 py-1.5 font-semibold">จับคู่จาก</th>
+                  <th className="px-2 py-1.5 font-semibold">สลิป</th>
+                </tr>
+              </thead>
+              <tbody>
+                {matchedRows.map(({ deposit, slip, basis, dayApart, minutesApart }) => (
+                  <tr key={deposit.id} className="border-t border-slate-100 hover:bg-slate-50">
+                    <td className="px-2 py-1.5 whitespace-nowrap">
+                      <Clock iso={deposit.postedAt} withDate={from !== to} />
+                    </td>
+                    <td className="px-2 py-1.5 text-right">
+                      <Money value={deposit.amount} className="font-medium" />
+                    </td>
+                    <td className="px-2 py-1.5">
+                      {slip.memberFullName ?? <Payer deposit={deposit} />}
+                      {slip.memberNumber && (
+                        <span className="num text-xs text-slate-400"> · {slip.memberNumber}</span>
+                      )}
+                    </td>
+                    <td className="px-2 py-1.5 text-slate-500 whitespace-nowrap">
+                      {CHANNEL_LABELS[deposit.channel] ?? deposit.channel}
+                    </td>
+                    <td className="px-2 py-1.5 text-slate-500">{slip.category ?? "—"}</td>
+                    <td className="px-2 py-1.5 whitespace-nowrap text-xs">
+                      <MatchBasis basis={basis} minutesApart={minutesApart} />
+                      {dayApart && (
+                        <span className="text-slate-400" title="สลิปลงวันที่คนละวันกับที่ธนาคารบันทึก">
+                          {" "}
+                          · คนละวัน
+                        </span>
+                      )}
+                    </td>
+                    <td className="px-2 py-1.5">
+                      <SlipLink slip={slip} />
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </Section>
+
+          <Section
+            title={`⚠️ มีสลิปแต่ไม่เจอเงินเข้า (${countLabel(
+              unmatchedSlips.length,
+              data.slipsWithoutMoney.length,
+              "ใบ"
+            )})`}
+            tone="text-red-700"
+            note="สมาชิกส่งสลิปมาแต่หาเงินก้อนที่ตรงกันในบัญชีไม่เจอ — อาจโอนเข้าบัญชีอื่น สลิปซ้ำ หรือสลิปไม่จริง ควรตรวจก่อน"
+            empty={data.slipsWithoutMoney.length === 0}
+          >
+            <SlipTable slips={unmatchedSlips} />
+          </Section>
+
+          {/* Split because these two are not the same job. On a busy day a
+              few hundred members transfer without ever telling the bot, and
+              that is normal — the ones worth a person's time are the payments
+              nobody can even put a name to. Keeping them in one list buried
+              the short list under the long one. */}
+          <Section
+            title={`❓ เงินเข้าที่ไม่รู้ว่าใครโอน (${countLabel(
+              unknownRows.length,
+              unknownPayer.length,
+              "รายการ"
+            )})`}
+            tone="text-amber-800"
+            note={
+              "เลขบัญชีผู้โอนไม่ตรงกับใครเลย ทั้งในทะเบียนเลขบัญชีและรายชื่อหักไม่ได้ทุกรอบ — " +
+              "เงินเข้ามาจริงแต่ยังไม่รู้ว่าของใคร กลุ่มนี้คือที่ต้องตามหา · " +
+              'พอรู้แล้วบันทึกได้ตรงนี้เลย: "ระบุเจ้าของ" = จำเลขบัญชีไว้ใช้ครั้งต่อไป, ' +
+              '"บันทึกรายการ" = ลงเป็นรายการของสมาชิกเหมือนสลิปที่ส่งทางไลน์'
+            }
+            empty={unknownPayer.length === 0}
+          >
+            <DepositTable
+              deposits={unknownRows}
+              showDate={from !== to}
+              actions={{
+                acting,
+                setActing,
+                memberNumber: actMemberNumber,
+                setMemberNumber: setActMemberNumber,
+                memberName: actMemberName,
+                setMemberName: setActMemberName,
+                category: actCategory,
+                setCategory: setActCategory,
+                saving,
+                onBind: bindAccount,
+                onRecord: recordDeposit,
+              }}
+            />
+          </Section>
+
+          {knownPayer.length > 0 && (
+            <div className="px-4 py-3 border-t border-slate-100">
+              <button
+                onClick={() => setShowKnown((v) => !v)}
+                className="text-sm text-slate-600 hover:underline"
+              >
+                {showKnown ? "▾" : "▸"} เงินเข้าที่รู้ว่าใครโอน แต่ไม่ได้ส่งสลิป (
+                {countLabel(knownRows.length, knownPayer.length, "รายการ")})
+              </button>
+              <p className="text-xs text-slate-500 mt-1">
+                รู้เจ้าของจากเลขบัญชีแล้ว แค่ไม่ได้ส่งสลิปเข้าบอท —
+                ปกติเป็นการจ่ายค่าหักไม่ได้ที่แท็บ "เทียบ Statement" จับคู่ให้อยู่แล้ว
+                ไม่ต้องทำอะไรเพิ่ม
+              </p>
+              {showKnown && (
+                <div className="overflow-x-auto mt-2">
+                  <DepositTable deposits={knownRows} showDate={from !== to} />
+                </div>
+              )}
+            </div>
+          )}
+
+          {data.otherLines.length > 0 && (
+            <div className="px-4 py-3 border-t border-slate-100">
+              <button
+                onClick={() => setShowOther((v) => !v)}
+                className="text-sm text-slate-600 hover:underline"
+              >
+                {showOther ? "▾" : "▸"} รายการอื่นในบัญชี
+                {from === to ? "วันนี้" : "ช่วงนี้"} (
+                {countLabel(otherRows.length, data.otherLines.length, "รายการ")})
+              </button>
+              <p className="text-xs text-slate-500 mt-1">
+                รายการที่ไม่ใช่สมาชิกโอนเข้ามา — เงินหน่วยงาน ฌาปนกิจ ค่าธรรมเนียม เงินโอนออก
+                ไม่นับในการเทียบด้านบน แต่แสดงไว้ให้เห็น
+                <strong>ถ้าเจอรหัสที่ควรจะนับเป็นเงินสมาชิก บอกได้ จะเพิ่มให้</strong>
+              </p>
+              {showOther && <OtherTable lines={otherRows} showDate={from !== to} />}
+            </div>
+          )}
+        </>
+      )}
+    </section>
+  );
+}
+
+// The day in the bank's order, with the conclusion the tab reached about each
+// line. See lib/statementDayView.ts — the sections above are sorted by
+// conclusion, which is what makes a twenty-line day look like a six-line one.
+const StatusTag = ({ status }: { status: DailyStatementRow["status"] }) => {
+  const tone =
+    status === "matched"
+      ? "text-green-700"
+      : status === "unknownPayer"
+        ? "text-amber-800"
+        : status === "knownPayer"
+          ? "text-sky-700"
+          : "text-slate-400";
+  return <span className={`text-xs ${tone}`}>{STATUS_LABELS[status]}</span>;
+};
+
+// Who a statement line belongs to: the name on top, and beneath it the unit
+// and member number that say which office to contact and which record to open.
+// A number with no name means the account directory recognised the payer but
+// the roster has no row for that number — worth seeing as it stands rather
+// than blanking the cell.
+const Member = ({
+  name,
+  number,
+  unitName,
+}: {
+  name: string | null;
+  number: string | null;
+  unitName: string | null;
+}) => {
+  if (!name && !number) return <span className="text-slate-300">—</span>;
+  const below = [unitName, number].filter(Boolean).join(" · ");
+  return (
+    <span className="block leading-tight">
+      <span className="block">{name ?? <span className="text-slate-400">ไม่พบในทะเบียน</span>}</span>
+      {below && <span className="num block text-xs text-slate-400">{below}</span>}
+    </span>
+  );
+};
+
+const StatementTable = ({
+  rows,
+  showDate = false,
+}: {
+  rows: DailyStatementRow[];
+  // Only when the window spans more than one day: repeating the same date on
+  // every row of a single day is noise in a column that is read constantly.
+  showDate?: boolean;
+}) => (
+  <table className="w-full text-sm">
+    <thead className="text-slate-500 text-left text-xs uppercase tracking-wide">
+      <tr>
+        <th className="px-2 py-1.5 font-semibold">{showDate ? "วันที่ / เวลา" : "เวลา"}</th>
+        <th className="px-2 py-1.5 font-semibold">รหัส</th>
+        <th className="px-2 py-1.5 font-semibold">รายละเอียด</th>
+        <th className="px-2 py-1.5 font-semibold text-right">ยอด</th>
+        <th className="px-2 py-1.5 font-semibold text-right">คงเหลือ</th>
+        <th className="px-2 py-1.5 font-semibold">บัญชี</th>
+        <th className="px-2 py-1.5 font-semibold">สมาชิก</th>
+        <th className="px-2 py-1.5 font-semibold">ทำรายการ</th>
+        <th className="px-2 py-1.5 font-semibold">สถานะ</th>
+      </tr>
+    </thead>
+    <tbody>
+      {rows.map((row) => (
+        <tr key={row.id} className="border-t border-slate-100 hover:bg-slate-50">
+          <td className="px-2 py-1.5 whitespace-nowrap">
+            <ExactClock iso={row.postedAt} withDate={showDate} />
+          </td>
+          <td className="px-2 py-1.5 font-mono text-xs text-slate-500">{row.txnCode}</td>
+          <td className="px-2 py-1.5">
+            <StatementDetail description={row.description} />
+          </td>
+          <td className="px-2 py-1.5 text-right">
+            <Money
+              value={row.amount}
+              className={row.status === "notMemberMoney" ? "text-slate-500" : "font-medium"}
+            />
+          </td>
+          {/* The bank's running balance, which is what a person ties out
+              against when they are checking the file line by line. */}
+          <td className="px-2 py-1.5 num text-right text-slate-400 whitespace-nowrap">
+            {row.balance === null ? "—" : formatAmount(row.balance)}
+          </td>
+          <td className="px-2 py-1.5 text-slate-500 whitespace-nowrap">{row.branch}</td>
+          <td className="px-2 py-1.5 whitespace-nowrap">
+            <Member
+              name={row.memberName}
+              number={row.memberNumber}
+              unitName={row.unitName}
+            />
+          </td>
+          {/* Only ever from the slip this line was paired with — the bank
+              says an amount arrived, never what for. */}
+          <td className="px-2 py-1.5 whitespace-nowrap text-slate-600">
+            {row.category ?? <span className="text-slate-300">—</span>}
+          </td>
+          <td className="px-2 py-1.5 whitespace-nowrap">
+            <StatusTag status={row.status} />
+          </td>
+        </tr>
+      ))}
+    </tbody>
+  </table>
+);
+
+const Section = ({
+  title,
+  tone,
+  note,
+  empty,
+  children,
+}: {
+  title: string;
+  tone: string;
+  note: string;
+  empty: boolean;
+  children: React.ReactNode;
+}) => (
+  <div className="px-4 py-3 border-t border-slate-100">
+    <h3 className={`text-sm font-semibold ${tone}`}>{title}</h3>
+    <p className="text-xs text-slate-500 mt-1">{note}</p>
+    {empty ? (
+      <p className="text-sm text-slate-400 py-3">— ไม่มี —</p>
+    ) : (
+      <div className="overflow-x-auto mt-2">{children}</div>
+    )}
+  </div>
+);
+
+const SlipTable = ({ slips }: { slips: DailySlipRow[] }) => (
+  <table className="w-full text-sm">
+    <thead className="text-slate-500 text-left text-xs uppercase tracking-wide">
+      <tr>
+        <th className="px-2 py-1.5 font-semibold text-right">ยอด</th>
+        <th className="px-2 py-1.5 font-semibold">สมาชิก</th>
+        <th className="px-2 py-1.5 font-semibold">แจ้งว่าเป็น</th>
+        <th className="px-2 py-1.5 font-semibold">วันที่/เวลาบนสลิป</th>
+        <th className="px-2 py-1.5 font-semibold">บัญชีผู้โอนบนสลิป</th>
+        <th className="px-2 py-1.5 font-semibold">สลิป</th>
+      </tr>
+    </thead>
+    <tbody>
+      {slips.map((slip) => (
+        <tr key={slip.id} className="border-t border-slate-100 hover:bg-slate-50">
+          <td className="px-2 py-1.5 text-right">
+            <Money value={slip.amount} className="font-medium" />
+          </td>
+          <td className="px-2 py-1.5">
+            {slip.memberFullName ?? "—"}
+            {slip.memberNumber && (
+              <span className="num text-xs text-slate-400"> · {slip.memberNumber}</span>
+            )}
+          </td>
+          <td className="px-2 py-1.5 text-slate-500">{slip.category ?? "—"}</td>
+          <td className="px-2 py-1.5 num text-slate-500 whitespace-nowrap">
+            {formatStatementDate(slip.date)}
+            {slip.transferTime && <span className="text-slate-900"> {slip.transferTime}</span>}
+          </td>
+          {/* The one thing that turns an unexplained slip into something staff
+              can actually look up in the statement themselves. */}
+          <td className="px-2 py-1.5 font-mono text-xs whitespace-nowrap">
+            {slip.senderAccount ?? <span className="text-slate-300">—</span>}
+          </td>
+          <td className="px-2 py-1.5">
+            <SlipLink slip={slip} />
+          </td>
+        </tr>
+      ))}
+    </tbody>
+  </table>
+);
+
+// What staff can do with an unclaimed deposit, and the forms behind the two
+// buttons. Everything here is optional: the table renders read-only when no
+// handlers are passed, which is what the "already know who paid, just no
+// slip" list wants.
+interface DepositActions {
+  acting: { id: string; kind: "bind" | "record" } | null;
+  setActing: (next: { id: string; kind: "bind" | "record" } | null) => void;
+  memberNumber: string;
+  setMemberNumber: (value: string) => void;
+  memberName: string;
+  setMemberName: (value: string) => void;
+  category: string;
+  setCategory: (value: string) => void;
+  saving: boolean;
+  onBind: (accountNumber: string) => void;
+  onRecord: (depositId: string) => void;
+}
+
+const DepositTable = ({
+  deposits,
+  actions,
+  showDate = false,
+}: {
+  deposits: DailyDepositRow[];
+  actions?: DepositActions;
+  // Only when the window spans more than one day — see Clock.
+  showDate?: boolean;
+}) => (
+  <table className="w-full text-sm">
+    <thead className="text-slate-500 text-left text-xs uppercase tracking-wide">
+      <tr>
+        <th className="px-2 py-1.5 font-semibold">{showDate ? "วันที่ / เวลา" : "เวลา"}</th>
+        <th className="px-2 py-1.5 font-semibold text-right">ยอด</th>
+        <th className="px-2 py-1.5 font-semibold">ผู้โอน</th>
+        <th className="px-2 py-1.5 font-semibold">ช่องทาง</th>
+        <th className="px-2 py-1.5 font-semibold">เข้าบัญชี</th>
+        <th className="px-2 py-1.5 font-semibold">รายละเอียดในสเตทเมนต์</th>
+        {actions && <th className="px-2 py-1.5 font-semibold">ทำอะไรได้</th>}
+      </tr>
+    </thead>
+    <tbody>
+      {deposits.map((deposit) => {
+        const open = actions?.acting?.id === deposit.id ? actions.acting.kind : null;
+        const caveat = accountCaveat(deposit.channel);
+
+        return (
+          <Fragment key={deposit.id}>
+            <tr className="border-t border-slate-100 hover:bg-slate-50">
+              <td className="px-2 py-1.5 whitespace-nowrap">
+                <Clock iso={deposit.postedAt} withDate={showDate} />
+              </td>
+              <td className="px-2 py-1.5 text-right">
+                <Money value={deposit.amount} className="font-medium" />
+              </td>
+              <td className="px-2 py-1.5">
+                <Payer deposit={deposit} />
+              </td>
+              <td className="px-2 py-1.5 text-slate-500 whitespace-nowrap">
+                {CHANNEL_LABELS[deposit.channel] ?? deposit.channel}
+              </td>
+              <td className="px-2 py-1.5 text-slate-500 whitespace-nowrap">{deposit.branch}</td>
+              <td className="px-2 py-1.5">
+                <StatementDetail description={deposit.description} />
+              </td>
+              {actions && (
+                <td className="px-2 py-1.5 whitespace-nowrap">
+                  <span className="inline-flex items-center gap-3 text-xs">
+                    {/* Offered whenever the statement named any digits at all.
+                        Where those digits are doubtful the button carries the
+                        reason rather than disappearing — the person on the
+                        phone knows more about the payment than the
+                        transaction code does. */}
+                    {canBindAccount(deposit) && (
+                      <button
+                        onClick={() => {
+                          actions.setActing({ id: deposit.id, kind: "bind" });
+                          actions.setMemberNumber("");
+                          actions.setMemberName("");
+                          actions.setCategory("");
+                        }}
+                        className={`hover:underline ${caveat ? "text-amber-700" : "text-slate-900"}`}
+                        title={caveat ?? "จำไว้ว่าเลขบัญชีนี้เป็นของสมาชิกคนนี้ ใช้ได้ทุกครั้งต่อไป"}
+                      >
+                        ระบุเจ้าของ{caveat && " ⚠️"}
+                      </button>
+                    )}
+                    <button
+                      onClick={() => {
+                        actions.setActing({ id: deposit.id, kind: "record" });
+                        actions.setMemberNumber("");
+                        actions.setMemberName("");
+                        actions.setCategory("");
+                      }}
+                      className="text-slate-900 hover:underline"
+                      title="บันทึกเงินก้อนนี้เป็นรายการของสมาชิก เหมือนที่สลิปทางไลน์ทำ"
+                    >
+                      บันทึกรายการ
+                    </button>
+                  </span>
+                </td>
+              )}
+            </tr>
+
+            {actions && open && (
+              <tr className="bg-slate-50 border-t border-slate-100">
+                <td colSpan={7} className="px-3 py-2.5">
+                  {open === "bind" && caveat && (
+                    <p className="text-xs text-amber-800 mb-2">⚠️ {caveat}</p>
+                  )}
+                  <div className="flex flex-wrap items-center gap-2 text-sm">
+                    <span className="text-slate-500">
+                      {open === "bind"
+                        ? `เลขบัญชี ${deposit.senderAccount} เป็นของสมาชิกเลข`
+                        : `${formatAmount(deposit.amount)} นี้ เป็นเงินของสมาชิกเลข`}
+                    </span>
+                    <input
+                      value={actions.memberNumber}
+                      onChange={(e) => actions.setMemberNumber(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Escape") actions.setActing(null);
+                        if (e.key === "Enter" && actions.memberNumber.trim()) {
+                          if (open === "bind" && deposit.senderAccount) {
+                            actions.onBind(deposit.senderAccount);
+                          } else if (open === "record" && actions.category) {
+                            actions.onRecord(deposit.id);
+                          }
+                        }
+                      }}
+                      placeholder="เลขสมาชิก"
+                      autoFocus
+                      className="border border-slate-300 rounded px-2 py-1 w-40 bg-white"
+                    />
+                    {open === "record" && (
+                      <>
+                        <input
+                          value={actions.memberName}
+                          onChange={(e) => actions.setMemberName(e.target.value)}
+                          placeholder="ชื่อ-นามสกุล (ใส่เมื่อไม่มีในทะเบียน)"
+                          title="ปล่อยว่างได้ถ้าเลขสมาชิกมีในทะเบียนอยู่แล้ว — ระบบจะใช้ชื่อจากทะเบียนเสมอ"
+                          className="border border-slate-300 rounded px-2 py-1 w-64 bg-white"
+                        />
+                        <span className="text-slate-500">จ่ายเป็น</span>
+                        <select
+                          value={actions.category}
+                          onChange={(e) => actions.setCategory(e.target.value)}
+                          className="border border-slate-300 rounded px-2 py-1 bg-white"
+                        >
+                          <option value="">— เลือก —</option>
+                          {CATEGORIES.map((c) => (
+                            <option key={c} value={c}>
+                              {c}
+                            </option>
+                          ))}
+                        </select>
+                      </>
+                    )}
+                    <button
+                      onClick={() => {
+                        if (open === "bind" && deposit.senderAccount) {
+                          actions.onBind(deposit.senderAccount);
+                        } else if (open === "record") {
+                          actions.onRecord(deposit.id);
+                        }
+                      }}
+                      disabled={
+                        actions.saving ||
+                        !actions.memberNumber.trim() ||
+                        (open === "record" && !actions.category)
+                      }
+                      className="px-3 py-1 rounded bg-slate-900 text-white disabled:opacity-40"
+                    >
+                      {actions.saving ? "กำลังบันทึก…" : "บันทึก"}
+                    </button>
+                    <button
+                      onClick={() => actions.setActing(null)}
+                      className="text-slate-500 hover:underline"
+                    >
+                      ยกเลิก
+                    </button>
+                  </div>
+                  <p className="text-xs text-slate-500 mt-2">
+                    {open === "bind"
+                      ? "ผูกเลขบัญชีไว้กับสมาชิก — ไม่ได้บันทึกเงินก้อนนี้เป็นรายการ ถ้าต้องการบันทึกด้วย ให้กด \"บันทึกรายการ\" อีกที"
+                      : "ยอดและวันที่ใช้ตามที่ธนาคารบันทึกไว้ ไม่ต้องพิมพ์เอง · ชื่อใส่เฉพาะตอนที่เลขสมาชิกยังไม่มีในทะเบียน (ถ้ามีแล้วระบบใช้ชื่อจากทะเบียน) — ถ้าบันทึกผิด ลบได้ที่แท็บ \"รายการ\""}
+                  </p>
+                </td>
+              </tr>
+            )}
+          </Fragment>
+        );
+      })}
+    </tbody>
+  </table>
+);
+
+const OtherTable = ({
+  lines,
+  showDate = false,
+}: {
+  lines: DailyOtherLineRow[];
+  showDate?: boolean;
+}) => (
+  <div className="overflow-x-auto mt-2">
+    <table className="w-full text-sm">
+      <thead className="text-slate-500 text-left text-xs uppercase tracking-wide">
+        <tr>
+          <th className="px-2 py-1.5 font-semibold">{showDate ? "วันที่ / เวลา" : "เวลา"}</th>
+          <th className="px-2 py-1.5 font-semibold text-right">ยอด</th>
+          <th className="px-2 py-1.5 font-semibold">รหัส</th>
+          <th className="px-2 py-1.5 font-semibold">รายละเอียด</th>
+          <th className="px-2 py-1.5 font-semibold">บัญชี</th>
+        </tr>
+      </thead>
+      <tbody>
+        {lines.map((line) => (
+          <tr key={line.id} className="border-t border-slate-100 hover:bg-slate-50">
+            <td className="px-2 py-1.5 whitespace-nowrap">
+              <Clock iso={line.postedAt} withDate={showDate} />
+            </td>
+            <td className="px-2 py-1.5 text-right">
+              <Money
+                value={line.amount}
+                className={line.amount < 0 ? "text-slate-500" : "text-slate-900"}
+              />
+            </td>
+            <td className="px-2 py-1.5 font-mono text-xs">{line.txnCode}</td>
+            <td className="px-2 py-1.5">
+              <StatementDetail description={line.description} />
+            </td>
+            <td className="px-2 py-1.5 text-slate-500 whitespace-nowrap">{line.branch}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  </div>
+);

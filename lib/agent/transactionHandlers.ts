@@ -11,10 +11,19 @@ import { CATEGORIES } from "../categories";
 import { LOAN_TYPES } from "../loanTypes";
 import { formatAmount } from "../format";
 import { isPlaceholderText } from "../placeholderText";
+import { cooperativeNow } from "../cooperativeClock";
 import { namesLikelyMatch } from "../nameMatch";
+import { normalizeAccountPattern, parseSlipTime } from "../slipDetails";
 import { classifyRecipient } from "../recipientCheck";
 import { isFeatureEnabled, TRANSACTIONS_ENABLED } from "../featureFlags";
+import { startsNewPayment } from "../pendingSlip";
 import {
+  isRepeatOfLogged,
+  ALREADY_LOGGED_INSTRUCTION,
+  REPEAT_WINDOW_MS,
+} from "../repeatReport";
+import {
+  loadAllPending,
   loadLineUser,
   loadPending,
   computeNextRequirement,
@@ -56,7 +65,7 @@ export async function finalizeTransaction(
         amount: pending.amount,
         category: pending.category,
         description: pending.description,
-        date: pending.date ?? new Date(),
+        date: pending.date ?? cooperativeNow(),
         lineUserId,
         referenceNumber: pending.referenceNumber,
         slipImageHash: pending.slipImageHash,
@@ -69,9 +78,18 @@ export async function finalizeTransaction(
         depositAccountNumber: pending.depositAccountNumber,
         slipSenderName: pending.slipSenderName,
         senderNameMismatch,
+        // Carried onto the permanent record so the daily reconciliation has
+        // them: the time tells apart several payments of the same amount, and
+        // the account is the member's own statement of where the money came
+        // from — independent of the bank-account directory, which is only as
+        // complete as staff have made it.
+        slipTransferTime: pending.slipTransferTime,
+        slipSenderAccount: pending.slipSenderAccount,
       },
     });
-    await prisma.pendingTransaction.delete({ where: { lineUserId } }).catch(() => {});
+    // By id: this member may have another slip still queued behind this one,
+    // and deleting by lineUserId would throw it away unlogged.
+    await prisma.pendingTransaction.delete({ where: { id: pending.id } }).catch(() => {});
     await notifyTransactionForward(lineUserId, expense, lineUser);
 
     return `Logged: ${formatAmount(expense.amount)} (${expense.category}) on ${expense.date
@@ -84,7 +102,7 @@ export async function finalizeTransaction(
       ((err.meta?.target as string[] | undefined)?.includes("referenceNumber") ||
         (err.meta?.target as string[] | undefined)?.includes("slipImageHash"))
     ) {
-      await prisma.pendingTransaction.delete({ where: { lineUserId } }).catch(() => {});
+      await prisma.pendingTransaction.delete({ where: { id: pending.id } }).catch(() => {});
       return "Error: this exact transaction (same slip image or same reference number) was already recorded — this looks like a duplicate slip. Tell the user it was already logged and do not log it again.";
     }
     throw err;
@@ -92,28 +110,64 @@ export async function finalizeTransaction(
 }
 
 
+// The tool the model is forced to call answers exactly one question. Anything
+// else the member said in the same breath arrives here unsaved, and "ask the
+// user for X next" — all this used to say — reads as permission to drop it.
+//
+// That is what turned one ฿30,000 repayment into seven minutes and ten
+// messages: the member sent the slip and wrote "จ่ายหนี้นะคะ", and was asked
+// for the category twice afterwards; then wrote "ดำรงชีพ ATM น.ส.กาญจภัษฐ์ วงษ์สวรรค์",
+// had the name saved and the loan type dropped, and was asked for the loan
+// type twice more. Both answers were in messages the bot had already read.
+//
+// Order is not decoration: submit_loan_type refuses a transaction whose
+// category is not yet ชำระหนี้, so the category has to be banked first.
+export const CAPTURE_BEFORE_ASKING =
+  " IMPORTANT — before you ask for it, re-read the member's current message." +
+  " If it ALSO states the transaction category, call report_transaction with that category now, in this same turn." +
+  ` If it ALSO states the loan type (one of ${LOAN_TYPES.join(", ")}), call submit_loan_type` +
+  " — after report_transaction if the category came in the same message, since a loan type cannot attach to a transaction that is not ชำระหนี้ yet." +
+  " If it ALSO states the deposit account number, call submit_deposit_account." +
+  " Ask only for what is still genuinely unknown once you have done that, and NEVER ask the member for something they have already told you.";
+
 export function requirementMessage(next: Requirement): string {
   if (next === "member_info") {
-    return "Still missing: member full name and member number. Ask the user for their ชื่อ-นามสกุล and เลขสมาชิก next, in Thai. Do not log yet.";
+    return (
+      "Still missing: member full name and member number. Ask the user for their ชื่อ-นามสกุล and เลขสมาชิก next, in Thai. Do not log yet." +
+      CAPTURE_BEFORE_ASKING
+    );
   }
   if (next === "slip") {
-    return "Still missing: a photo of the transfer slip. Ask the user to send it next, in Thai. Do not log yet.";
+    return (
+      "Still missing: a photo of the transfer slip. Ask the user to send it next, in Thai. Do not log yet." +
+      CAPTURE_BEFORE_ASKING
+    );
   }
   if (next === "category") {
-    return `Still missing: which category this transaction is for — the slip showed no stated purpose. Ask the user directly, in Thai, listing the options: ${CATEGORIES.join(
-      ", "
-    )}. Do not guess. Do not log yet.`;
+    return (
+      `Still missing: which category this transaction is for — the slip showed no stated purpose. Ask the user directly, in Thai, listing the options: ${CATEGORIES.join(
+        ", "
+      )}. Do not guess. Do not log yet.` + CAPTURE_BEFORE_ASKING
+    );
   }
   if (next === "loan_type") {
-    return `Still missing: loan type for this ชำระหนี้ repayment. Ask the user to specify one of: ${LOAN_TYPES.join(
-      ", "
-    )}. Do not log yet.`;
+    return (
+      `Still missing: loan type for this ชำระหนี้ repayment. Ask the user to specify one of: ${LOAN_TYPES.join(
+        ", "
+      )}. Do not log yet.` + CAPTURE_BEFORE_ASKING
+    );
   }
   if (next === "deposit_account") {
-    return "Still missing: which cooperative account number this ฝากเงิน deposit is going into. Ask the user for it next, in Thai. Do not log yet.";
+    return (
+      "Still missing: which cooperative account number this ฝากเงิน deposit is going into. Ask the user for it next, in Thai. Do not log yet." +
+      CAPTURE_BEFORE_ASKING
+    );
   }
   if (next === "confirm_sender_name") {
-    return "Still missing: confirmation that this is genuinely the member's own transaction — the slip's sender name didn't match their registered name. Ask them to confirm next, in Thai. Do not log yet.";
+    return (
+      "Still missing: confirmation that this is genuinely the member's own transaction — the slip's sender name didn't match their registered name. Ask them to confirm next, in Thai. Do not log yet." +
+      CAPTURE_BEFORE_ASKING
+    );
   }
   return "";
 }
@@ -127,6 +181,8 @@ export type ReportTransactionInput = {
   referenceNumber?: unknown;
   senderName?: unknown;
   recipientName?: unknown;
+  transferTime?: unknown;
+  senderAccount?: unknown;
 };
 
 
@@ -140,8 +196,17 @@ export async function reportTransaction(
     return "Error: transaction logging is temporarily paused by staff. Apologize to the user, in Thai, and tell them to try again later or contact the cooperative office directly — do not log anything.";
   }
 
-  const { category, amount, description, date, referenceNumber, senderName, recipientName } =
-    input;
+  const {
+    category,
+    amount,
+    description,
+    date,
+    referenceNumber,
+    senderName,
+    recipientName,
+    transferTime,
+    senderAccount,
+  } = input;
 
   // Deterministic backstop for the prompt's "must be a transfer to the
   // cooperative" rule (ขั้นที่ 1.5), which the model has ignored in
@@ -174,7 +239,13 @@ export async function reportTransaction(
 
   const parsedAmount =
     typeof amount === "number" && Number.isFinite(amount) && amount > 0 ? amount : null;
-  const parsedDate = typeof date === "string" && date ? new Date(date) : new Date();
+  // The cooperative's own clock, not the server's. A slip filed at two in the
+  // morning in Nong Khai belongs to that morning; stored as a real instant it
+  // was filed against the previous day everywhere the system reads a day
+  // boundary — see lib/cooperativeClock.ts. A date the model supplies is a
+  // plain day already (no clock, no zone), so it needs no shifting.
+  const parsedDate =
+    typeof date === "string" && date ? new Date(date) : cooperativeNow();
   if (Number.isNaN(parsedDate.getTime())) {
     return "Error: invalid date.";
   }
@@ -189,6 +260,21 @@ export async function reportTransaction(
   const parsedSenderName =
     typeof senderName === "string" && senderName.trim() && !isPlaceholderText(senderName)
       ? senderName.trim()
+      : null;
+
+  // Both are optional and both fail closed: a time that is not a real clock,
+  // or an "account" that turns out to be a bank name, is dropped rather than
+  // stored. A wrong value here would rank a reconciliation pairing
+  // confidently in the wrong direction, which is worse than having none.
+  const parsedTransferTime = parseSlipTime(transferTime);
+  // Stored exactly as printed, mask characters and all — normalizeAccountPattern
+  // is only asked whether it *could* be an account, so that changing how much
+  // of one has to be visible later needs no slips re-read.
+  const parsedSenderAccount =
+    typeof senderAccount === "string" &&
+    !isPlaceholderText(senderAccount) &&
+    normalizeAccountPattern(senderAccount)
+      ? senderAccount.trim()
       : null;
 
   // Catch a duplicate slip as early as possible instead of only at the
@@ -211,21 +297,57 @@ export async function reportTransaction(
     }
   }
 
+  // The row the bot is currently asking about — the oldest still alive, since
+  // a member may have more than one payment waiting.
+  const queued = await loadAllPending(ctx.lineUserId);
+  const active = queued[0] ?? null;
+
+  // Nothing is waiting, so this call would open a brand-new row. That is the
+  // right thing for a new payment and the wrong thing for the message right
+  // after a confirmation, which is how a finished transaction was being
+  // re-opened as a slipless phantom — see lib/repeatReport.ts.
+  if (!active) {
+    const recent = await prisma.expense.findFirst({
+      where: {
+        lineUserId: ctx.lineUserId,
+        createdAt: { gte: new Date(Date.now() - REPEAT_WINDOW_MS) },
+      },
+      orderBy: { createdAt: "desc" },
+      select: { amount: true, category: true, createdAt: true },
+    });
+    const repeat = isRepeatOfLogged(
+      { amount: parsedAmount, category: parsedCategory, hasSlip: ctx.hasSlipImage },
+      recent,
+      new Date()
+    );
+    if (repeat) return ALREADY_LOGGED_INSTRUCTION;
+  }
+
+  // A different slip arriving while one is still unanswered is a second
+  // payment, not a correction to the first. It used to overwrite it, and the
+  // first payment vanished with no trace anywhere but the LINE chat.
+  const isNewPayment = startsNewPayment({
+    activeHasSlip: active?.hasSlip ?? false,
+    activeSlipHash: active?.slipImageHash ?? null,
+    incomingHasSlip: ctx.hasSlipImage,
+    incomingSlipHash: ctx.slipImageHash,
+  });
+
   // If an amount was already on record for this pending transaction (e.g.
   // stated in an earlier text message) and this call reports a different
   // one (typically the amount actually read off a slip), don't silently
   // pick one — the newer value wins (the slip is verifiable evidence) but
   // the discrepancy is surfaced to the user rather than logged unnoticed.
-  const existingPending = await prisma.pendingTransaction.findUnique({
-    where: { lineUserId: ctx.lineUserId },
-  });
+  // Only for the same payment: two slips of different amounts are not a
+  // discrepancy, they are two payments.
   const amountMismatch =
-    existingPending?.amount != null &&
+    !isNewPayment &&
+    active?.amount != null &&
     parsedAmount !== null &&
-    Math.abs(existingPending.amount - parsedAmount) > 0.005;
+    Math.abs(active.amount - parsedAmount) > 0.005;
   const mismatchNote = amountMismatch
     ? ` Note: the amount previously on record (${formatAmount(
-        existingPending!.amount!
+        active!.amount!
       )}) doesn't match the amount just reported (${formatAmount(
         parsedAmount!
       )}) — the new amount is now used. Point out this discrepancy to the user in your reply so they can correct it if it's wrong.`
@@ -233,54 +355,76 @@ export async function reportTransaction(
 
   const slipImageUrl = ctx.slipImageUrl;
 
-  const pending = await prisma.pendingTransaction.upsert({
-    where: { lineUserId: ctx.lineUserId },
-    create: {
-      lineUserId: ctx.lineUserId,
-      category: parsedCategory,
-      amount: parsedAmount,
-      description: parsedDescription,
-      date: parsedDate,
-      hasSlip: ctx.hasSlipImage,
-      slipImageHash: ctx.slipImageHash,
-      slipImageUrl,
-      slipIsPdf: ctx.slipIsPdf,
-      referenceNumber: refNumber,
-      slipSenderName: parsedSenderName,
-    },
-    update: {
-      // Only overwrite fields we actually have new info for, so a slip
-      // arriving after the amount was already known from text (or vice
-      // versa) doesn't clobber it with null.
-      ...(parsedCategory !== null ? { category: parsedCategory } : {}),
-      ...(parsedAmount !== null ? { amount: parsedAmount } : {}),
-      ...(parsedDescription !== null ? { description: parsedDescription } : {}),
-      date: parsedDate,
-      // Only ever set to true, never back to false, once a slip has been
-      // seen for this pending transaction.
-      ...(ctx.hasSlipImage ? { hasSlip: true, slipIsPdf: ctx.slipIsPdf } : {}),
-      ...(ctx.slipImageHash ? { slipImageHash: ctx.slipImageHash } : {}),
-      ...(slipImageUrl ? { slipImageUrl } : {}),
-      ...(refNumber ? { referenceNumber: refNumber } : {}),
-      // A new slip's sender name replaces any earlier one and resets
-      // confirmation — a different slip image needs its own check.
-      ...(parsedSenderName
-        ? { slipSenderName: parsedSenderName, senderNameConfirmed: false }
-        : {}),
-      createdAt: new Date(),
-    },
-  });
+  const createData = {
+    lineUserId: ctx.lineUserId,
+    category: parsedCategory,
+    amount: parsedAmount,
+    description: parsedDescription,
+    date: parsedDate,
+    hasSlip: ctx.hasSlipImage,
+    slipImageHash: ctx.slipImageHash,
+    slipImageUrl,
+    slipIsPdf: ctx.slipIsPdf,
+    referenceNumber: refNumber,
+    slipSenderName: parsedSenderName,
+    slipTransferTime: parsedTransferTime,
+    slipSenderAccount: parsedSenderAccount,
+  };
+
+  const pending =
+    active && !isNewPayment
+      ? await prisma.pendingTransaction.update({
+          where: { id: active.id },
+          data: {
+            // Only overwrite fields we actually have new info for, so a slip
+            // arriving after the amount was already known from text (or vice
+            // versa) doesn't clobber it with null.
+            ...(parsedCategory !== null ? { category: parsedCategory } : {}),
+            ...(parsedAmount !== null ? { amount: parsedAmount } : {}),
+            ...(parsedDescription !== null ? { description: parsedDescription } : {}),
+            date: parsedDate,
+            // Only ever set to true, never back to false, once a slip has been
+            // seen for this pending transaction.
+            ...(ctx.hasSlipImage ? { hasSlip: true, slipIsPdf: ctx.slipIsPdf } : {}),
+            ...(ctx.slipImageHash ? { slipImageHash: ctx.slipImageHash } : {}),
+            ...(slipImageUrl ? { slipImageUrl } : {}),
+            ...(refNumber ? { referenceNumber: refNumber } : {}),
+            // A new slip's sender name replaces any earlier one and resets
+            // confirmation — a different slip image needs its own check.
+            ...(parsedSenderName
+              ? { slipSenderName: parsedSenderName, senderNameConfirmed: false }
+              : {}),
+            ...(parsedTransferTime ? { slipTransferTime: parsedTransferTime } : {}),
+            ...(parsedSenderAccount ? { slipSenderAccount: parsedSenderAccount } : {}),
+            // Not createdAt: that is this payment's place in the queue, and
+            // rewriting it would send the payment being answered to the back.
+            lastActivityAt: new Date(),
+          },
+        })
+      : await prisma.pendingTransaction.create({ data: createData });
+
+  // Said out loud so the member is not left wondering whether the earlier
+  // slip was seen — silence there is what makes somebody send it a third time.
+  const queueNote =
+    isNewPayment && active
+      ? ` Note: this member now has ${queued.length + 1} separate payments waiting, and this is the newest. ` +
+        "Tell them, in Thai, that BOTH slips were received and neither was lost, and that the questions still being asked are about the earlier one."
+      : "";
 
   const [lineUser, disabled] = await Promise.all([
     loadLineUser(ctx.lineUserId),
     loadDisabledRequirements(),
   ]);
-  const next = computeNextRequirement(lineUser, pending, disabled);
+  // Asked about the oldest waiting payment, not necessarily the one that just
+  // arrived: the member has already been asked about that one, so switching
+  // topics mid-answer would strand it.
+  const asking = isNewPayment && active ? active : pending;
+  const next = computeNextRequirement(lineUser, asking, disabled);
   if (next === null) {
-    const result = await finalizeTransaction(ctx.lineUserId, pending, lineUser as LineUserInfo);
-    return result + mismatchNote;
+    const result = await finalizeTransaction(ctx.lineUserId, asking, lineUser as LineUserInfo);
+    return result + mismatchNote + queueNote;
   }
-  return requirementMessage(next) + mismatchNote;
+  return requirementMessage(next) + mismatchNote + queueNote;
 }
 
 
@@ -309,8 +453,8 @@ export async function submitLoanType(
   }
 
   const updated = await prisma.pendingTransaction.update({
-    where: { lineUserId: ctx.lineUserId },
-    data: { loanType, createdAt: new Date() },
+    where: { id: pending.id },
+    data: { loanType, lastActivityAt: new Date() },
   });
 
   const [lineUser, disabled] = await Promise.all([
@@ -346,8 +490,8 @@ export async function submitDepositAccount(
   }
 
   const updated = await prisma.pendingTransaction.update({
-    where: { lineUserId: ctx.lineUserId },
-    data: { depositAccountNumber: accountNumber, createdAt: new Date() },
+    where: { id: pending.id },
+    data: { depositAccountNumber: accountNumber, lastActivityAt: new Date() },
   });
 
   const [lineUser, disabled] = await Promise.all([
@@ -380,13 +524,13 @@ export async function confirmTransactionSender(
     // The user said this slip isn't genuinely theirs — don't log it, and
     // don't leave a stale pending transaction around for the next message
     // to accidentally attach to.
-    await prisma.pendingTransaction.delete({ where: { lineUserId: ctx.lineUserId } }).catch(() => {});
+    await prisma.pendingTransaction.delete({ where: { id: pending.id } }).catch(() => {});
     return "The user said this slip is not genuinely their own transaction. Do not log it. Apologize, in Thai, and ask them to double-check and send the correct slip, or contact the cooperative office if they believe this is a mistake.";
   }
 
   const updated = await prisma.pendingTransaction.update({
-    where: { lineUserId: ctx.lineUserId },
-    data: { senderNameConfirmed: true, createdAt: new Date() },
+    where: { id: pending.id },
+    data: { senderNameConfirmed: true, lastActivityAt: new Date() },
   });
 
   const [lineUser, disabled] = await Promise.all([

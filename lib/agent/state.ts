@@ -3,10 +3,15 @@
 // request / member-number lookup) is pending, and — via the
 // computeXXXRequirement functions — which single piece of information the
 // bot should ask for next. Split out of lib/financeAgent.ts.
+import { Prisma } from "@prisma/client";
 import { prisma } from "../prisma";
 import { namesLikelyMatch } from "../nameMatch";
 import { CATEGORIES } from "../categories";
 import { LOAN_TYPES } from "../loanTypes";
+import type { RecentAction } from "../closingReply";
+import { quoteReply, type PreviousReply } from "../recentReply";
+import { quotableText, QUOTED_RETENTION_MS, type QuotedMessage } from "../quotedMessage";
+import type { LastReply, ReplyKind } from "../replyKind";
 import {
   isFeatureEnabled,
   ASK_MEMBER_INFO_ENABLED,
@@ -188,16 +193,38 @@ export async function loadLineUser(lineUserId: string): Promise<LineUserInfo | n
 }
 
 
-export async function loadPending(lineUserId: string): Promise<PendingInfo | null> {
-  const pending = await prisma.pendingTransaction.findUnique({
+// The member's pending transactions, oldest first, with the expired ones
+// dropped on the way past.
+//
+// A member can have several: they send one slip, then another before
+// answering the question about the first. They queue rather than overwrite —
+// the row is a payment, not a member.
+export async function loadAllPending(lineUserId: string): Promise<PendingInfo[]> {
+  const rows = await prisma.pendingTransaction.findMany({
     where: { lineUserId },
+    orderBy: { createdAt: "asc" },
   });
-  if (!pending) return null;
-  if (Date.now() - pending.createdAt.getTime() > PENDING_TRANSACTION_EXPIRY_MS) {
-    await prisma.pendingTransaction.delete({ where: { lineUserId } }).catch(() => {});
-    return null;
+
+  // Expiry runs on last activity, not creation: a member still answering
+  // questions about a payment has not abandoned it, however long the
+  // conversation has taken.
+  const cutoff = Date.now() - PENDING_TRANSACTION_EXPIRY_MS;
+  const expired = rows.filter((row) => row.lastActivityAt.getTime() < cutoff);
+  if (expired.length > 0) {
+    await prisma.pendingTransaction
+      .deleteMany({ where: { id: { in: expired.map((row) => row.id) } } })
+      .catch(() => {});
   }
-  return pending;
+
+  return rows.filter((row) => row.lastActivityAt.getTime() >= cutoff);
+}
+
+// The one the bot is currently asking about: the oldest still alive. Asking
+// oldest first matters — it is the one the member has already been asked
+// about, so the conversation stays on the payment they think it is on.
+export async function loadPending(lineUserId: string): Promise<PendingInfo | null> {
+  const [oldest] = await loadAllPending(lineUserId);
+  return oldest ?? null;
 }
 
 
@@ -215,6 +242,47 @@ export function computeServiceRequirement(
   if (!lineUser?.fullName || !lineUser?.memberNumber) return "member_info";
   if (!lineUser?.phone) return "phone";
   return null;
+}
+
+// Everything the request is still short of, rather than the next one thing.
+//
+// A member sent a salary certificate and asked what she could borrow. She was
+// asked what she wanted; then who she was; then her surname's other half;
+// then her telephone number — four rounds and six messages, and each of them
+// waited for the one before. Every one of those answers is needed before the
+// request can go anywhere, and none of them depends on any other, so there
+// was never a reason to collect them one at a time.
+//
+// The member-number lookup already asks for all three at once and says so in
+// its own flow note. This is the same rule for the same reason.
+export function computeServiceMissing(
+  lineUser: LineUserInfo | null,
+  pendingService: PendingServiceInfo
+): ServiceRequirement[] {
+  const missing: ServiceRequirement[] = [];
+  if (!pendingService.requestType) missing.push("purpose");
+  if (!lineUser?.fullName || !lineUser?.memberNumber) missing.push("member_info");
+  if (!lineUser?.phone) missing.push("phone");
+  return missing;
+}
+
+// What each one is called when the member is asked for it, so the note can
+// name exactly the pieces still outstanding — never one already on record.
+export function describeServiceMissing(
+  missing: ServiceRequirement[],
+  lineUser: LineUserInfo | null
+): string[] {
+  const labels: string[] = [];
+  for (const item of missing) {
+    if (item === "purpose") labels.push("ต้องการทำรายการอะไร");
+    if (item === "member_info") {
+      if (!lineUser?.fullName && !lineUser?.memberNumber) labels.push("ชื่อ-นามสกุล และเลขสมาชิก");
+      else if (!lineUser?.fullName) labels.push("ชื่อ-นามสกุล");
+      else labels.push("เลขสมาชิก");
+    }
+    if (item === "phone") labels.push("เบอร์โทรติดต่อกลับ");
+  }
+  return labels;
 }
 
 
@@ -267,3 +335,156 @@ export async function loadPendingLookup(lineUserId: string): Promise<PendingLook
   return pending;
 }
 
+
+// How far back a "ขอบคุณค่ะ" can plausibly be thanking the bot for something
+// it did. Longer than the pending-transaction expiry on purpose: a member
+// often replies to the confirmation only when they next open LINE, and a
+// close that names the right subject an hour later is still right. Past this,
+// naming a subject would be a guess, and the bot says nothing specific
+// instead — see closingNote.
+const RECENT_ACTION_WINDOW_MS = 60 * 60 * 1000;
+
+// The last thing the bot finished for this member: a logged transaction or a
+// service request handed to staff, whichever is newer. Only loaded when the
+// incoming message is a bare acknowledgement, so it costs nothing on an
+// ordinary message.
+export async function loadRecentAction(lineUserId: string): Promise<RecentAction | null> {
+  const since = new Date(Date.now() - RECENT_ACTION_WINDOW_MS);
+  const [expense, request] = await Promise.all([
+    prisma.expense.findFirst({
+      where: { lineUserId, createdAt: { gte: since } },
+      orderBy: { createdAt: "desc" },
+      select: { createdAt: true, category: true, amount: true },
+    }),
+    prisma.serviceRequestLog.findFirst({
+      where: { lineUserId, createdAt: { gte: since } },
+      orderBy: { createdAt: "desc" },
+      select: { createdAt: true, documentType: true, requestType: true },
+    }),
+  ]);
+
+  const expenseIsNewer =
+    expense !== null &&
+    (request === null || expense.createdAt.getTime() >= request.createdAt.getTime());
+  if (expenseIsNewer) {
+    return { kind: "transaction", category: expense.category, amount: expense.amount };
+  }
+  if (request) {
+    return {
+      kind: "serviceRequest",
+      documentType: request.documentType,
+      requestType: request.requestType,
+    };
+  }
+  return null;
+}
+
+// What the bot last said to this member. Its only memory of its own side of
+// the conversation — see lib/recentReply.ts.
+export async function loadPreviousReply(lineUserId: string): Promise<PreviousReply | null> {
+  const user = await prisma.lineUser.findUnique({
+    where: { id: lineUserId },
+    select: { lastReplyText: true, lastReplyAt: true },
+  });
+  if (!user?.lastReplyText || !user.lastReplyAt) return null;
+  return { text: user.lastReplyText, at: user.lastReplyAt };
+}
+
+// Called after a reply actually reaches LINE, never before: a reply the
+// member never saw must not be quoted back to the model as one they are
+// looking at. Best-effort — failing to remember what was said is not a reason
+// to fail the request that already succeeded.
+export async function recordReply(
+  lineUserId: string,
+  text: string,
+  kind: ReplyKind = null
+): Promise<void> {
+  await prisma.lineUser
+    .update({
+      where: { id: lineUserId },
+      data: { lastReplyText: quoteReply(text), lastReplyAt: new Date(), lastReplyKind: kind },
+    })
+    .catch((err) => {
+      console.error("[state] could not record the last reply:", err);
+    });
+}
+
+// The same row, read for what the reply was rather than what it said. Kept
+// apart from loadPreviousReply because the two answer different questions and
+// the caller asking this one has already decided to reply — it is asking
+// whether to send it.
+export async function loadLastReplyKind(lineUserId: string): Promise<LastReply | null> {
+  const user = await prisma.lineUser.findUnique({
+    where: { id: lineUserId },
+    select: { lastReplyKind: true, lastReplyAt: true },
+  });
+  if (!user?.lastReplyKind || !user.lastReplyAt) return null;
+  return { kind: user.lastReplyKind as ReplyKind, at: user.lastReplyAt };
+}
+
+
+// Both sides of the chat, kept under LINE's message ids so a quote can be
+// read back — see lib/quotedMessage.ts. Every write here is best-effort:
+// failing to remember a line is a worse answer later, never a reason to fail
+// the message being handled now.
+export async function rememberMessage(
+  messageId: string,
+  lineUserId: string,
+  text: string,
+  fromBot: boolean
+): Promise<void> {
+  const kept = quotableText(text);
+  if (!kept) return;
+  await prisma.quotableMessage
+    .create({ data: { id: messageId, lineUserId, text: kept, fromBot } })
+    .catch((err) => {
+      // A retried delivery of the same event reaches here twice; the id is
+      // LINE's, so the second insert is a duplicate of a row that already
+      // says the right thing.
+      if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === "P2002") return;
+      console.error("[state] could not remember a message:", err);
+    });
+}
+
+// The ids LINE hands back from replyMessage, one per message actually sent.
+// Only one is ever sent today, but the API is a list and the member can quote
+// any of them.
+export async function rememberSentMessages(
+  messageIds: string[],
+  lineUserId: string,
+  text: string
+): Promise<void> {
+  await Promise.all(messageIds.map((id) => rememberMessage(id, lineUserId, text, true)));
+}
+
+// The quoted message's text, or null when nothing was kept for that id — a
+// staff reply typed in chat.line.biz (never seen by this application), or one
+// older than the retention window.
+//
+// Scoped to the member who is quoting: the id comes from a webhook payload,
+// and one member's chat must not be readable from another's message.
+export async function loadQuotedMessage(
+  lineUserId: string,
+  quotedMessageId: string
+): Promise<QuotedMessage | null> {
+  const row = await prisma.quotableMessage
+    .findUnique({
+      where: { id: quotedMessageId },
+      select: { lineUserId: true, text: true, fromBot: true },
+    })
+    .catch((err) => {
+      console.error("[state] could not read the quoted message:", err);
+      return null;
+    });
+  if (!row || row.lineUserId !== lineUserId) return null;
+  return { text: row.text, fromBot: row.fromBot };
+}
+
+// Fire-and-forget, called from the webhook's opportunistic prune. Nothing
+// else ever deletes these rows.
+export async function pruneQuotableMessages(): Promise<void> {
+  const cutoff = new Date(Date.now() - QUOTED_RETENTION_MS);
+  await prisma.quotableMessage
+    .deleteMany({ where: { createdAt: { lt: cutoff } } })
+    .catch((err) => console.error("[state] quotable-message prune failed:", err));
+}

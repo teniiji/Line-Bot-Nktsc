@@ -1,6 +1,12 @@
 "use client";
 
 import { CATEGORIES } from "@/lib/categories";
+import {
+  cooperativeToday,
+  endOfMonth,
+  shiftDay,
+  startOfMonth,
+} from "@/lib/cooperativeClock";
 
 export interface Filters {
   category: string;
@@ -15,43 +21,41 @@ interface ExpenseFiltersProps {
   onChange: (filters: Filters) => void;
 }
 
-export const toIso = (d: Date) => d.toISOString().slice(0, 10);
-
+// Every preset is a cooperative day, never the device's own.
+//
+// These used to mix the two. "วันนี้" was the UTC day, so between midnight
+// and seven in the morning it asked for yesterday; "เดือนนี้" built local
+// month boundaries and then converted them to UTC, so on a phone in Thailand
+// it began on the last day of the month before. See lib/cooperativeClock.ts —
+// a day here means the day it is in Nong Khai, whatever the device is set to.
 const DATE_PRESETS: { label: string; range: () => { from: string; to: string } }[] = [
   {
     label: "วันนี้",
     range: () => {
-      const today = toIso(new Date());
+      const today = cooperativeToday();
       return { from: today, to: today };
     },
   },
   {
     label: "เดือนนี้",
     range: () => {
-      const now = new Date();
-      return {
-        from: toIso(new Date(now.getFullYear(), now.getMonth(), 1)),
-        to: toIso(new Date(now.getFullYear(), now.getMonth() + 1, 0)),
-      };
+      const today = cooperativeToday();
+      return { from: startOfMonth(today), to: endOfMonth(today) };
     },
   },
   {
     label: "เดือนที่แล้ว",
     range: () => {
-      const now = new Date();
-      return {
-        from: toIso(new Date(now.getFullYear(), now.getMonth() - 1, 1)),
-        to: toIso(new Date(now.getFullYear(), now.getMonth(), 0)),
-      };
+      // The day before this month began is the last day of the one before it.
+      const lastDay = shiftDay(startOfMonth(cooperativeToday()), -1);
+      return { from: startOfMonth(lastDay), to: lastDay };
     },
   },
   {
     label: "7 วันล่าสุด",
     range: () => {
-      const now = new Date();
-      const from = new Date(now);
-      from.setDate(from.getDate() - 6);
-      return { from: toIso(from), to: toIso(now) };
+      const today = cooperativeToday();
+      return { from: shiftDay(today, -6), to: today };
     },
   },
 ];

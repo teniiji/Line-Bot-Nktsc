@@ -1,7 +1,7 @@
 "use client";
 
 import { Expense } from "@/lib/types";
-import { formatAmount } from "@/lib/format";
+import { formatAmount, formatStatementDate } from "@/lib/format";
 
 interface ExpenseListProps {
   expenses: Expense[];
@@ -15,12 +15,12 @@ interface ExpenseListProps {
   onExportCsv: () => void;
 }
 
-const formatDate = (iso: string) =>
-  new Date(iso).toLocaleDateString("th-TH", {
-    year: "numeric",
-    month: "short",
-    day: "numeric",
-  });
+// A transaction's date is the cooperative's wall clock held in UTC, the same
+// shape as every statement timestamp (see lib/cooperativeClock.ts), so it is
+// read back in UTC. Read in the device's own zone, an evening transaction
+// showed tomorrow's date: the row said one day and the filter that found it
+// said another.
+const formatDate = (iso: string) => formatStatementDate(iso);
 
 function memberLabel(expense: Expense): string {
   if (expense.memberFullName) {
@@ -125,9 +125,14 @@ export default function ExpenseList({
                   {expense.forwardStatus === "failed" && (
                     <span
                       className="inline-block text-xs px-2 py-0.5 rounded-full bg-red-50 text-red-700 border border-red-200"
-                      title={`ส่งแจ้งเตือนให้เจ้าหน้าที่ไม่สำเร็จ (${
-                        expense.forwardedTo ?? "-"
-                      }) — ธุรกรรมบันทึกเรียบร้อยแล้ว แต่ไม่มีใครได้รับแจ้ง ตรวจ LINE UserID ของเจ้าหน้าที่ในแท็บ "ผู้รับผิดชอบ"`}
+                      title={
+                        // The reason, when LINE gave one — see lib/pushError.ts.
+                        // Without it every cause reads the same and every cause
+                        // needs a different person to fix a different thing.
+                        `ส่งแจ้งเตือนให้เจ้าหน้าที่ไม่สำเร็จ (${expense.forwardedTo ?? "-"})` +
+                        (expense.forwardError ? `\n\nสาเหตุ: ${expense.forwardError}` : "") +
+                        `\n\nธุรกรรมบันทึกเรียบร้อยแล้ว แต่ไม่มีใครได้รับแจ้ง ตรวจ LINE UserID ของเจ้าหน้าที่ในแท็บ "ผู้รับผิดชอบ"`
+                      }
                     >
                       ⚠️ แจ้งเจ้าหน้าที่ไม่สำเร็จ
                     </span>

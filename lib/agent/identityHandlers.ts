@@ -7,10 +7,18 @@
 // reason — neither one advances a transaction or a service request.
 import { prisma } from "../prisma";
 import { isPlaceholderText } from "../placeholderText";
+import {
+  askForMissingIdentity,
+  memberNumberProblem,
+  statedMemberNumber,
+  mergeIdentity,
+  statedValue,
+} from "../memberIdentity";
 import { matchesIdentity } from "../memberLookup";
+import { rosterCanVerify } from "../lookupReadiness";
 import { isFeatureEnabled, MEMBER_LOOKUP_ENABLED } from "../featureFlags";
 import {
-  loadPending,
+  loadAllPending,
   loadPendingServiceRequest,
   computeNextRequirement,
   computeServiceRequirement,
@@ -18,8 +26,27 @@ import {
   loadDisabledRequirements,
 } from "./state";
 import { forwardServiceRequest } from "./forwarding";
-import { finalizeTransaction, requirementMessage } from "./transactionHandlers";
-import type { LineUserInfo, ToolContext } from "./types";
+import {
+  finalizeTransaction,
+  requirementMessage,
+  CAPTURE_BEFORE_ASKING,
+} from "./transactionHandlers";
+import type { LineUserInfo, Requirement, ToolContext } from "./types";
+import type { IdentityMerge } from "../memberIdentity";
+
+// While a transaction waits on identity, the runner forces submit_member_info
+// as the only tool the model may call — so a message like "ดำรงชีพ ATM
+// น.ส.กาญจภัษฐ์ วงษ์สวรรค์" reaches this tool and nothing else. Saying only
+// "ask for the member number" back to the model loses the loan type sitting
+// in the very same sentence, and that member was then asked for it twice
+// more. The carry-over instruction is appended only when a transaction is
+// actually waiting: it names transaction tools, which mean nothing to a
+// member identifying themselves for a service request.
+async function askForIdentity(merged: IdentityMerge, lineUserId: string): Promise<string> {
+  const message = askForMissingIdentity(merged);
+  const waiting = await loadAllPending(lineUserId);
+  return waiting.length > 0 ? message + CAPTURE_BEFORE_ASKING : message;
+}
 export type SubmitMemberInfoInput = {
   fullName?: unknown;
   memberNumber?: unknown;
@@ -30,12 +57,31 @@ export async function submitMemberInfo(
   input: SubmitMemberInfoInput,
   ctx: ToolContext
 ): Promise<string> {
-  const fullName = typeof input.fullName === "string" ? input.fullName.trim() : "";
-  const memberNumber =
-    typeof input.memberNumber === "string" ? input.memberNumber.trim() : "";
-  if (isPlaceholderText(fullName) || isPlaceholderText(memberNumber)) {
-    return "Error: fullName and memberNumber must be the member's actual name and number — never a placeholder like 'unknown' or '-'. If the user hasn't actually stated their real name and member number yet, ask them again, in Thai, instead of calling this tool.";
+  // Each piece is taken on its own. A member who gives their number in one
+  // message and their name in the next used to have both thrown away, and was
+  // asked for each of them twice — see lib/memberIdentity.ts for the
+  // conversation that showed it.
+  //
+  // A placeholder ("unknown", "-") still counts as not given, so it can never
+  // be stored as if it were a real name or number.
+  const givenName = statedValue(input.fullName);
+  const givenNumber = statedMemberNumber(input.memberNumber);
+
+  const savedIdentity = await prisma.lineUser.findUnique({
+    where: { id: ctx.lineUserId },
+    select: { fullName: true, memberNumber: true },
+  });
+  const merged = mergeIdentity(
+    { fullName: givenName, memberNumber: givenNumber },
+    { fullName: savedIdentity?.fullName ?? null, memberNumber: savedIdentity?.memberNumber ?? null }
+  );
+
+  if (merged.missing === "both") {
+    return await askForIdentity(merged, ctx.lineUserId);
   }
+
+  const fullName = merged.fullName ?? "";
+  const memberNumber = merged.memberNumber ?? "";
   // A message giving a name alongside a 13-digit all-numeric string is far
   // more likely to be a เลขประจำตัวประชาชน (national ID) than a cooperative
   // member number — real member numbers here run a handful of digits, never
@@ -45,12 +91,18 @@ export async function submitMemberInfo(
   // the model to recognize the reply as belonging to it (see
   // submit_lookup_info's description). Reject deterministically rather than
   // trust the model to keep telling the two flows apart.
-  if (/^\d{13}$/.test(memberNumber)) {
+  // The rule lives in lib/memberIdentity.ts so the dashboard applies exactly
+  // the same one; the message stays here because this audience is the model,
+  // which needs telling where to route the member instead.
+  if (givenNumber !== null && memberNumberProblem(givenNumber) !== null) {
     return "Error: this looks like a 13-digit เลขประจำตัวประชาชน (national ID number), not a เลขสมาชิก (member number) — cooperative member numbers are much shorter. If the member was actually trying to look up their own member number, use submit_lookup_info instead (it needs their name, national ID, and phone). If they really do have a member number, ask them to confirm it — don't save this value as-is.";
   }
 
-  // Verify the claimed member number against the imported roster.
-  const roster = await prisma.memberRoster.findUnique({ where: { memberNumber } });
+  // Verify the claimed member number against the imported roster. Skipped
+  // while only the name is known — there is nothing yet to verify against.
+  const roster = memberNumber
+    ? await prisma.memberRoster.findUnique({ where: { memberNumber } })
+    : null;
 
   // Block impersonation: this member number is already bound to a
   // different LINE account in the roster. Do not save or proceed.
@@ -60,19 +112,45 @@ export async function submitMemberInfo(
 
   const verified = roster !== null;
 
+  // Written before the completeness check, so half an identity survives to the
+  // next message. Only fields we actually have are set — a piece not given
+  // this time must never blank one already saved, which would restart the
+  // very loop this is fixing.
+  const savedUser = await prisma.lineUser.upsert({
+    where: { id: ctx.lineUserId },
+    create: {
+      id: ctx.lineUserId,
+      // null, not "": both columns are nullable and "not known yet" is what
+      // this means. computeNextRequirement reads either as missing, but null
+      // is the one a person reading the row can understand.
+      fullName: merged.fullName,
+      memberNumber: merged.memberNumber,
+    },
+    update: {
+      ...(merged.fullName ? { fullName: merged.fullName } : {}),
+      ...(merged.memberNumber ? { memberNumber: merged.memberNumber } : {}),
+    },
+  });
+
+  // Half an identity is stored but cannot log anything yet, so the bot asks
+  // for exactly the piece still outstanding and says the other is already on
+  // record — never for both again.
+  if (merged.missing !== null) {
+    return await askForIdentity(merged, ctx.lineUserId);
+  }
+
   // Link this LINE account to the roster row the first time a known member
   // identifies, so their future messages auto-identify without asking.
+  //
+  // Deliberately below the completeness check: this is an identity binding,
+  // and a member number on its own is weaker evidence than a number given
+  // together with a matching name. Storing half an identity on LineUser is
+  // cheap to undo; binding the roster row on half of one is not.
   if (roster && !roster.lineUserId) {
     await prisma.memberRoster
       .update({ where: { memberNumber }, data: { lineUserId: ctx.lineUserId } })
       .catch(() => {});
   }
-
-  const savedUser = await prisma.lineUser.upsert({
-    where: { id: ctx.lineUserId },
-    create: { id: ctx.lineUserId, fullName, memberNumber },
-    update: { fullName, memberNumber },
-  });
 
   // Use the roster's canonical name when verified, so a small typo in what
   // the user typed doesn't end up on the logged record. phone carries over
@@ -87,15 +165,40 @@ export async function submitMemberInfo(
     ? ""
     : " (Note to you: this member number is NOT in the cooperative roster, so it could not be verified — proceed, but mention gently in Thai that staff will verify their membership.)";
 
-  const pending = await loadPending(ctx.lineUserId);
-  if (pending) {
+  // Every payment waiting, not just the first. Identity is the requirement
+  // that blocks all of them at once — a member who sent two slips before
+  // saying who they are has both waiting on this one answer, and logging only
+  // the oldest would leave the other stranded until it expired.
+  const queued = await loadAllPending(ctx.lineUserId);
+  if (queued.length > 0) {
     const disabled = await loadDisabledRequirements();
-    const next = computeNextRequirement(identity, pending, disabled);
-    if (next === null) {
-      const result = await finalizeTransaction(ctx.lineUserId, pending, identity);
-      return result + unverifiedNote;
+
+    const logged: string[] = [];
+    let stillWaiting: Requirement = null;
+
+    for (const pending of queued) {
+      const next = computeNextRequirement(identity, pending, disabled);
+      if (next === null) {
+        logged.push(await finalizeTransaction(ctx.lineUserId, pending, identity));
+        continue;
+      }
+      // The first payment that still needs something becomes the question the
+      // bot asks next; the rest keep waiting behind it. Oldest first, because
+      // that is the one the member has been answering about.
+      if (stillWaiting === null) stillWaiting = next;
     }
-    return requirementMessage(next) + unverifiedNote;
+
+    const loggedNote =
+      logged.length > 1
+        ? `Logged ${logged.length} separate transactions for this member: ` +
+          logged.join(" | ") +
+          " Tell them, in Thai, that ALL of the slips they sent were recorded, and say each amount back to them so they can check none is missing."
+        : logged.join(" ");
+
+    if (stillWaiting === null) return loggedNote + unverifiedNote;
+    return (
+      (loggedNote ? loggedNote + " " : "") + requirementMessage(stillWaiting) + unverifiedNote
+    );
   }
 
   const pendingService = await loadPendingServiceRequest(ctx.lineUserId);
@@ -188,6 +291,29 @@ export async function submitLookupInfo(
     return "Error: this LINE account is temporarily locked out of member-number lookup after too many failed identity checks in a row. Apologize to the user, in Thai, and tell them to contact the cooperative office directly if they need their member number now — do not ask for or store any identity info for this, and do not tell them exactly when the lockout ends.";
   }
 
+  // Asked of the roster, not of the member: can this check succeed for
+  // anybody? Where the roster carries no national ID and phone at all, the
+  // answer is no, and every member who answers honestly is told their details
+  // do not match — a sentence that calls them mistaken when the cooperative
+  // simply had nothing to compare against. See lib/lookupReadiness.ts.
+  const verifiable = await prisma.memberRoster.findMany({
+    select: { nationalId: true, phone: true },
+  });
+  if (!rosterCanVerify(verifiable)) {
+    await prisma.pendingMemberLookup.delete({ where: { lineUserId: ctx.lineUserId } }).catch(() => {});
+    return (
+      "STOP: the cooperative's roster holds no national ID and phone records, so this check cannot " +
+      "succeed for anyone and must not be attempted. Do NOT ask for the member's national ID " +
+      "number or phone number — asking for a national ID number to run a check that cannot pass " +
+      "is worse than not offering the service. In Thai, tell the member plainly that the " +
+      "cooperative's system does not yet hold the details needed to confirm their identity over " +
+      "chat, so their member number cannot be given out here, and that the office can confirm it " +
+      "for them by telephone. Make clear this is about what the system holds, NOT about anything " +
+      "the member got wrong. Give the office telephone numbers from the reference data; do not " +
+      "give an email address."
+    );
+  }
+
   const fullName =
     typeof input.fullName === "string" && input.fullName.trim() && !isPlaceholderText(input.fullName)
       ? input.fullName.trim()
@@ -265,7 +391,12 @@ export async function submitLookupInfo(
       ? " This was also their last attempt before a temporary lockout — tell them, in Thai, that member-number lookup is now paused for this account for a while after too many failed tries, and to contact the cooperative office directly if they need their member number now."
       : "";
     return (
-      "No roster record matched the identity info provided. Apologize to the user, in Thai, and tell them to contact the cooperative office directly to verify their identity and get their member number. Do not reveal which specific field (name/ID/phone) didn't match, and never guess or make up a member number." +
+      "No roster record matched the identity info provided. In Thai: say that the details could not " +
+      "be matched against the cooperative's records, and say in the same breath that this can also " +
+      "mean the cooperative's own records are incomplete — NOT that the member is mistaken, which " +
+      "is not something you know. Tell them the office can confirm their member number by " +
+      "telephone. Do not reveal which specific field (name/ID/phone) did not match, never guess or " +
+      "make up a member number, and do not give an email address." +
       lockoutNote
     );
   }

@@ -4,46 +4,70 @@ generator client {
 
 datasource db {
   provider = "postgresql"
+  // What the app queries through: Neon's connection pooler. Serverless
+  // functions open a connection per invocation, which is exactly what a
+  // pooler is for.
   url      = env("DATABASE_URL")
+  // What migrations go through: the same database, connected to directly.
+  //
+  // prisma migrate deploy takes a session-level advisory lock
+  // (pg_advisory_lock) so two migrations cannot run at once. A transaction
+  // pooler hands each statement whichever backend is free, so the session
+  // that took the lock is not the session that later releases it — the lock
+  // is stranded and the next deploy waits out its ten seconds and fails:
+  //
+  //   Timed out trying to acquire a postgres advisory lock
+  //   (SELECT pg_advisory_lock(72707369)). Elapsed: 10000ms
+  //
+  // which is what broke the production deploy of c3f77e7 on 8 Sep, three
+  // times, while the identical tree had built fine as a preview minutes
+  // earlier. Neon suspending an idle database eats into the same ten
+  // seconds, so a cold start makes it likelier still.
+  //
+  // DIRECT_URL is the same connection string with "-pooler" removed from the
+  // host (Neon calls it the direct connection). It must be set wherever
+  // migrations run — every Vercel environment, and .env locally — because
+  // the Vercel build command is "prisma migrate deploy && next build".
+  directUrl = env("DIRECT_URL")
 }
 
 model Expense {
-  id              String   @id @default(cuid())
-  amount          Float
-  category        String
-  description     String?
-  date            DateTime
-  createdAt       DateTime @default(now())
-  lineUserId      String?
+  id                   String   @id @default(cuid())
+  amount               Float
+  category             String
+  description          String?
+  date                 DateTime
+  createdAt            DateTime @default(now())
+  lineUserId           String?
   // Bank/wallet-issued transaction reference number read off a slip, if
   // visible. Globally unique in the real world, so it doubles as a
   // duplicate-slip guard — resubmitting the same slip hits this constraint
   // instead of creating a second row. Not fully reliable on its own since
   // it depends on the vision model reading the exact same text on every
   // submission — slipImageHash below is the more robust guard.
-  referenceNumber String?  @unique
+  referenceNumber      String?  @unique
   // SHA-256 of the raw slip image bytes. Unlike referenceNumber, this is
   // deterministic — resending the literal same photo always hashes
   // identically regardless of what the model manages to read off it — so
   // it's the primary duplicate-slip guard; referenceNumber is a secondary
   // one for cases where the same transaction is photographed twice.
-  slipImageHash   String?  @unique
-  slipImageUrl    String?
+  slipImageHash        String?  @unique
+  slipImageUrl         String?
   // True when slipImageUrl points at a PDF instead of a photo — members can
   // send either. Staff forwarding (notifyTransactionForward) needs this to
   // know whether it can push the slip as a LINE image message (photos only)
   // or must fall back to a plain text link (LINE can't push file messages).
-  slipIsPdf       Boolean  @default(false)
+  slipIsPdf            Boolean  @default(false)
   // Snapshot of the member's identity and (for ชำระหนี้) the loan type at
   // the moment this transaction was logged — copied from LineUser rather
   // than joined live, so the record stays accurate even if the member's
   // saved name changes later.
-  memberFullName  String?
-  memberNumber    String?
+  memberFullName       String?
+  memberNumber         String?
   // Whether the member's number matched the imported roster at log time —
   // false means it was self-asserted and unverified, so staff should check.
-  memberVerified  Boolean  @default(false)
-  loanType        String?
+  memberVerified       Boolean  @default(false)
+  loanType             String?
   // Which cooperative savings account (เลขที่บัญชี) a ฝากเงิน deposit is
   // going into — asked directly the same way loanType is for ชำระหนี้,
   // since it's the member's own account number and won't reliably appear
@@ -55,8 +79,12 @@ model Expense {
   // about this transaction, and whether it succeeded. Never blocks logging
   // the transaction itself — null forwardStatus means the push was never
   // attempted (e.g. an older row from before this feature existed).
-  forwardedTo     String?
-  forwardStatus   String?
+  forwardedTo          String?
+  forwardStatus        String?
+  // Why the push failed, when it did — see lib/pushError.ts. The reason
+  // already existed in a Vercel log nobody reads; this is the copy on the row
+  // a person actually looks at. Null unless forwardStatus is "failed".
+  forwardError         String?
   // The name shown in the slip's "จาก" (sender) field, if the model could
   // read one — and whether it looked like it belonged to someone other
   // than the member who claimed this transaction (lib/nameMatch.ts,
@@ -64,8 +92,36 @@ model Expense {
   // difference). true means the member was asked to confirm before this
   // got logged (see PendingTransaction.senderNameConfirmed) — staff should
   // still spot-check these.
-  slipSenderName     String?
-  senderNameMismatch Boolean @default(false)
+  slipSenderName       String?
+  senderNameMismatch   Boolean  @default(false)
+  // The two things printed on nearly every slip that used to be thrown
+  // away, read best-effort by the model and normalised by lib/slipDetails.ts.
+  //
+  // slipTransferTime is "HH:MM" on the slip's own clock — not a DateTime,
+  // because the slip states a wall-clock time and nothing on it says which
+  // zone; storing it as text keeps it the fact it is instead of a timestamp
+  // that quietly shifts. The daily reconciliation uses it to tell apart
+  // several payments of the same amount on the same day.
+  //
+  // slipSenderAccount is the paying account exactly as printed, mask
+  // characters and all ("xxx-x-x7288-5") — kept raw so a later change to
+  // how much of it can be matched does not need the slips re-read.
+  slipTransferTime     String?
+  slipSenderAccount    String?
+  // Set when staff recorded this transaction from a bank line in the daily
+  // view rather than from a slip a member sent: the StatementLine it came
+  // from. It is the only link between a transaction and the money behind it
+  // that is not a guess — everything else the daily reconciliation has to
+  // work with is an amount, a clock and a masked account number, which is why
+  // it labels every pair with how sure it is. Here a person said so outright,
+  // so that pairing is reported as its own basis rather than as "ยอดตรง".
+  //
+  // Unique because one bank line is one payment: two people working the same
+  // short list of unclaimed deposits, or one double-click, is refused by the
+  // database rather than producing two records of the same money.
+  //
+  // A plain column, no relation, per the convention in this schema.
+  statementLineId      String?  @unique
 
   @@index([date])
   @@index([category])
@@ -77,6 +133,25 @@ model Expense {
   @@index([lineUserId, date])
 }
 
+// Held while one conversation's webhook event is being handled, so two
+// deliveries for the same member cannot run at once in different serverless
+// invocations and read-modify-write the same PendingTransaction row. See
+// lib/conversationLock.ts — including why it always lets the work proceed
+// rather than ever dropping a member's message.
+//
+// The primary key is what makes acquiring it atomic between processes:
+// whoever manages to insert the row holds it.
+model ConversationLock {
+  // "user:<lineUserId>" or "group:<groupId>" — see conversationKeyOf.
+  key       String   @id
+  // Never further out than the route's maxDuration, so a lock left behind by
+  // a process that died is recognisable as stale and can be taken.
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  @@index([expiresAt])
+}
+
 // Records LINE webhook events that have already been processed, so a
 // retried delivery (LINE re-sends on timeout / non-2xx) is a no-op instead
 // of re-running the finance agent and creating a duplicate expense.
@@ -84,6 +159,26 @@ model ProcessedLineEvent {
   id        String   @id @default(cuid())
   eventId   String   @unique
   createdAt DateTime @default(now())
+}
+
+// A text message in a member's chat, kept under LINE's own message id purely
+// so that a later message quoting it can be read back — LINE sends only the
+// quoted message's id, never its text. Holds both sides: the member's
+// messages and the bot's replies (the reply API returns the ids of what it
+// just sent). Truncated on write and pruned on a fortnight's clock — see
+// lib/quotedMessage.ts, which explains why this is a rolling window for
+// reading one line back, not a chat archive.
+model QuotableMessage {
+  // LINE's message id, which is exactly the value that arrives as
+  // quotedMessageId on a message quoting this one.
+  id         String   @id
+  lineUserId String
+  fromBot    Boolean
+  text       String
+  createdAt  DateTime @default(now())
+
+  @@index([lineUserId])
+  @@index([createdAt])
 }
 
 // An in-progress cooperative transaction the agent is still collecting
@@ -94,22 +189,27 @@ model ProcessedLineEvent {
 // is met (at which point it's converted into an Expense and deleted), or it
 // expires unanswered.
 model PendingTransaction {
-  id              String    @id @default(cuid())
-  lineUserId      String    @unique
-  category        String?
-  amount          Float?
-  description     String?
-  date            DateTime?
+  id                   String    @id @default(cuid())
+  // Deliberately NOT unique. It was, and a member who sent a second slip
+  // before finishing the first had the first silently overwritten — the
+  // payment vanished with no trace anywhere but the LINE chat. A member can
+  // send two slips in a row (they often do: one to the cooperative, one to
+  // ฌาปนกิจสงเคราะห์), so the rows queue up and are answered oldest first.
+  lineUserId           String
+  category             String?
+  amount               Float?
+  description          String?
+  date                 DateTime?
   // Whether a slip image has been seen for this transaction — tracked
   // separately from slipImageUrl because the Blob upload it depends on is
   // best-effort (skipped entirely if BLOB_READ_WRITE_TOKEN isn't set) and
   // must never gate whether the flow can proceed.
-  hasSlip         Boolean   @default(false)
-  slipImageHash   String?
-  slipImageUrl    String?
-  slipIsPdf       Boolean   @default(false)
-  referenceNumber String?
-  loanType        String?
+  hasSlip              Boolean   @default(false)
+  slipImageHash        String?
+  slipImageUrl         String?
+  slipIsPdf            Boolean   @default(false)
+  referenceNumber      String?
+  loanType             String?
   depositAccountNumber String?
   // The name read off the slip's "จาก" (sender) field, and whether the
   // member has confirmed (once asked) that a slip whose name didn't match
@@ -119,9 +219,25 @@ model PendingTransaction {
   // one, regardless of whether member identity is known yet: the mismatch
   // comparison itself only runs once both are available, so this can't be
   // done at submit time.
-  slipSenderName      String?
-  senderNameConfirmed Boolean @default(false)
-  createdAt       DateTime  @default(now())
+  slipSenderName       String?
+  senderNameConfirmed  Boolean   @default(false)
+  // Carried through to Expense on commit — see the fields of the same name
+  // there for what they hold and why the time is text.
+  slipTransferTime     String?
+  slipSenderAccount    String?
+  // createdAt is the queue order and is never rewritten: the oldest waiting
+  // payment is the one the bot is asking about, and touching it would send
+  // the payment being answered to the back of its own queue.
+  //
+  // lastActivityAt is what expiry runs on — a member still answering keeps
+  // their payment alive. These were one field while a member could only have
+  // one pending row, where "created" and "last touched" could be conflated
+  // without anything noticing.
+  createdAt            DateTime  @default(now())
+  lastActivityAt       DateTime  @default(now())
+
+  // Every lookup is "this member's pending rows, oldest first".
+  @@index([lineUserId, createdAt])
 }
 
 // A supporting document (payslip, ID card copy, house registration copy,
@@ -204,6 +320,17 @@ model LineUser {
   // stops mattering once it's in the past — nothing needs to clear it back
   // to null on expiry, only on the next successful lookup.
   lookupLockedUntil DateTime?
+  // The last reply the bot sent this member, and when — the only memory it
+  // has of its own side of the conversation. Read back within a short window
+  // (lib/recentReply.ts) so a member who sends two messages a second apart is
+  // not answered twice with the same words. Truncated on write; never read
+  // for anything but that note.
+  lastReplyText     String?
+  lastReplyAt       DateTime?
+  // What that reply was, when it was a kind that can have nothing to add the
+  // second time — see lib/replyKind.ts. Null for every other reply, and for
+  // everything sent before this column existed.
+  lastReplyKind     String?
   createdAt         DateTime  @default(now())
   updatedAt         DateTime  @updatedAt
 }
@@ -235,10 +362,10 @@ model OrganizationUnit {
 // richer source than LineUser, which this bot only populates from what
 // members type in via submit_member_info.
 model MemberRoster {
-  id           String   @id @default(cuid())
-  memberNumber String   @unique
-  memberName   String
-  unitName     String?
+  id              String   @id @default(cuid())
+  memberNumber    String   @unique
+  memberName      String
+  unitName        String?
   // Short per-member "รหัสผู้รับผิดชอบ" code (e.g. a single digit),
   // imported from column H of the "สมาชิก_LINE_OA" sheet — looked up in
   // ResponsibleContact to find the loan officer for this member directly.
@@ -247,18 +374,18 @@ model MemberRoster {
   // typos than the free-text unitName match against LoanDistrictContact,
   // which remains as a secondary fallback for members without a code.
   responsibleCode String?
-  lineUserId   String?
-  nickname     String?
+  lineUserId      String?
+  nickname        String?
   // 13-digit เลขประจำตัวประชาชน and registered phone number, imported from
   // columns F/G of the "สมาชิก_LINE_OA" sheet — used only to verify a
   // member's identity when they ask the bot for their own เลขสมาชิก (see
   // lib/memberLookup.ts), never shown or matched against for anything
   // else. Not unique/required at the DB level since import data quality
   // varies; a record missing either simply can't be used for lookup.
-  nationalId   String?
-  phone        String?
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  nationalId      String?
+  phone           String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
 
   @@index([lineUserId])
   @@index([nationalId])
@@ -338,8 +465,16 @@ model ServiceRequestLog {
   // LINE user ID of the staff member the request was pushed to (null when
   // status is "unconfigured").
   forwardedTo    String?
+  // Why the push failed, when it did — see lib/pushError.ts.
+  forwardError   String?
   status         String
   createdAt      DateTime @default(now())
+  // When staff last sent this request to the officer again from the
+  // dashboard. Kept separate from createdAt so a row that reads "ส่งต่อสำเร็จ"
+  // still says when the member actually asked — a request forwarded a week
+  // late is a different thing from one forwarded at the time, and staff
+  // should be able to see which they are looking at.
+  resentAt       DateTime?
 
   @@index([createdAt])
   @@index([lineUserId])
@@ -382,6 +517,47 @@ model ResponsibleContact {
   updatedAt  DateTime @updatedAt
 }
 
+// The LINE group chats the bot has been added to, so staff can forward
+// notifications to a group instead of to one person — a contact who is on
+// leave, moves job, or leaves the cooperative takes the notifications with
+// them, while a group survives all three.
+//
+// Rows appear on their own: a group id is never typed in, it only exists in
+// the webhook events LINE sends when the bot is added to a chat or when
+// somebody posts in one. Being listed here means nothing by itself — a group
+// only receives anything once staff pick it as a target for a unit or a
+// department, which is deliberate, since once the LINE account allows group
+// invitations anybody can add the bot to any chat.
+//
+// What LINE will not tell us is who is *in* a group: there is no members API
+// for a normal Official Account. So a group target trades an auditable list
+// of recipients for resilience, which is a decision to take per department
+// rather than everywhere at once.
+model LineGroup {
+  id         String    @id @default(cuid())
+  // LINE's own id: "C…" for a group chat, "R…" for a multi-person room.
+  groupId    String    @unique
+  // "group" or "room" — rooms have no name and no summary endpoint.
+  kind       String
+  // Fetched from getGroupSummary when the bot joins. Null for rooms, and for
+  // groups whose summary the API declined.
+  name       String?
+  // What staff call it, when the LINE name is unhelpful ("กลุ่ม 3" → "การเงิน
+  // สพป.นค.1").
+  note       String?
+  joinedAt   DateTime  @default(now())
+  // Set when the bot is removed rather than deleting the row: a target that
+  // stops working needs to be explainable, not silently absent.
+  leftAt     DateTime?
+  // Touched by any event from the chat, so a group the bot was added to
+  // before this table existed is discovered as soon as somebody posts.
+  lastSeenAt DateTime  @default(now())
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  @@index([leftAt])
+}
+
 // Staff who receive service requests for a given non-loan department (e.g.
 // เงินฝาก, บัญชี, สวัสดิการ) — many-to-one: several officers can share a
 // department, and every request is broadcast to all of them (see
@@ -399,4 +575,254 @@ model DepartmentContact {
 
   @@unique([department, lineUserId])
   @@index([department])
+}
+
+// One month's round of รายการหัก — the deduction lists sent to every
+// employing unit so they can withhold members' payments from payroll.
+// `period` uses the MMYY folder convention staff already work in (e.g.
+// "0969" = กันยายน 2569), so a round on screen matches the folder on their
+// machine without translation.
+//
+// The files themselves are still produced locally by the raikar-hak
+// workflow (it reads the previous month's Excel from D:\1รายการหัก\, which
+// nothing hosted can reach). What this table adds is the part that was
+// previously tracked by memory and eyeballing folders: which of the 60+
+// units have a file ready, which have actually been sent, when, and how.
+model DeductionRound {
+  id        String    @id @default(cuid())
+  period    String    @unique
+  label     String
+  note      String?
+  // Set once staff consider the round finished; kept rather than deleted so
+  // previous months stay auditable.
+  closedAt  DateTime?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+}
+
+// One unit's file within a round, plus how its delivery went.
+//
+// unitName matches OrganizationUnit.name as a plain string rather than a
+// foreign key — same convention as every other cross-reference in this
+// schema (see the LineUser comment) — so a unit renamed or dropped from the
+// org sheet never destroys the send history of a round already completed.
+model DeductionUnitFile {
+  id          String    @id @default(cuid())
+  roundId     String
+  unitName    String
+  // Blob pathname + original filename. Null until staff upload the file.
+  fileName    String?
+  filePath    String?
+  // Totals read off the sheet at upload time, shown so staff can sanity-check
+  // a round against the cooperative's own figures before sending anything.
+  amount      Float?
+  memberCount Int?
+  // pending  — no file yet, or file ready but not sent
+  // sent     — delivered (see sentVia for the channel)
+  // failed   — a send was attempted and the channel rejected it
+  // skipped  — deliberately not sending this unit this round
+  sendStatus  String    @default("pending")
+  sentAt      DateTime?
+  sentVia     String?
+  sendError   String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@unique([roundId, unitName])
+  @@index([roundId])
+}
+
+// One month's Statement reconciliation — the step after รายการหัก where
+// staff work out which of the members payroll could NOT deduct from have
+// since transferred the money to the cooperative's bank accounts
+// themselves.
+//
+// Two inputs, both uploaded here: the list of members who couldn't be
+// deducted this round (produced locally, one row per member with their bank
+// account number), and the bank statements for the cooperative's two
+// accounts — 413 (หนองคาย) and 447 (บึงกาฬ). Matching is by bank account
+// number, which is what the "TR fr <account>" line in a statement gives us.
+//
+// `period` uses the same MMYY code as DeductionRound so a Statement round
+// lines up with the deduction round it follows, without being coupled to it
+// (a round can be reconciled even if the deduction side was tracked
+// elsewhere that month).
+model StatementRound {
+  id        String   @id @default(cuid())
+  period    String   @unique
+  label     String
+  // How much of the หักไม่ได้ sheet had no result yet when it was uploaded:
+  // units that have not reported back ("รอผล (ยังไม่มีข้อมูล)" in the sheet's
+  // own summary), the members in them, and what they were due to have
+  // deducted. Those rows are deliberately not imported — nobody knows yet
+  // whether they paid — but without recording this, a round looks complete
+  // when a large part of it simply has not been processed. Stored rather
+  // than derived because the skipped rows are not kept anywhere.
+  awaitingUnits   Int   @default(0)
+  awaitingMembers Int   @default(0)
+  awaitingAmount  Float @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// One member who could not be deducted this round, plus whatever the bank
+// statements say they have since paid.
+//
+// amountPaid accumulates every matching TR fr line rather than taking the
+// last one: a member who pays in two transfers has genuinely paid the sum,
+// and treating the second transfer as the whole payment would understate
+// what they owe.
+// The bank accounts members transfer from, and who each one belongs to.
+//
+// Built up by hand as staff work through "โอนเข้ามาแต่ไม่พบเจ้าของ" in the
+// เทียบ Statement tab. Before this existed, an account number missing or wrong
+// in the หักไม่ได้ sheet could only be fixed by editing that spreadsheet and
+// re-uploading — and since the sheet is regenerated every month, the same
+// account went unmatched again the next round. Recording it here once makes
+// the answer outlive the round.
+model MemberBankAccount {
+  id            String   @id @default(cuid())
+  // Digits only, normalised by normalizeAccountNumber the same way both sides
+  // of a statement match, so a lookup can never miss on formatting alone.
+  accountNumber String   @unique
+  memberNumber  String
+  // The member's name as it was when the binding was made. MemberRoster is
+  // the canonical source and is preferred for display, but a member the
+  // roster does not carry still needs something to show.
+  memberName    String?
+  note          String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([memberNumber])
+}
+
+model StatementMember {
+  id            String    @id @default(cuid())
+  roundId       String
+  memberNumber  String
+  name          String
+  // สังกัด/รหัสองค์กร and H-code as they appear in the source sheet — kept
+  // as plain strings for the same reason as everywhere else in this schema.
+  unitName      String?
+  hCode         String?
+  note          String?
+  // The matching key. Nullable because the source sheet does leave it blank,
+  // and a member with no account number simply can never match a transfer.
+  accountNumber String?
+  // Where accountNumber came from: null/"sheet" for the uploaded หักไม่ได้
+  // file, "directory" when it was filled in from MemberBankAccount. Recorded
+  // so a binding that is later corrected or deleted can take back the value
+  // it supplied — without this the two are indistinguishable and a deleted
+  // binding would leave its account number behind, still matching.
+  accountSource String?
+  amountDue     Float
+  amountPaid    Float     @default(0)
+  paidAt        DateTime?
+  paidBranch    String?
+  // paid     — amountPaid == amountDue (✅ ชำระครบ)
+  // overpaid — amountPaid > amountDue  (⚠️ ชำระเกิน)
+  // unpaid   — amountPaid < amountDue, including no payment at all (❌ ยังค้าง)
+  status        String    @default("unpaid")
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  @@unique([roundId, memberNumber])
+  @@index([roundId])
+}
+
+// Every "TR fr <account>" line read out of an uploaded statement, matched
+// to a member or not.
+//
+// Transfers are kept individually rather than summed onto the member row so
+// that re-uploading a statement can simply replace that account's rows and
+// recompute — with a single total per member, a member who paid into both
+// accounts would have one payment silently overwritten by the other. It also
+// means an unmatched transfer (money that arrived under an account number
+// nobody on the list has, usually a wrong or missing account on the source
+// sheet) is visible next to the matched ones instead of being dropped.
+model StatementTransfer {
+  id            String    @id @default(cuid())
+  roundId       String
+  // Null when the account number matched no member on this round's list.
+  memberNumber  String?
+  accountNumber String
+  amount        Float
+  transferredAt DateTime?
+  // Which of the cooperative's accounts this statement was for: 413
+  // (หนองคาย) or 447 (บึงกาฬ).
+  account       String
+  branch        String
+  description   String?
+  // Identity of the statement line itself (transferFingerprint in
+  // lib/statementReconcile.ts). Statements are exported per date range and
+  // those ranges overlap, so the same line legitimately arrives more than
+  // once and has to be recognised rather than counted twice — which is what
+  // the unique index below enforces.
+  fingerprint   String
+  // Filename of the upload that first brought this line in, so staff can see
+  // which statements a round was built from.
+  sourceFile    String?
+  // Set when staff decide this money was not paying off a failed deduction —
+  // ซื้อหุ้น, ชำระหนี้, ฝากเงิน and so on. A statement line only says an
+  // account transferred an amount, never what for, so without this a member
+  // who bought shares in the same month reads as having settled their
+  // deduction and staff stop chasing a debt that is still owed. Excluded
+  // transfers stop counting toward payment and leave the follow-up list, but
+  // are kept and totalled: the money did arrive.
+  excludedReason String?
+  createdAt     DateTime  @default(now())
+
+  @@unique([roundId, fingerprint])
+  @@index([roundId])
+  @@index([roundId, account])
+}
+
+// Every line of every statement staff have uploaded, kept as the bank wrote
+// it. Deliberately separate from StatementTransfer rather than a wider version
+// of it:
+//
+//   * StatementTransfer answers "did this member settle their หักไม่ได้ this
+//     month", so it holds only member transfers and only within a round.
+//     Everything about the round's money — who paid, what is outstanding, who
+//     to chase — reads that table. Widening it to carry the bank's own
+//     postings would leave ฿90M of ฌาปนกิจ transfers one missing filter away
+//     from counting as somebody's payment.
+//   * StatementLine answers "what came into the account that day", which is
+//     not a round question at all: it spans months and covers days no round
+//     exists for.
+//
+// A member's transfer lands in both. That duplication is the price of keeping
+// the round's arithmetic impossible to break from here.
+model StatementLine {
+  id            String    @id @default(cuid())
+  // Which cooperative account the statement was for: 413 (หนองคาย) or 447
+  // (บึงกาฬ) — not in the rows themselves, chosen when the file is uploaded.
+  account       String
+  branch        String
+  postedAt      DateTime?
+  // The bank's own transaction code (NBSDT, IORSDT, BSD14 …), kept raw so a
+  // line can always be traced back to the export it came from.
+  txnCode       String
+  description   String
+  amount        Float
+  balance       Float?
+  // The paying account, where the description states one — see
+  // extractSenderAccount in lib/statementLines.ts.
+  senderAccount String?
+  // How the money arrived, derived from txnCode: transfer / counter / atm /
+  // mobile / ewallet / cheque, or "other" for the bank's own postings and
+  // anything outward. A code nobody has classified lands in "other".
+  channel       String
+  fingerprint   String
+  sourceFile    String?
+  createdAt     DateTime  @default(now())
+
+  // Statements are exported per date range and those ranges overlap, so the
+  // same line arrives more than once and has to recognise itself. Scoped to
+  // the account rather than a round, unlike StatementTransfer: one line must
+  // not be stored twice because two rounds loaded overlapping files.
+  @@unique([account, fingerprint])
+  @@index([postedAt])
+  @@index([channel, postedAt])
 }

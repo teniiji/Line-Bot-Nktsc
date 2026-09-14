@@ -5,7 +5,8 @@ import { Expense, ExpenseSummary } from "@/lib/types";
 import { formatAmount } from "@/lib/format";
 import { downloadExpensesCsv } from "@/lib/csv";
 import ExpenseForm, { ExpenseFormData } from "@/components/ExpenseForm";
-import ExpenseFilters, { Filters, toIso } from "@/components/ExpenseFilters";
+import ExpenseFilters, { Filters } from "@/components/ExpenseFilters";
+import { cooperativeToday } from "@/lib/cooperativeClock";
 import ExpenseList from "@/components/ExpenseList";
 import LineUsersPanel from "@/components/LineUsersPanel";
 import MemberContactPanel from "@/components/MemberContactPanel";
@@ -22,6 +23,12 @@ import TrendChart from "@/components/TrendChart";
 import ConfirmDialog from "@/components/ConfirmDialog";
 import Tabs from "@/components/Tabs";
 import TestDataCleanupPanel from "@/components/TestDataCleanupPanel";
+import DeductionRoundsPanel from "@/components/DeductionRoundsPanel";
+import OrganizationUnitsPanel from "@/components/OrganizationUnitsPanel";
+import StatementReconcilePanel from "@/components/StatementReconcilePanel";
+import DailyReconcilePanel from "@/components/DailyReconcilePanel";
+import LineGroupsPanel from "@/components/LineGroupsPanel";
+import MemberBankAccountsPanel from "@/components/MemberBankAccountsPanel";
 
 const PAGE_SIZE = 10;
 const EXPORT_PAGE_SIZE = 100;
@@ -40,11 +47,18 @@ export default function Dashboard() {
   const [page, setPage] = useState(1);
   const [summary, setSummary] = useState<ExpenseSummary>(EMPTY_SUMMARY);
   const [loading, setLoading] = useState(true);
+  // Nothing here ever showed a failed request before: verify and delete threw
+  // their responses away, so a refused action looked exactly like a button
+  // that did nothing. A ฿1,800,000 deposit sat in the review queue because of
+  // it — the server was explaining the problem to no one.
+  const [actionError, setActionError] = useState<string | null>(null);
   const [editingExpense, setEditingExpense] = useState<Expense | null>(null);
   const [pendingDelete, setPendingDelete] = useState<Expense | null>(null);
   const [pendingVerify, setPendingVerify] = useState<Expense | null>(null);
   const [filters, setFilters] = useState<Filters>(() => {
-    const today = toIso(new Date());
+    // The cooperative's today, not the device's — the dashboard opens on
+    // today's transactions, and before seven in the morning the two differ.
+    const today = cooperativeToday();
     return { category: "All", from: today, to: today, verified: "" };
   });
 
@@ -131,11 +145,46 @@ export default function Dashboard() {
     }
   };
 
+  // Recording a payment from the bank line it arrived on, rather than from
+  // what somebody typed. The amount and the date are read from the stored
+  // line by the route itself and never taken from here — what arrived and
+  // when is the bank's statement, not something a browser gets to assert.
+  const handleRecordFromLine = async (lineId: string, data: ExpenseFormData) => {
+    const res = await fetch(`/api/statement-lines/${lineId}/record`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        memberNumber: data.memberNumber,
+        memberName: data.memberFullName,
+        category: data.category,
+        note: data.description,
+      }),
+    });
+
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error(body.error || "บันทึกรายการไม่สำเร็จ");
+    }
+
+    setEditingExpense(null);
+    if (page === 1) {
+      await fetchExpenses();
+    } else {
+      setPage(1);
+    }
+  };
+
   const handleConfirmDelete = async () => {
     if (!pendingDelete) return;
     const id = pendingDelete.id;
     setPendingDelete(null);
-    await fetch(`/api/expenses/${id}`, { method: "DELETE" });
+    setActionError(null);
+    const res = await fetch(`/api/expenses/${id}`, { method: "DELETE" });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      setActionError(body.error || "ลบรายการไม่สำเร็จ");
+      return;
+    }
     if (editingExpense?.id === id) setEditingExpense(null);
     await fetchExpenses();
   };
@@ -144,7 +193,13 @@ export default function Dashboard() {
     if (!pendingVerify) return;
     const id = pendingVerify.id;
     setPendingVerify(null);
-    await fetch(`/api/expenses/${id}/verify`, { method: "POST" });
+    setActionError(null);
+    const res = await fetch(`/api/expenses/${id}/verify`, { method: "POST" });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      setActionError(body.error || "ยืนยันตัวตนไม่สำเร็จ");
+      return;
+    }
     await fetchExpenses();
   };
 
@@ -178,6 +233,18 @@ export default function Dashboard() {
         </p>
       </header>
 
+      {actionError && (
+        <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800 whitespace-pre-line">
+          {actionError}
+          <button
+            onClick={() => setActionError(null)}
+            className="ml-3 text-red-600 hover:underline"
+          >
+            ปิด
+          </button>
+        </div>
+      )}
+
       <Tabs
         defaultTab="transactions"
         tabs={[
@@ -186,14 +253,7 @@ export default function Dashboard() {
             label: "ธุรกรรม",
             content: (
               <div className="space-y-6">
-                <SummaryCards summary={summary} />
-
                 <PendingTransactionsPanel />
-
-                <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                  <CategoryChart data={summary.byCategory} />
-                  <TrendChart data={summary.monthlyTrend} />
-                </div>
 
                 <ExpenseFilters filters={filters} onChange={setFilters} />
 
@@ -216,10 +276,29 @@ export default function Dashboard() {
                 <ExpenseForm
                   editingExpense={editingExpense}
                   onSave={handleSave}
+                  onRecordFromLine={handleRecordFromLine}
                   onCancelEdit={() => setEditingExpense(null)}
                 />
+
+                {/* The totals and the charts sit under the work rather than
+                    over it. The tab opens on what somebody came to do —
+                    the payments waiting, the list, the filters — and the
+                    figures are what you scroll to when you want them, not
+                    a screenful to get past first. They answer to the same
+                    filters as the list above them. */}
+                <SummaryCards summary={summary} />
+
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                  <CategoryChart data={summary.byCategory} />
+                  <TrendChart data={summary.monthlyTrend} />
+                </div>
               </div>
             ),
+          },
+          {
+            id: "daily",
+            label: "เงินเข้าประจำวัน",
+            content: <DailyReconcilePanel />,
           },
           {
             id: "service-requests",
@@ -227,22 +306,22 @@ export default function Dashboard() {
             content: <ServiceRequestsPanel />,
           },
           {
-            id: "contacts",
-            label: "ผู้รับผิดชอบ",
+            id: "statement",
+            label: "เทียบ Statement",
             content: (
               <div className="space-y-6">
-                <ResponsibleContactsPanel />
-                <DepartmentContactsPanel />
+                <StatementReconcilePanel />
+                <MemberBankAccountsPanel />
               </div>
             ),
           },
           {
-            id: "knowledge",
-            label: "ฐานความรู้",
+            id: "deductions",
+            label: "รายการหัก",
             content: (
               <div className="space-y-6">
-                <KnowledgePanel />
-                <FormLinksPanel />
+                <DeductionRoundsPanel />
+                <OrganizationUnitsPanel />
               </div>
             ),
           },
@@ -258,9 +337,30 @@ export default function Dashboard() {
             ),
           },
           {
+            id: "contacts",
+            label: "ผู้รับผิดชอบ",
+            content: (
+              <div className="space-y-6">
+                <LineGroupsPanel />
+                <ResponsibleContactsPanel />
+                <DepartmentContactsPanel />
+              </div>
+            ),
+          },
+          {
             id: "settings",
             label: "ตั้งค่าระบบ",
             content: <FeatureFlagsPanel />,
+          },
+          {
+            id: "knowledge",
+            label: "ฐานความรู้",
+            content: (
+              <div className="space-y-6">
+                <KnowledgePanel />
+                <FormLinksPanel />
+              </div>
+            ),
           },
         ]}
       />

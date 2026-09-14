@@ -2,20 +2,39 @@ import { describe, expect, it } from "vitest";
 import { DEFAULT_KNOWLEDGE } from "../lib/knowledge";
 
 describe("DEFAULT_KNOWLEDGE contact entry", () => {
-  it("keeps the real nktsc.org@gmail.com address readable", () => {
-    const contact = DEFAULT_KNOWLEDGE.find((e) => e.key === "contact");
-    expect(contact?.content).toContain("gmail.com");
-    // The word joiner is invisible but must survive round-tripping.
-    expect(contact?.content).toContain("nktsc⁠.org@gmail.com");
+  const contact = () => DEFAULT_KNOWLEDGE.find((e) => e.key === "contact")?.content ?? "";
+
+  it("carries no email address at all", () => {
+    // This used to assert the address was kept readable with a U+2060 WORD
+    // JOINER inside it, on the strength of a live test said to confirm the
+    // joiner breaks LINE's matcher. It does not. The advert appeared again on
+    // 11 Sep, under a conversation in which a member had just sent her
+    // national ID number, with that same joiner inserted into the finished
+    // reply where nothing could retype it away.
+    //
+    // There is no way to write the address that a matcher looking for domains
+    // will not find, because it is a domain. So the entry does not offer the
+    // model one to reach for.
+    expect(contact()).not.toContain("gmail.com");
+    expect(contact()).not.toContain("@");
   });
 
-  it("never contains the bare nktsc.org substring LINE auto-links into a preview card", () => {
-    // A live test showed LINE rendering a link-preview card (pointing at
-    // unrelated/gambling content on the now-expired nktsc.org domain) for
-    // this substring even with no "http(s)://" scheme present — every
-    // occurrence must have a word joiner breaking the "nktsc.org" pattern.
-    const contact = DEFAULT_KNOWLEDGE.find((e) => e.key === "contact");
-    expect(contact?.content).not.toContain("nktsc.org");
+  it("contains the nktsc.org substring in no form, joined or bare", () => {
+    expect(contact()).not.toContain("nktsc.org");
+    expect(contact()).not.toContain("nktsc\u2060.org");
+  });
+
+  it("still gives every telephone number staff answer on", () => {
+    // Removing the address only helps if what replaces it is usable.
+    for (const phone of ["042-411334", "042-423355", "042-420495", "042-413276"]) {
+      expect(contact(), phone).toContain(phone);
+    }
+  });
+
+  it("says why there is no email rather than leaving a gap", () => {
+    // A member who asks for the email should be told something, not met with
+    // an address the reply strips out on the way to them.
+    expect(contact()).toContain("โทรศัพท์");
   });
 });
 

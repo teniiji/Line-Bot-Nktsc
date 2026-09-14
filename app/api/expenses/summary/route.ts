@@ -1,26 +1,33 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { buildExpenseWhere } from "@/lib/expenseFilters";
+import { cooperativeToday, monthWindow } from "@/lib/cooperativeClock";
 
-type DateWhere = { gte?: Date; lte?: Date };
+// buildExpenseWhere's own shape: a half-open window, because a day is a day
+// and not the instant it begins (see lib/expenseFilters.ts).
+type DateWhere = { gte?: Date; lt?: Date };
 
 // The "this month" figure always reflects the current calendar month,
 // intersected with whatever date range the user already filtered to (so it
 // reads 0 if the filter excludes the current month entirely).
-function thisMonthWhere(where: Record<string, unknown>): Record<string, unknown> {
-  const now = new Date();
-  const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
-  const monthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+//
+// The month is the cooperative's, not the server's: Vercel runs in UTC, so a
+// month built from the server's own clock starts and ends seven hours away
+// from the month the office is actually in. See lib/cooperativeClock.ts.
+function thisMonthWhere(
+  where: Record<string, unknown>,
+  now: Date = new Date()
+): Record<string, unknown> {
+  const month = monthWindow(cooperativeToday(now));
+  if (!month) return where;
   const existing = where.date as DateWhere | undefined;
 
-  const gte = existing?.gte && existing.gte > monthStart ? existing.gte : monthStart;
-  const exclusiveExistingEnd = existing?.lte
-    ? new Date(existing.lte.getTime() + 1)
-    : undefined;
-  const lt =
-    exclusiveExistingEnd && exclusiveExistingEnd < monthEnd
-      ? exclusiveExistingEnd
-      : monthEnd;
+  const gte = existing?.gte && existing.gte > month.start ? existing.gte : month.start;
+  // The filter's own upper bound, when it is the tighter of the two. It used
+  // to be read as `lte` — the shape this stopped being when the filters moved
+  // to a half-open window — so the intersection had quietly become a no-op
+  // and the month figure ignored the filter's end date entirely.
+  const lt = existing?.lt && existing.lt < month.end ? existing.lt : month.end;
 
   return { ...where, date: { gte, lt } };
 }

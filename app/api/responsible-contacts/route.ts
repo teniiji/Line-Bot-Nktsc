@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { personalLineIdProblem } from "@/lib/lineGroups";
 
 export const dynamic = "force-dynamic";
 
@@ -19,6 +20,10 @@ export async function POST(request: NextRequest) {
   }
   if (typeof lineUserId !== "string" || !lineUserId.trim()) {
     return NextResponse.json({ error: "ต้องระบุ LINE UserId" }, { status: 400 });
+  }
+  const idProblem = personalLineIdProblem(lineUserId.trim());
+  if (idProblem) {
+    return NextResponse.json({ error: idProblem }, { status: 400 });
   }
 
   try {

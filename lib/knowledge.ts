@@ -31,18 +31,29 @@ export const DEFAULT_KNOWLEDGE: { key: string; title: string; content: string; s
   {
     key: "contact",
     title: "ข้อมูลติดต่อ",
-    // The cooperative's real email genuinely has "nktsc.org" as its local
-    // part (nothing to do with the old nktsc.org website, which is now an
-    // expired domain squatted with unrelated/gambling content) — but LINE's
-    // client still recognized that substring as a link-preview target and
-    // rendered the squatter's content inline, even with no "http(s)://"
-    // scheme present (contradicts the "bare domains are left alone"
-    // assumption in lib/links.ts, confirmed by live testing). A U+2060 WORD
-    // JOINER between "nktsc" and ".org" breaks the pattern match while
-    // staying invisible and non-copy-breaking, so the address still reads
-    // and copy-pastes correctly.
+    // No email address here, on purpose.
+    //
+    // The cooperative's real address genuinely has "nktsc.org" as its local
+    // part — nothing to do with the old nktsc.org website, which expired and
+    // is now squatted with gambling content. LINE's client reads that
+    // substring as a link-preview target with no scheme in front of it and
+    // renders the squatter's card inline.
+    //
+    // This entry used to carry the address with a U+2060 WORD JOINER inside
+    // it, and a note saying live testing had confirmed that breaks the match.
+    // It does not. The advert appeared again on 11 Sep, under a conversation
+    // in which a member had just sent her national ID number, with the same
+    // joiner inserted into the finished reply by lib/replyText.ts — where
+    // nothing can retype it away. It reached LINE intact and LINE unfurled
+    // the domain regardless.
+    //
+    // There is no way to write the address that a matcher looking for domains
+    // will not find, because it is a domain. sanitiseReplyText now removes
+    // any address that reaches it; this entry does not offer the model one to
+    // reach for in the first place. Members are given the telephone numbers,
+    // which is what staff answer anyway.
     content:
-      "ที่อยู่ 143 ถนนประจักษ์ ตำบลในเมือง อำเภอเมือง จังหวัดหนองคาย 43000 | โทรศัพท์บริหารสำนักงาน 042-411334, 042-423355, 042420746 | หุ้น-หนี้ 042-420495 | สมาคมฌาปนกิจ (สสค.) 042-413276, 064-8766432 | อีเมล nktsc⁠.org@gmail.com",
+      "ที่อยู่ 143 ถนนประจักษ์ ตำบลในเมือง อำเภอเมือง จังหวัดหนองคาย 43000 | โทรศัพท์บริหารสำนักงาน 042-411334, 042-423355, 042420746 | หุ้น-หนี้ 042-420495 | สมาคมฌาปนกิจ (สสค.) 042-413276, 064-8766432 | ติดต่อทางโทรศัพท์เท่านั้น (ระบบไม่แสดงอีเมลในแชท)",
     sortOrder: 4,
   },
   {

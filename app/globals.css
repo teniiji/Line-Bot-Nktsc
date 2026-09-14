@@ -1,3 +1,80 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+@layer base {
+  /* Thai sets taller than Latin — its vowels and tone marks stack above and
+     below the line — so the browser default leading crowds them against the
+     row above. A little more room is the difference between a table that can
+     be skimmed and one that has to be read. */
+  body {
+    line-height: 1.6;
+  }
+
+  /* Money and dates belong in columns. Proportional digits make ฿5,600.00 and
+     ฿15,600.00 different widths, so a column of amounts comes out ragged and
+     the eye cannot compare them down the page. */
+  table {
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+@layer components {
+  /* One place for the money/number treatment, so a figure reads the same
+     wherever it appears — table cell, summary bar or heading. */
+  .num {
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: "tnum";
+  }
+}
+
+/* Printing a day's report.
+ *
+ * The dashboard is one long tabbed page, so "print" without this puts the
+ * navigation, every other panel and the filter boxes on paper around the one
+ * table somebody wanted. Everything is hidden and the report alone is made
+ * visible again — visibility rather than display, because the report is
+ * nested several levels inside the page and a hidden ancestor would take it
+ * with it.
+ */
+@media print {
+  body * {
+    visibility: hidden;
+  }
+
+  .print-report,
+  .print-report * {
+    visibility: visible;
+  }
+
+  .print-report {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    padding: 0;
+  }
+
+  /* Buttons, filters and anything else there is no point printing — inside
+     the report as well as outside it. */
+  .no-print,
+  .no-print * {
+    visibility: hidden !important;
+    display: none !important;
+  }
+
+  /* A table that scrolls sideways on screen must not be cropped on paper. */
+  .print-report .overflow-x-auto {
+    overflow: visible !important;
+  }
+
+  /* Keep a row off a page boundary: half a line of somebody's payment on
+     each side of the fold is how a figure gets read twice or not at all. */
+  .print-report tr {
+    break-inside: avoid;
+  }
+
+  @page {
+    margin: 12mm;
+  }
+}

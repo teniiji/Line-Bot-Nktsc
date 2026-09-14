@@ -9,9 +9,24 @@ import { runFinanceAgent } from "@/lib/financeAgent";
 import {
   PENDING_TRANSACTION_EXPIRY_MS,
   PENDING_TRANSACTION_RETENTION_MS,
+  loadLastReplyKind,
+  pruneQuotableMessages,
+  recordReply,
+  rememberMessage,
+  rememberSentMessages,
 } from "@/lib/agent/state";
+import { alwaysSilent, repeatsLastReply, type ReplyKind } from "@/lib/replyKind";
 import { ensureLineUser } from "@/lib/lineUsers";
+import {
+  GROUP_JOIN_NOTICE,
+  GroupRef,
+  groupRefOf,
+  recordGroupLeft,
+  recordGroupSeen,
+} from "@/lib/lineGroups";
 import { prisma } from "@/lib/prisma";
+import { conversationKeyOf, groupBySource } from "@/lib/eventOrdering";
+import { withConversationLock } from "@/lib/conversationLock";
 import { isFeatureEnabled, MESSAGING_ENABLED } from "@/lib/featureFlags";
 
 export const runtime = "nodejs";
@@ -130,7 +145,60 @@ async function buildUserContent(
   return buildAttachmentContent(image.id, lineUserId, origin, false);
 }
 
+// Everything the bot receives from a group chat. It stays silent in groups —
+// it answers one-to-one only, which is what keeps a member's financial
+// questions out of a room full of their colleagues — so the whole job here is
+// bookkeeping: knowing which chats the bot is in, so staff can point a unit's
+// or a department's notifications at one.
+async function handleGroupEvent(event: webhook.Event, ref: GroupRef): Promise<void> {
+  // Logged unconditionally, unlike LOG_EVENT_SOURCES, because the bot is
+  // deliberately silent in groups: without a line here there is no way at all
+  // to tell "LINE never delivered the event" from "it arrived and the write
+  // failed", and those need opposite fixes. A group id is not a member's
+  // personal data, so this costs nothing to keep on.
+  console.log(
+    `[line/webhook] group event: type=${event.type} kind=${ref.kind} id=${ref.id}`
+  );
+
+  if (event.type === "leave") {
+    await recordGroupLeft(ref);
+    return;
+  }
+
+  const joined = event.type === "join";
+  try {
+    await recordGroupSeen(ref, joined);
+  } catch (err) {
+    // Named rather than left to the generic handler, so the logs say which
+    // half of the path broke.
+    console.error(`[line/webhook] could not record group ${ref.id}:`, err);
+    return;
+  }
+  console.log(`[line/webhook] group recorded: ${ref.id}`);
+
+  // Said once, on being added — see GROUP_JOIN_NOTICE for why it earns its
+  // place: without it people reasonably expect the bot to answer them here.
+  if (joined && "replyToken" in event && event.replyToken) {
+    try {
+      await lineClient.replyMessage({
+        replyToken: event.replyToken,
+        messages: [{ type: "text", text: GROUP_JOIN_NOTICE }],
+      });
+    } catch (err) {
+      console.error("[line/webhook] group join notice failed:", err);
+    }
+  }
+}
+
 async function handleEvent(event: webhook.Event, origin: string): Promise<void> {
+  // Checked first: a group event must never reach the agent, and it carries
+  // the only thing that makes forwarding to a group possible at all.
+  const groupRef = groupRefOf(event.source);
+  if (groupRef) {
+    await handleGroupEvent(event, groupRef);
+    return;
+  }
+
   if (
     event.type !== "message" ||
     (event.message.type !== "text" &&
@@ -171,6 +239,18 @@ async function handleEvent(event: webhook.Event, origin: string): Promise<void> 
     prisma.processedLineEvent
       .deleteMany({ where: { createdAt: { lt: cutoff } } })
       .catch((err) => console.error("[line/webhook] processed-event prune failed:", err));
+
+    // Conversation locks release themselves in a finally, so a row only
+    // outlives its handler when the process died holding it. Rare, but
+    // nothing else would ever delete it unless that same member messaged
+    // again, so it is swept here with everything else.
+    prisma.conversationLock
+      .deleteMany({ where: { expiresAt: { lt: new Date() } } })
+      .catch((err) => console.error("[line/webhook] conversation-lock prune failed:", err));
+
+    // The chat lines kept so a quoted message can be read back. Nothing else
+    // ever deletes them, and a fortnight is as far back as one is read.
+    pruneQuotableMessages();
   }
 
   // In-flight member-number lookups hold a typed national ID, and
@@ -252,8 +332,24 @@ async function handleEvent(event: webhook.Event, origin: string): Promise<void> 
     }
   }
 
+  // What the member tapped ตอบกลับ on, if anything. LINE sends only the
+  // quoted message's id — the text is looked up from what the bot kept of
+  // this conversation (lib/quotedMessage.ts). Text messages are the only
+  // ones the bot handles that can carry a quote.
+  const incomingText =
+    event.message.type === "text" ? (event.message as webhook.TextMessageContent) : null;
+  const quotedMessageId = incomingText?.quotedMessageId ?? null;
+
+  // Kept before the reply is even attempted, so it is there to be quoted
+  // later whatever happens to this turn — including the turns the bot
+  // deliberately stays silent on. Best-effort inside; never blocks.
+  if (incomingText) {
+    rememberMessage(event.message.id, lineUserId, incomingText.text, false);
+  }
+
   let replyText: string;
   let quickReplies: string[] = [];
+  let replyKind: ReplyKind = null;
   try {
     // Independent of building the message content — run concurrently
     // instead of adding its (usually skipped, but occasionally a real LINE
@@ -268,13 +364,45 @@ async function handleEvent(event: webhook.Event, origin: string): Promise<void> 
       lineUserId,
       slipImageUrlPromise,
       slipImageHash,
-      slipIsPdf
+      slipIsPdf,
+      quotedMessageId
     );
     replyText = result.text;
     quickReplies = result.quickReplies;
+    replyKind = result.replyKind;
   } catch (err) {
     console.error("[line/webhook] finance agent error:", err);
     replyText = "ขอโทษค่ะ เกิดข้อผิดพลาด ลองใหม่อีกครั้งนะคะ";
+  }
+
+  // Some replies have nothing to add the second time. A member sending an
+  // album gets one event per photo, each its own run of the agent, and the
+  // question "what would you like help with?" cannot be answered by the next
+  // photo in the same album — asking it four more times in four different
+  // wordings is what the member actually saw. See lib/replyKind.ts.
+  //
+  // Not recorded either: the window stays anchored to the message the member
+  // is really looking at, rather than being pushed forward by replies that
+  // were never sent.
+  // A reply the bot decided not to make at all: the member asked something
+  // only the cooperative can answer, and staff read this chat. See
+  // lib/replyKind.ts for the ten-line non-answer that made this worth having.
+  if (alwaysSilent(replyKind)) {
+    console.log(`[line/webhook] leaving this one to staff (${replyKind})`);
+    return;
+  }
+
+  if (replyKind !== null) {
+    const previous = await loadLastReplyKind(lineUserId).catch((err) => {
+      // Never a reason to withhold a reply — not knowing what was said last
+      // means sending this one, which is the behaviour that existed before.
+      console.error("[line/webhook] could not read the last reply kind:", err);
+      return null;
+    });
+    if (repeatsLastReply(previous, replyKind, new Date())) {
+      console.log(`[line/webhook] staying silent — already said (${replyKind})`);
+      return;
+    }
   }
 
   // Attach tappable buttons for pick-one prompts (category, loan type) so
@@ -297,10 +425,20 @@ async function handleEvent(event: webhook.Event, origin: string): Promise<void> 
       : undefined;
 
   try {
-    await lineClient.replyMessage({
+    const sent = await lineClient.replyMessage({
       replyToken: event.replyToken,
       messages: [{ type: "text", text: replyText, ...(quickReply ? { quickReply } : {}) }],
     });
+    // Only once it has actually gone out: a reply the member never received
+    // must not be quoted back to the model as one they are looking at.
+    await recordReply(lineUserId, replyText, replyKind);
+    // And under the ids LINE just assigned it, so that if the member taps
+    // ตอบกลับ on this very message the bot can read back what it asked.
+    await rememberSentMessages(
+      (sent?.sentMessages ?? []).map((message) => message.id),
+      lineUserId,
+      replyText
+    );
   } catch (err) {
     console.error("[line/webhook] LINE reply error:", err);
   }
@@ -334,15 +472,30 @@ export async function POST(request: NextRequest) {
     console.log("[line/webhook] event sources:", JSON.stringify(events.map((e) => e.source)));
   }
 
-  // Process events but never let a single failure block the 200 response —
-  // LINE retries the whole webhook delivery on a non-2xx, which would
-  // re-trigger already-handled messages.
+  // Two events from the same member must not run at once: both read that
+  // member's pending transaction, both decide, both write, and the member
+  // gets two replies contradicting each other. Different members share
+  // nothing, so those still run in parallel.
+  //
+  // Grouping only orders what arrived together; withConversationLock covers
+  // the same member's events arriving in separate deliveries, which is the
+  // wider window of the two.
+  //
+  // Still never lets a single failure block the 200 response — LINE retries
+  // the whole delivery on a non-2xx, re-triggering already-handled messages.
   await Promise.all(
-    events.map((event) =>
-      handleEvent(event, origin).catch((err) =>
-        console.error("[line/webhook] unhandled event error:", err)
-      )
-    )
+    groupBySource(events, (event) => event.source).map(async (run) => {
+      const key = conversationKeyOf(run[0]?.source);
+      const handleRun = async () => {
+        for (const event of run) {
+          await handleEvent(event, origin).catch((err) =>
+            console.error("[line/webhook] unhandled event error:", err)
+          );
+        }
+      };
+      // No identifiable source means nothing to serialise against.
+      return key === null ? handleRun() : withConversationLock(key, handleRun);
+    })
   );
 
   return NextResponse.json({ status: "ok" });

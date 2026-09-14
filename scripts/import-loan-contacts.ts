@@ -18,6 +18,7 @@
 import ExcelJS from "exceljs";
 import { PrismaClient } from "@prisma/client";
 import { cellText as cell } from "./excelUtils";
+import { personalLineIdProblem } from "../lib/lineGroups";
 
 const prisma = new PrismaClient();
 const SHEET_NAME = "รับผิดชอบ";
@@ -53,6 +54,15 @@ async function main() {
     const unitName = cell(row, 2);
     const note = cell(row, 4);
     if (!lineUserId || !unitName) {
+      skipped++;
+      continue;
+    }
+    // Loan routing is personal-only — see lib/loanRouting.ts. A group id or a
+    // typo here is skipped loudly rather than stored: stored, it looks
+    // configured and only shows itself when a member is waiting for an answer.
+    const idProblem = personalLineIdProblem(lineUserId);
+    if (idProblem) {
+      console.warn(`  ข้าม "${unitName}" — ${idProblem}`);
       skipped++;
       continue;
     }

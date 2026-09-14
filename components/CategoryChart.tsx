@@ -24,17 +24,17 @@ export default function CategoryChart({ data: byCategory }: CategoryChartProps) 
       {data.length === 0 ? (
         <p className="text-slate-500 text-sm py-10 text-center">ไม่มีข้อมูล</p>
       ) : (
-        <ResponsiveContainer width="100%" height={260}>
+        /* The category names used to be written outside the pie on leader
+           lines. Eleven Thai category names around a circle need more width
+           than this card has, so they were pushed out past its edges and the
+           pie was squeezed to nothing between them — what loaded was a ring of
+           floating labels with the chart itself below the fold, which reads as
+           a broken graph rather than a cramped one. The legend already names
+           every category, so the labels come off and the room goes back to the
+           pie. */
+        <ResponsiveContainer width="100%" height={280}>
           <PieChart>
-            <Pie
-              data={data}
-              dataKey="value"
-              nameKey="name"
-              cx="50%"
-              cy="50%"
-              outerRadius={90}
-              label={(entry) => entry.name}
-            >
+            <Pie data={data} dataKey="value" nameKey="name" cx="50%" cy="42%" outerRadius={95}>
               {data.map((entry) => (
                 <Cell
                   key={entry.name}
@@ -43,7 +43,11 @@ export default function CategoryChart({ data: byCategory }: CategoryChartProps) 
               ))}
             </Pie>
             <Tooltip formatter={(value: number) => formatAmount(value)} />
-            <Legend />
+            <Legend
+              verticalAlign="bottom"
+              height={64}
+              wrapperStyle={{ fontSize: 12, lineHeight: "18px" }}
+            />
           </PieChart>
         </ResponsiveContainer>
       )}
