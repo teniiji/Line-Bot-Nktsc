@@ -16,6 +16,7 @@ import { branchesIn, missingBranches, summariseByAccount } from "@/lib/dailyAcco
 import { dayTally, flowByAccount, flowTotal, inByCategory } from "@/lib/statementTotals";
 import { bankFromDescription } from "@/lib/thaiBanks";
 import { cooperativeToday, shiftDay } from "@/lib/cooperativeClock";
+import { describeDeductionHint } from "@/lib/deductionMatch";
 import PanelHelp from "@/components/PanelHelp";
 import DateField from "@/components/DateField";
 import {
@@ -1147,10 +1148,43 @@ const StatementTable = ({
               unitName={row.unitName}
             />
           </td>
-          {/* Only ever from the slip this line was paired with — the bank
-              says an amount arrived, never what for. */}
+          {/* From the slip this line was paired with — the bank says an
+              amount arrived, never what for. Failing that, what the month's
+              หักไม่ได้ round says this member still owes, which is the nearest
+              thing to an answer for a transfer that came with no slip. Marked
+              as a suggestion, because that is what it is: an amount and a
+              name, not a statement from the member. */}
           <td className="px-2 py-1.5 whitespace-nowrap text-slate-600">
-            {row.category ?? <span className="text-slate-300">—</span>}
+            {row.category ? (
+              row.category
+            ) : row.deduction ? (
+              <span
+                className={
+                  row.deduction.match === "exact" ? "text-amber-700" : "text-slate-500"
+                }
+                title={
+                  `ค้างเก็บไม่ได้รอบ ${row.deduction.label}: ${formatAmount(
+                    row.deduction.outstanding
+                  )}` +
+                  (row.deduction.match === "exact"
+                    ? " — ยอดที่โอนมาตรงพอดี น่าจะเป็นการชำระเก็บไม่ได้รายเดือน"
+                    : row.deduction.match === "short"
+                      ? " — ยอดที่โอนมาน้อยกว่าที่ค้าง"
+                      : " — ยอดที่โอนมามากกว่าที่ค้าง") +
+                  "\nเป็นข้อสังเกตให้ตรวจสอบ ไม่ใช่การบันทึก"
+                }
+              >
+                {describeDeductionHint(row.deduction)}
+                {row.deduction.match !== "exact" && (
+                  <span className="text-slate-400">
+                    {" "}
+                    ({formatAmount(row.deduction.outstanding)})
+                  </span>
+                )}
+              </span>
+            ) : (
+              <span className="text-slate-300">—</span>
+            )}
           </td>
           <td className="px-2 py-1.5 whitespace-nowrap">
             <StatusTag status={row.status} />

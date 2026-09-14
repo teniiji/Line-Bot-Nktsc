@@ -1,3 +1,5 @@
+import type { DeductionHint } from "./deductionMatch";
+
 export interface Expense {
   id: string;
   amount: number;
@@ -322,6 +324,10 @@ export interface DailyStatementRow {
   // ฝากเงิน, ชำระหนี้, ซื้อหุ้น. Null while nothing has been paired with it,
   // which is most lines on a day nobody has worked through yet.
   category: string | null;
+  // What the month's หักไม่ได้ round says this member still owes, when the
+  // line has no slip and the member is on that round — see
+  // lib/deductionMatch.ts. Null whenever there is nothing to compare.
+  deduction: DeductionHint | null;
 }
 
 export interface DailyReconcileResult {
