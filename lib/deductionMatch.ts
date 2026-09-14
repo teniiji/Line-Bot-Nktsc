@@ -1,0 +1,80 @@
+// What a member still owes on the month's หักไม่ได้ round, put beside the
+// money they just transferred in.
+//
+// The daily view can already say who paid: the account directory and the
+// round's own member list between them turn a "TR fr 4130029339" into a name
+// and a member number. What it could not say is *what the payment was for*.
+// That column is filled from the slip a member sent, and most of these
+// transfers arrive with no slip at all — so a screen full of recognised
+// members paying recognised amounts read "—" in the one column staff were
+// about to have to work out by hand.
+//
+// Nearly always the answer is sitting in the system: the member is on this
+// month's เก็บไม่ได้ list with a figure outstanding, and the transfer is that
+// figure. Saying so turns the column from a blank into either a one-click
+// confirmation or a discrepancy worth a phone call.
+//
+// It is deliberately a *hint*, never a decision. The pairing is an amount and
+// a name, not a statement from the member, so nothing here records anything —
+// it puts the two numbers next to each other and lets the person reading them
+// decide.
+
+// A member's row in the most recent หักไม่ได้ round, reduced to what this
+// comparison needs.
+export interface OutstandingDeduction {
+  period: string;
+  label: string;
+  amountDue: number;
+  amountPaid: number;
+}
+
+export type DeductionMatch = "exact" | "short" | "over";
+
+export interface DeductionHint {
+  match: DeductionMatch;
+  // What was still owed when the round was last updated.
+  outstanding: number;
+  // The round it belongs to, so the column can name the month.
+  period: string;
+  label: string;
+}
+
+// Money is equal when it is equal to the satang. Two figures a rounding error
+// apart are the same payment; a tolerance any wider would start calling a
+// different payment a match.
+const sameAmount = (a: number, b: number) => Math.abs(a - b) < 0.01;
+
+/**
+ * The hint for one statement line, or null when there is nothing to say —
+ * money going out, a member nobody recognised, or a member whose round is
+ * settled.
+ */
+export function deductionHint(
+  amount: number,
+  owed: OutstandingDeduction | null
+): DeductionHint | null {
+  if (!owed || amount <= 0) return null;
+  const outstanding = Math.round((owed.amountDue - owed.amountPaid) * 100) / 100;
+  // Nothing outstanding is not a hint: the member has paid, and saying
+  // anything here would put a settled row back on somebody's list.
+  if (outstanding <= 0) return null;
+
+  const match: DeductionMatch = sameAmount(amount, outstanding)
+    ? "exact"
+    : amount < outstanding
+      ? "short"
+      : "over";
+  return { match, outstanding, period: owed.period, label: owed.label };
+}
+
+/**
+ * The hint as the column reads it. Short, because it sits in a table: the
+ * amount only appears when it differs from what arrived, since repeating the
+ * figure already in the row beside it says nothing.
+ */
+export function describeDeductionHint(hint: DeductionHint): string {
+  const month = hint.label || hint.period;
+  if (hint.match === "exact") return `ตรงยอดเก็บไม่ได้ ${month}`;
+  if (hint.match === "short") return `เก็บไม่ได้ ${month} ยังไม่ครบ`;
+  return `เก็บไม่ได้ ${month} เกินยอด`;
+}

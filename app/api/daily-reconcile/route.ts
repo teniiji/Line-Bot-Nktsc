@@ -4,6 +4,7 @@ import { DepositLine, SlipRecord, honourLiveLinks, reconcileDay } from "@/lib/da
 import { OTHER_CHANNEL } from "@/lib/statementLines";
 import { statementLineStatus } from "@/lib/statementDayView";
 import { memberNumberKey } from "@/lib/memberNumber";
+import { deductionHint } from "@/lib/deductionMatch";
 
 export const dynamic = "force-dynamic";
 
@@ -225,7 +226,17 @@ export async function GET(request: NextRequest) {
         .filter((n): n is string => n !== null)
     ),
   ];
-  const [rosterRows, loggedNames] = numbersOnPage.length
+  // The month's หักไม่ได้ round, so a transfer from a member who owes on it
+  // can say so — see lib/deductionMatch.ts for why the "ทำรายการ" column was
+  // otherwise blank on exactly the rows staff were about to work out by hand.
+  // The newest round only: an older one is a month somebody has already
+  // closed, and its arrears are not what today's transfer is likely to be.
+  const latestRound = await prisma.statementRound.findFirst({
+    orderBy: { period: "desc" },
+    select: { id: true, period: true, label: true },
+  });
+
+  const [rosterRows, loggedNames, owedRows] = numbersOnPage.length
     ? await Promise.all([
         prisma.memberRoster.findMany({
           where: { memberNumber: { in: numbersOnPage } },
@@ -242,8 +253,14 @@ export async function GET(request: NextRequest) {
           distinct: ["memberNumber"],
           select: { memberNumber: true, memberFullName: true },
         }),
+        latestRound
+          ? prisma.statementMember.findMany({
+              where: { roundId: latestRound.id, memberNumber: { in: numbersOnPage } },
+              select: { memberNumber: true, amountDue: true, amountPaid: true },
+            })
+          : Promise.resolve([]),
       ])
-    : [[], []];
+    : [[], [], []];
   const rosterByNumber = new Map(
     rosterRows.map((row) => [memberNumberKey(row.memberNumber) ?? row.memberNumber, row])
   );
@@ -251,6 +268,9 @@ export async function GET(request: NextRequest) {
     loggedNames
       .filter((row) => row.memberNumber && row.memberFullName)
       .map((row) => [memberNumberKey(row.memberNumber) ?? "", row.memberFullName as string])
+  );
+  const owedByNumber = new Map(
+    owedRows.map((row) => [memberNumberKey(row.memberNumber) ?? row.memberNumber, row])
   );
 
   const statement = resolved.map(({ line, slip, owner, memberNumber }) => {
@@ -285,6 +305,24 @@ export async function GET(request: NextRequest) {
       // Only ever from the paired slip: the bank line says an amount arrived,
       // never what for.
       category: slip?.category ?? null,
+      // What the month's หักไม่ได้ round says this member still owes, when
+      // they are on it — the nearest thing to an answer for a transfer that
+      // came with no slip. A hint for a person to check, never a conclusion:
+      // see lib/deductionMatch.ts.
+      deduction:
+        latestRound && !slip
+          ? deductionHint(line.amount, (() => {
+              const owed = owedByNumber.get(key);
+              return owed
+                ? {
+                    period: latestRound.period,
+                    label: latestRound.label,
+                    amountDue: owed.amountDue,
+                    amountPaid: owed.amountPaid,
+                  }
+                : null;
+            })())
+          : null,
     };
   });
 

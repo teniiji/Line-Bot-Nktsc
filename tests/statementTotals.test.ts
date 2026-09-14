@@ -25,6 +25,7 @@ const line = (over: Partial<DailyStatementRow> = {}): DailyStatementRow => ({
   memberName: "นางสาวศิราณี วงศาสนธิ์",
   unitName: "สมาชิกสมทบ อ.เซกา",
   category: "ฝากเงิน",
+  deduction: null,
   ...over,
 });
 
