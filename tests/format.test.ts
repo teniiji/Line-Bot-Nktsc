@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   formatStatementDate,
+  formatThaiDay,
   formatStatementDateTime,
   formatStatementTime,
   formatStatementTimeExact,
@@ -77,5 +78,30 @@ describe("formatStatementDateTime", () => {
 
   it("falls back to the date alone", () => {
     expect(formatStatementDateTime("2026-08-31T00:00:00.000Z")).not.toContain(":");
+  });
+});
+
+describe("formatThaiDay", () => {
+  it("reads a date box's value back in พ.ศ.", () => {
+    // The boxes themselves are Gregorian and cannot be changed — the browser
+    // draws them. Staff here read Buddhist years, so the reading goes beside.
+    expect(formatThaiDay("2026-09-14")).toBe("14 ก.ย. 2569");
+  });
+
+  it("is 543 years ahead, every time", () => {
+    expect(formatThaiDay("2026-02-01")).toContain("2569");
+    expect(formatThaiDay("2025-12-31")).toContain("2568");
+  });
+
+  it("does not slide a day either way", () => {
+    // Read in a timezone behind UTC, the first of the month becomes the last
+    // of the previous one — which is the whole reason this reads in UTC.
+    expect(formatThaiDay("2026-02-01")).toBe("1 ก.พ. 2569");
+    expect(formatThaiDay("2026-12-31")).toBe("31 ธ.ค. 2569");
+  });
+
+  it("says nothing for an empty or unreadable box", () => {
+    expect(formatThaiDay("")).toBe("");
+    expect(formatThaiDay("ไม่ใช่วันที่")).toBe("");
   });
 });

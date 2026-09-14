@@ -5,6 +5,7 @@ import { CATEGORIES } from "@/lib/categories";
 import { formatAmount, formatStatementDate, formatStatementTime } from "@/lib/format";
 import { CHANNEL_LABELS } from "@/lib/statementLines";
 import { cooperativeToday } from "@/lib/cooperativeClock";
+import DateField from "@/components/DateField";
 import { Expense } from "@/lib/types";
 
 // What the member-deposits route knows about a member number: who they are,
@@ -354,16 +355,13 @@ export default function ExpenseForm({
         />
       </div>
 
-      <div>
-        <label className="block text-sm text-slate-600 mb-1">วันที่</label>
-        <input
-          type="date"
-          value={date}
-          onChange={(e) => setDate(e.target.value)}
-          className="w-full border border-slate-300 rounded px-3 py-2"
-          required
-        />
-      </div>
+      <DateField
+        label="วันที่"
+        value={date}
+        onChange={setDate}
+        className="w-full border border-slate-300 rounded px-3 py-2"
+        required
+      />
 
       <div className="flex gap-2">
         <button
