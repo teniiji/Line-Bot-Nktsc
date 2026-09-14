@@ -20,6 +20,16 @@
 // sourceFile is deliberately not a reason to rewrite, and not overwritten
 // when one happens: it names the upload that first brought the line in, which
 // is the more useful of the two answers and the only one that stays true.
+//
+// The channel is the file's to say with one exception. A line a person has
+// marked as a member's payment (STAFF_CHANNEL — see lib/memberMoneyMark.ts)
+// keeps that mark, because the file will go on classifying its unrecognised
+// code as "other" every time it is uploaded, and the rest of the month's
+// exports overlap this one. Without this, re-uploading the wider range would
+// quietly take back every mark staff had made, and the payments filed against
+// those lines would be left sitting on institutional money.
+
+import { isStaffMarked } from "./memberMoneyMark";
 
 // The fields a re-upload can legitimately change. Everything else about a
 // line is either in its fingerprint (so a change makes it a different line)
@@ -54,6 +64,12 @@ const differs = (stored: MergeableLine, line: MergeableLine): boolean =>
   stored.senderAccount !== line.senderAccount ||
   stored.channel !== line.channel;
 
+// What the file is allowed to say about a line already stored. Everything as
+// the file has it, except a channel a person set by hand — which the file
+// cannot know about and must not overwrite.
+const respectingStaffMark = <T extends MergeableLine>(stored: MergeableLine, line: T): T =>
+  isStaffMarked(stored.channel) ? { ...line, channel: stored.channel } : line;
+
 export function planLineMerge<T extends MergeableLine>(
   stored: StoredLine[],
   incoming: T[]
@@ -77,8 +93,15 @@ export function planLineMerge<T extends MergeableLine>(
     const existing = byFingerprint.get(line.fingerprint);
     if (!existing) {
       create.push(line);
-    } else if (differs(existing, line)) {
-      update.push({ id: existing.id, line });
+      continue;
+    }
+
+    // Compared and written as the same value, so a file that changes nothing
+    // else about a marked line is planned as unchanged rather than as an
+    // update that puts the channel back.
+    const kept = respectingStaffMark(existing, line);
+    if (differs(existing, kept)) {
+      update.push({ id: existing.id, line: kept });
     } else {
       unchangedCount += 1;
     }

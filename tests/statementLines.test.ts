@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   CHANNEL_LABELS,
+  STAFF_CHANNEL,
   classifyChannel,
   extractSenderAccount,
   isMemberDeposit,
@@ -57,6 +58,19 @@ describe("classifyChannel", () => {
   it("never counts money leaving the account, whatever the code", () => {
     expect(classifyChannel("NBSDT", -5000)).toBe("other");
     expect(classifyChannel("BPSFE", -8)).toBe("other");
+  });
+
+  it("counts a line a person marked, and never produces that channel itself", () => {
+    // The escape hatch for an unrecognised code — see lib/memberMoneyMark.ts.
+    // It has to read as a member's payment everywhere the bank's own channels
+    // do, and no transaction code may ever produce it: a mark is something a
+    // person made, and a code that classified itself that way would be
+    // indistinguishable from one.
+    expect(isMemberDeposit(STAFF_CHANNEL)).toBe(true);
+    expect(CHANNEL_LABELS[STAFF_CHANNEL]).toBeTruthy();
+    for (const code of ["NBSDT", "NMPSDP", "ZZNEW", "STAFF", "staff"]) {
+      expect(classifyChannel(code, 5000)).not.toBe(STAFF_CHANNEL);
+    }
   });
 
   it("has a label for every channel it can produce", () => {
