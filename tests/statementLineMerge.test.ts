@@ -55,6 +55,40 @@ describe("planLineMerge", () => {
     }
   });
 
+  it("does not take back a channel a person set by hand", () => {
+    // The file will go on calling NMPSDP "other" every time it is uploaded,
+    // and the month's exports overlap. Without this, re-uploading the wider
+    // range silently undoes every mark staff made — and leaves the payments
+    // filed against those lines sitting on money the day no longer counts.
+    const plan = planLineMerge(
+      [stored("line-1", { channel: "staff" })],
+      [line({ channel: "other" })]
+    );
+    expect(plan.update).toHaveLength(0);
+    expect(plan.unchangedCount).toBe(1);
+  });
+
+  it("still takes the file's other fields on a line a person marked", () => {
+    // The mark is about what kind of money it is. Everything else on the line
+    // is still the bank's to state.
+    const [update] = planLineMerge(
+      [stored("line-1", { channel: "staff", description: "010753700088205" })],
+      [line({ channel: "other", description: "010753700088205-BU0994005S00999915K" })]
+    ).update;
+    expect(update.line.description).toBe("010753700088205-BU0994005S00999915K");
+    expect(update.line.channel).toBe("staff");
+  });
+
+  it("lets the file classify a line nobody has marked", () => {
+    // The protection is for a staff mark only — a code added to the classifier
+    // must still reach the lines already stored under "other".
+    const [update] = planLineMerge(
+      [stored("line-1", { channel: "other" })],
+      [line({ channel: "qr" })]
+    ).update;
+    expect(update.line.channel).toBe("qr");
+  });
+
   it("counts the file's lines whether or not any of them were written", () => {
     // "159 lines" is what staff check the upload against, and it must not
     // depend on how much of the file was new.

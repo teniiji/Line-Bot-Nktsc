@@ -56,6 +56,22 @@ const MEMBER_CHANNELS: Record<string, string> = {
 
 export const OTHER_CHANNEL = "other";
 
+// Not a code the bank writes: what a person said about one line, after the
+// table above failed to recognise its code.
+//
+// The table is the right answer and stays the right answer — a code that
+// really is members paying in belongs in it, so every line the bank posts
+// under it is counted without anyone deciding again. But adding one takes a
+// release, and in the meantime the money sits in "รายการอื่น" where nothing
+// can be recorded against it: that is how ฿10,500 of ถุงเงิน waited for a
+// code change to be filed at all.
+//
+// So a person can say it of a single line. Scoped to that line on purpose —
+// it is not a claim about the code, which nobody on the phone is in a
+// position to make, and a wrong click then costs one row rather than a
+// month of them. See lib/memberMoneyMark.ts.
+export const STAFF_CHANNEL = "staff";
+
 // Labels for the dashboard, kept beside the codes they describe so the two
 // cannot drift apart.
 export const CHANNEL_LABELS: Record<string, string> = {
@@ -66,6 +82,7 @@ export const CHANNEL_LABELS: Record<string, string> = {
   ewallet: "e-Wallet",
   cheque: "เช็ค",
   qr: "ถุงเงิน/QR",
+  [STAFF_CHANNEL]: "เจ้าหน้าที่ระบุเอง",
   [OTHER_CHANNEL]: "อื่นๆ",
 };
 

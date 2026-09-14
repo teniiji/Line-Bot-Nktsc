@@ -9,7 +9,7 @@ import {
 } from "@/lib/format";
 import { CATEGORIES } from "@/lib/categories";
 import { accountCaveat, canBindAccount } from "@/lib/depositRecord";
-import { CHANNEL_LABELS } from "@/lib/statementLines";
+import { CHANNEL_LABELS, STAFF_CHANNEL } from "@/lib/statementLines";
 import { STATUS_LABELS } from "@/lib/statementDayView";
 import { STATEMENT_ACCOUNTS } from "@/lib/statementReconcile";
 import { branchesIn, missingBranches, summariseByAccount } from "@/lib/dailyAccountSummary";
@@ -356,6 +356,54 @@ export default function DailyReconcilePanel() {
           (body.inRoster ? "" : " — ⚠️ ไม่พบเลขสมาชิกนี้ในทะเบียนสมาชิก ตรวจสอบอีกครั้ง")
       );
       closeForm();
+      await fetchDay(from, to);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  // "The bank's code does not know it, but that one is a member paying in" —
+  // a fact about this line only. It files nothing: it moves the row up into
+  // the unclaimed list, where the same two buttons as every other unclaimed
+  // payment ask who paid and what for. See lib/memberMoneyMark.ts.
+  const markMemberMoney = async (lineId: string) => {
+    setSaving(true);
+    setError(null);
+    setActionNotice(null);
+    try {
+      const res = await fetch(`/api/statement-lines/${lineId}/member-money`, { method: "POST" });
+      const body = await res.json();
+      if (!res.ok) {
+        setError(body.error || "ระบุเป็นเงินสมาชิกไม่สำเร็จ");
+        return;
+      }
+      setActionNotice(
+        `ย้าย ${formatAmount(body.amount)} ไปอยู่ใน "เงินเข้าที่ไม่รู้ว่าใครโอน" แล้ว — ` +
+          'บันทึกเป็นรายการของสมาชิกได้ที่นั่น · ถ้าระบุผิด กด "ไม่ใช่เงินสมาชิก" ที่แถวนั้นเพื่อย้อนกลับ'
+      );
+      await fetchDay(from, to);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  // The way back, for a mark that turned out to be wrong. Refused by the route
+  // once a transaction has been filed against the line — that one is deleted
+  // at the รายการ tab first.
+  const unmarkMemberMoney = async (lineId: string) => {
+    setSaving(true);
+    setError(null);
+    setActionNotice(null);
+    try {
+      const res = await fetch(`/api/statement-lines/${lineId}/member-money`, { method: "DELETE" });
+      const body = await res.json();
+      if (!res.ok) {
+        setError(body.error || "ย้อนรายการไม่สำเร็จ");
+        return;
+      }
+      setActionNotice(
+        `ย้าย ${formatAmount(body.amount)} (${body.txnCode}) กลับไปอยู่ใน "รายการอื่นในบัญชี" แล้ว`
+      );
       await fetchDay(from, to);
     } finally {
       setSaving(false);
@@ -1007,6 +1055,7 @@ export default function DailyReconcilePanel() {
                 saving,
                 onBind: bindAccount,
                 onRecord: recordDeposit,
+                onUnmark: unmarkMemberMoney,
               }}
             />
           </Section>
@@ -1045,10 +1094,22 @@ export default function DailyReconcilePanel() {
               </button>
               <p className="text-xs text-slate-500 mt-1">
                 รายการที่ไม่ใช่สมาชิกโอนเข้ามา — เงินหน่วยงาน ฌาปนกิจ ค่าธรรมเนียม เงินโอนออก
-                ไม่นับในการเทียบด้านบน แต่แสดงไว้ให้เห็น
-                <strong>ถ้าเจอรหัสที่ควรจะนับเป็นเงินสมาชิก บอกได้ จะเพิ่มให้</strong>
+                ไม่นับในการเทียบด้านบน แต่แสดงไว้ให้เห็น ·{" "}
+                <strong>
+                  ถ้าเจอเงินเข้าที่จริงๆ แล้วเป็นของสมาชิก กด "เป็นเงินสมาชิก" ที่แถวนั้นได้เลย
+                </strong>{" "}
+                ไม่ต้องรอเพิ่มรหัส — ระบบจะย้ายไปอยู่ในกลุ่ม "เงินเข้าที่ไม่รู้ว่าใครโอน"
+                ให้บันทึกต่อ (ย้อนกลับได้ ถ้ายังไม่ได้บันทึกเป็นรายการ) ·
+                ถ้าเป็นรหัสที่เจอบ่อยและควรนับเป็นเงินสมาชิกทุกครั้ง บอกได้ จะเพิ่มให้ถาวร
               </p>
-              {showOther && <OtherTable lines={otherRows} showDate={from !== to} />}
+              {showOther && (
+                <OtherTable
+                  lines={otherRows}
+                  showDate={from !== to}
+                  onMark={markMemberMoney}
+                  saving={saving}
+                />
+              )}
             </div>
           )}
         </>
@@ -1278,6 +1339,9 @@ interface DepositActions {
   saving: boolean;
   onBind: (accountNumber: string) => void;
   onRecord: (depositId: string) => void;
+  // Only ever called for a line a person marked as member money themselves,
+  // which is also the only kind of row it is offered on.
+  onUnmark: (lineId: string) => void;
 }
 
 const DepositTable = ({
@@ -1360,6 +1424,19 @@ const DepositTable = ({
                     >
                       บันทึกรายการ
                     </button>
+                    {/* The way back out of a mark a person made by hand. Not
+                        offered on a line the bank's own code classified: that
+                        one is not anybody's decision to take back here. */}
+                    {deposit.channel === STAFF_CHANNEL && (
+                      <button
+                        onClick={() => actions.onUnmark(deposit.id)}
+                        disabled={actions.saving}
+                        className="text-slate-500 hover:underline disabled:opacity-40"
+                        title='ระบุผิด — ย้ายกลับไปเป็น "รายการอื่นในบัญชี" ตามรหัสของธนาคาร'
+                      >
+                        ไม่ใช่เงินสมาชิก
+                      </button>
+                    )}
                   </span>
                 </td>
               )}
@@ -1460,9 +1537,13 @@ const DepositTable = ({
 const OtherTable = ({
   lines,
   showDate = false,
+  onMark,
+  saving = false,
 }: {
   lines: DailyOtherLineRow[];
   showDate?: boolean;
+  onMark: (lineId: string) => void;
+  saving?: boolean;
 }) => (
   <div className="overflow-x-auto mt-2">
     <table className="w-full text-sm">
@@ -1473,6 +1554,7 @@ const OtherTable = ({
           <th className="px-2 py-1.5 font-semibold">รหัส</th>
           <th className="px-2 py-1.5 font-semibold">รายละเอียด</th>
           <th className="px-2 py-1.5 font-semibold">บัญชี</th>
+          <th className="px-2 py-1.5 font-semibold">ทำอะไรได้</th>
         </tr>
       </thead>
       <tbody>
@@ -1492,6 +1574,26 @@ const OtherTable = ({
               <StatementDetail description={line.description} />
             </td>
             <td className="px-2 py-1.5 text-slate-500 whitespace-nowrap">{line.branch}</td>
+            <td className="px-2 py-1.5 whitespace-nowrap">
+              {/* Only on money coming in. Nothing a person knows makes an
+                  outward transfer or a fee into a member's payment, so the
+                  button is not offered rather than offered and refused. */}
+              {line.amount > 0 ? (
+                <button
+                  onClick={() => onMark(line.id)}
+                  disabled={saving}
+                  className="text-xs text-slate-900 hover:underline disabled:opacity-40"
+                  title={
+                    "ระบุว่าเงินก้อนนี้เป็นสมาชิกโอนเข้ามา ทั้งที่รหัสธนาคารยังไม่รู้จัก — " +
+                    'ย้ายไปอยู่ใน "เงินเข้าที่ไม่รู้ว่าใครโอน" เพื่อบันทึกต่อ ยังไม่ได้บันทึกอะไรตอนนี้ และย้อนกลับได้'
+                  }
+                >
+                  เป็นเงินสมาชิก
+                </button>
+              ) : (
+                <span className="text-xs text-slate-300">—</span>
+              )}
+            </td>
           </tr>
         ))}
       </tbody>
