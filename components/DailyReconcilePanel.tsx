@@ -7,7 +7,7 @@ import {
   formatStatementTime,
   formatStatementTimeExact,
 } from "@/lib/format";
-import { CATEGORIES } from "@/lib/categories";
+import { STAFF_CATEGORIES, categoryNeedsDetail } from "@/lib/categories";
 import { accountCaveat, canBindAccount } from "@/lib/depositRecord";
 import { CHANNEL_LABELS, STAFF_CHANNEL } from "@/lib/statementLines";
 import { STATUS_LABELS } from "@/lib/statementDayView";
@@ -233,6 +233,9 @@ export default function DailyReconcilePanel() {
   // most numbers are in the roster and the name comes from there, so making
   // it required would tax every recording for the sake of the few.
   const [actMemberName, setActMemberName] = useState("");
+  // What an "อื่นๆ" payment was actually for. Required only for that one
+  // category, and written into the transaction's own description.
+  const [actNote, setActNote] = useState("");
   const [saving, setSaving] = useState(false);
   const [actionNotice, setActionNotice] = useState<string | null>(null);
 
@@ -289,6 +292,7 @@ export default function DailyReconcilePanel() {
     setActMemberNumber("");
     setActMemberName("");
     setActCategory("");
+    setActNote("");
   };
 
   // "That account is นาง X's" — a fact about an account, so it goes to the
@@ -343,6 +347,7 @@ export default function DailyReconcilePanel() {
           memberNumber: actMemberNumber.trim(),
           memberName: actMemberName.trim(),
           category: actCategory,
+          note: actNote.trim(),
         }),
       });
       const body = await res.json();
@@ -351,8 +356,11 @@ export default function DailyReconcilePanel() {
         return;
       }
       setActionNotice(
-        `บันทึก ${formatAmount(body.amount)} เป็น "${body.category}" ให้ ` +
-          `${body.memberNumber} ${body.memberFullName ?? ""} แล้ว` +
+        `บันทึก ${formatAmount(body.amount)} เป็น "${body.category}"` +
+          // For อื่นๆ the category alone does not say what was filed, so the
+          // confirmation repeats what the person wrote.
+          (actNote.trim() ? ` (${actNote.trim()})` : "") +
+          ` ให้ ${body.memberNumber} ${body.memberFullName ?? ""} แล้ว` +
           (body.inRoster ? "" : " — ⚠️ ไม่พบเลขสมาชิกนี้ในทะเบียนสมาชิก ตรวจสอบอีกครั้ง")
       );
       closeForm();
@@ -1052,6 +1060,8 @@ export default function DailyReconcilePanel() {
                 setMemberName: setActMemberName,
                 category: actCategory,
                 setCategory: setActCategory,
+                note: actNote,
+                setNote: setActNote,
                 saving,
                 onBind: bindAccount,
                 onRecord: recordDeposit,
@@ -1336,6 +1346,9 @@ interface DepositActions {
   setMemberName: (value: string) => void;
   category: string;
   setCategory: (value: string) => void;
+  // Free text, and the only thing that says what an อื่นๆ payment was for.
+  note: string;
+  setNote: (value: string) => void;
   saving: boolean;
   onBind: (accountNumber: string) => void;
   onRecord: (depositId: string) => void;
@@ -1405,6 +1418,7 @@ const DepositTable = ({
                           actions.setMemberNumber("");
                           actions.setMemberName("");
                           actions.setCategory("");
+                          actions.setNote("");
                         }}
                         className={`hover:underline ${caveat ? "text-amber-700" : "text-slate-900"}`}
                         title={caveat ?? "จำไว้ว่าเลขบัญชีนี้เป็นของสมาชิกคนนี้ ใช้ได้ทุกครั้งต่อไป"}
@@ -1418,6 +1432,7 @@ const DepositTable = ({
                         actions.setMemberNumber("");
                         actions.setMemberName("");
                         actions.setCategory("");
+                        actions.setNote("");
                       }}
                       className="text-slate-900 hover:underline"
                       title="บันทึกเงินก้อนนี้เป็นรายการของสมาชิก เหมือนที่สลิปทางไลน์ทำ"
@@ -1462,7 +1477,11 @@ const DepositTable = ({
                         if (e.key === "Enter" && actions.memberNumber.trim()) {
                           if (open === "bind" && deposit.senderAccount) {
                             actions.onBind(deposit.senderAccount);
-                          } else if (open === "record" && actions.category) {
+                          } else if (
+                            open === "record" &&
+                            actions.category &&
+                            !(categoryNeedsDetail(actions.category) && !actions.note.trim())
+                          ) {
                             actions.onRecord(deposit.id);
                           }
                         }
@@ -1487,12 +1506,25 @@ const DepositTable = ({
                           className="border border-slate-300 rounded px-2 py-1 bg-white"
                         >
                           <option value="">— เลือก —</option>
-                          {CATEGORIES.map((c) => (
+                          {STAFF_CATEGORIES.map((c) => (
                             <option key={c} value={c}>
                               {c}
                             </option>
                           ))}
                         </select>
+                        {/* อื่นๆ on its own says nothing, so it brings its own
+                            question with it rather than filing a transaction
+                            nobody can read back later. */}
+                        {categoryNeedsDetail(actions.category) && (
+                          <input
+                            value={actions.note}
+                            onChange={(e) => actions.setNote(e.target.value)}
+                            placeholder="ระบุว่าเป็นรายการอะไร"
+                            autoFocus
+                            title="เลือกอื่นๆ แล้วต้องเขียนด้วยว่าเงินก้อนนี้เป็นค่าอะไร ข้อความนี้จะไปอยู่ในรายละเอียดของรายการ"
+                            className="border border-amber-400 rounded px-2 py-1 w-56 bg-white"
+                          />
+                        )}
                       </>
                     )}
                     <button
@@ -1506,7 +1538,9 @@ const DepositTable = ({
                       disabled={
                         actions.saving ||
                         !actions.memberNumber.trim() ||
-                        (open === "record" && !actions.category)
+                        (open === "record" &&
+                          (!actions.category ||
+                            (categoryNeedsDetail(actions.category) && !actions.note.trim())))
                       }
                       className="px-3 py-1 rounded bg-slate-900 text-white disabled:opacity-40"
                     >
@@ -1522,7 +1556,7 @@ const DepositTable = ({
                   <p className="text-xs text-slate-500 mt-2">
                     {open === "bind"
                       ? "ผูกเลขบัญชีไว้กับสมาชิก — ไม่ได้บันทึกเงินก้อนนี้เป็นรายการ ถ้าต้องการบันทึกด้วย ให้กด \"บันทึกรายการ\" อีกที"
-                      : "ยอดและวันที่ใช้ตามที่ธนาคารบันทึกไว้ ไม่ต้องพิมพ์เอง · ชื่อใส่เฉพาะตอนที่เลขสมาชิกยังไม่มีในทะเบียน (ถ้ามีแล้วระบบใช้ชื่อจากทะเบียน) — ถ้าบันทึกผิด ลบได้ที่แท็บ \"รายการ\""}
+                      : "ยอดและวันที่ใช้ตามที่ธนาคารบันทึกไว้ ไม่ต้องพิมพ์เอง · ชื่อใส่เฉพาะตอนที่เลขสมาชิกยังไม่มีในทะเบียน (ถ้ามีแล้วระบบใช้ชื่อจากทะเบียน) · ถ้าไม่เข้าหมวดไหนเลย เลือก \"อื่นๆ\" แล้วเขียนว่าเป็นค่าอะไร — ถ้าบันทึกผิด ลบได้ที่แท็บ \"รายการ\""}
                   </p>
                 </td>
               </tr>

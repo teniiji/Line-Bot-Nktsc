@@ -24,7 +24,7 @@
 // they can be tested and so the route and the panel cannot drift on what
 // counts as a bindable account.
 
-import { CATEGORIES } from "./categories";
+import { categoryNeedsDetail, isStaffCategory } from "./categories";
 
 // Channels where the digits the statement shows are known to be the paying
 // account, and so mean something bound to a member. See MEMBER_CHANNELS in
@@ -73,12 +73,23 @@ export function canBindAccount(deposit: { senderAccount: string | null }): boole
 
 // Reasons a payment must not be recorded from a bank line. Kept here so the
 // route and the panel say the same thing.
-export function recordProblem(input: { memberNumber: string; category: string }): string | null {
+//
+// `note` is the free text staff typed. It is optional for the eleven
+// categories and required for อื่นๆ, which on its own says nothing about what
+// the money was — see staffCategoryProblem.
+export function recordProblem(input: {
+  memberNumber: string;
+  category: string;
+  note?: string;
+}): string | null {
   if (!input.memberNumber.trim()) {
     return "ต้องระบุเลขสมาชิกของคนที่โอนเงินก้อนนี้";
   }
-  if (!(CATEGORIES as readonly string[]).includes(input.category)) {
+  if (!isStaffCategory(input.category)) {
     return "ต้องเลือกว่าเงินก้อนนี้เป็นการชำระอะไร";
+  }
+  if (categoryNeedsDetail(input.category) && !(input.note ?? "").trim()) {
+    return 'เลือก "อื่นๆ" แล้วต้องระบุด้วยว่าเงินก้อนนี้เป็นรายการอะไร';
   }
   return null;
 }

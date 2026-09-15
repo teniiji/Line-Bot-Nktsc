@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { CATEGORIES } from "@/lib/categories";
+import { STAFF_CATEGORIES, categoryNeedsDetail, staffCategoryProblem } from "@/lib/categories";
 import { formatAmount, formatStatementDate, formatStatementTime } from "@/lib/format";
 import { CHANNEL_LABELS } from "@/lib/statementLines";
 import { cooperativeToday } from "@/lib/cooperativeClock";
@@ -57,7 +57,7 @@ export default function ExpenseForm({
   onCancelEdit,
 }: ExpenseFormProps) {
   const [amount, setAmount] = useState("");
-  const [category, setCategory] = useState<string>(CATEGORIES[0]);
+  const [category, setCategory] = useState<string>(STAFF_CATEGORIES[0]);
   const [description, setDescription] = useState("");
   const [date, setDate] = useState(todayIso());
   const [memberFullName, setMemberFullName] = useState("");
@@ -88,7 +88,7 @@ export default function ExpenseForm({
       setMemberNumber(editingExpense.memberNumber ?? "");
     } else {
       setAmount("");
-      setCategory(CATEGORIES[0]);
+      setCategory(STAFF_CATEGORIES[0]);
       setDescription("");
       setDate(todayIso());
       setMemberFullName("");
@@ -163,6 +163,14 @@ export default function ExpenseForm({
     }
     if (!date) {
       setError("กรุณาเลือกวันที่");
+      return;
+    }
+    // อื่นๆ says nothing on its own, so the detail field stops being optional
+    // the moment it is chosen. Checked here as well as in the route so the
+    // answer is asked for before the form is sent.
+    const categoryProblem = staffCategoryProblem(category, description);
+    if (categoryProblem) {
+      setError(categoryProblem);
       return;
     }
 
@@ -252,12 +260,17 @@ export default function ExpenseForm({
             onChange={(e) => setCategory(e.target.value)}
             className="w-full border border-slate-300 rounded px-3 py-2"
           >
-            {CATEGORIES.map((c) => (
+            {STAFF_CATEGORIES.map((c) => (
               <option key={c} value={c}>
                 {c}
               </option>
             ))}
           </select>
+          {categoryNeedsDetail(category) && (
+            <p className="text-xs text-amber-800 mt-1">
+              เขียนในช่อง "ระบุว่าทำอะไร" ด้านล่างด้วยว่าเป็นค่าอะไร
+            </p>
+          )}
         </div>
       </div>
 
@@ -368,15 +381,30 @@ export default function ExpenseForm({
       )}
 
       <div>
+        {/* The same field either way — what changes is whether the
+            transaction can be read back without it. Under อื่นๆ it is the
+            only thing that says what the money was. */}
         <label className="block text-sm text-slate-600 mb-1">
-          รายละเอียด (ไม่บังคับ)
+          {categoryNeedsDetail(category) ? (
+            <>
+              ระบุว่าทำอะไร <span className="text-amber-700">(ต้องกรอก)</span>
+            </>
+          ) : (
+            "รายละเอียด (ไม่บังคับ)"
+          )}
         </label>
         <input
           type="text"
           value={description}
           onChange={(e) => setDescription(e.target.value)}
-          className="w-full border border-slate-300 rounded px-3 py-2"
-          placeholder="เช่น ชำระผ่านเคาน์เตอร์สำนักงาน"
+          className={`w-full border rounded px-3 py-2 ${
+            categoryNeedsDetail(category) ? "border-amber-400" : "border-slate-300"
+          }`}
+          placeholder={
+            categoryNeedsDetail(category)
+              ? "เช่น ค่าปรับผิดนัดชำระ, ค่าธรรมเนียมออกเอกสาร"
+              : "เช่น ชำระผ่านเคาน์เตอร์สำนักงาน"
+          }
         />
       </div>
 
