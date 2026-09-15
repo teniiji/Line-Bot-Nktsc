@@ -69,8 +69,28 @@ describe("recordProblem", () => {
   it("refuses a category that is not one of the cooperative's", () => {
     // The category decides which department gets told about the payment, so
     // an invented one would file money nobody is watching for.
-    expect(recordProblem({ memberNumber: "29252", category: "อื่นๆ" })).not.toBeNull();
+    expect(recordProblem({ memberNumber: "29252", category: "ค่ากาแฟ" })).not.toBeNull();
     expect(recordProblem({ memberNumber: "29252", category: "" })).not.toBeNull();
+  });
+
+  it("takes อื่นๆ, but only with a note saying what it was", () => {
+    // The escape hatch for money that is none of the eleven. Left blank it
+    // files a transaction nobody can read back, which is the one outcome
+    // worse than not having the category at all.
+    expect(
+      recordProblem({ memberNumber: "29252", category: "อื่นๆ", note: "ค่าปรับผิดนัด" })
+    ).toBeNull();
+    expect(recordProblem({ memberNumber: "29252", category: "อื่นๆ", note: "  " })).toContain(
+      "ระบุ"
+    );
+    expect(recordProblem({ memberNumber: "29252", category: "อื่นๆ" })).not.toBeNull();
+  });
+
+  it("still lets the eleven be recorded with no note at all", () => {
+    // Requiring a note everywhere would tax every ordinary recording for the
+    // sake of the rare one.
+    expect(recordProblem({ memberNumber: "29252", category: "ฝากเงิน" })).toBeNull();
+    expect(recordProblem({ memberNumber: "29252", category: "ฝากเงิน", note: "" })).toBeNull();
   });
 });
 

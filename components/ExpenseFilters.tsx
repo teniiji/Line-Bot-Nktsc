@@ -1,6 +1,6 @@
 "use client";
 
-import { CATEGORIES } from "@/lib/categories";
+import { STAFF_CATEGORIES } from "@/lib/categories";
 import DateField from "@/components/DateField";
 import {
   cooperativeToday,
@@ -108,7 +108,7 @@ export default function ExpenseFilters({
             className="w-full sm:w-auto border border-slate-300 rounded px-3 py-2"
           >
             <option value="All">ทั้งหมด</option>
-            {CATEGORIES.map((c) => (
+            {STAFF_CATEGORIES.map((c) => (
               <option key={c} value={c}>
                 {c}
               </option>

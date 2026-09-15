@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { statedMemberNumber } from "@/lib/memberIdentity";
-import { CATEGORIES } from "@/lib/categories";
+import { staffCategoryProblem } from "@/lib/categories";
 import { buildExpenseWhere } from "@/lib/expenseFilters";
 
 const DEFAULT_PAGE_SIZE = 10;
@@ -89,11 +89,15 @@ export async function POST(request: NextRequest) {
       { status: 400 }
     );
   }
-  if (
-    typeof category !== "string" ||
-    !CATEGORIES.includes(category as (typeof CATEGORIES)[number])
-  ) {
-    return NextResponse.json({ error: "หมวดหมู่ไม่ถูกต้อง" }, { status: 400 });
+  // Staff may also file อื่นๆ, which the bot may not — and which has to say
+  // what the payment was for, since the label itself says nothing. See
+  // lib/categories.ts.
+  const categoryProblem = staffCategoryProblem(
+    typeof category === "string" ? category : "",
+    typeof description === "string" ? description : ""
+  );
+  if (categoryProblem) {
+    return NextResponse.json({ error: categoryProblem }, { status: 400 });
   }
   if (!date || isNaN(Date.parse(date))) {
     return NextResponse.json({ error: "วันที่ไม่ถูกต้อง" }, { status: 400 });

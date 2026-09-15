@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { statedMemberNumber } from "@/lib/memberIdentity";
-import { CATEGORIES } from "@/lib/categories";
+import { staffCategoryProblem } from "@/lib/categories";
 
 export async function PUT(
   request: NextRequest,
@@ -17,11 +17,15 @@ export async function PUT(
       { status: 400 }
     );
   }
-  if (
-    typeof category !== "string" ||
-    !CATEGORIES.includes(category as (typeof CATEGORIES)[number])
-  ) {
-    return NextResponse.json({ error: "หมวดหมู่ไม่ถูกต้อง" }, { status: 400 });
+  // Same rule as creating one: อื่นๆ is staff-only and has to say what the
+  // payment was for. Editing a transaction into อื่นๆ and leaving the detail
+  // blank would lose the answer just as thoroughly as filing it that way.
+  const categoryProblem = staffCategoryProblem(
+    typeof category === "string" ? category : "",
+    typeof description === "string" ? description : ""
+  );
+  if (categoryProblem) {
+    return NextResponse.json({ error: categoryProblem }, { status: 400 });
   }
   if (!date || isNaN(Date.parse(date))) {
     return NextResponse.json({ error: "วันที่ไม่ถูกต้อง" }, { status: 400 });

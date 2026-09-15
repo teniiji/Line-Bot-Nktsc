@@ -37,7 +37,7 @@ export async function POST(
   // deposit got stuck in the review queue with nothing to click.
   const statedName = String(body.memberName ?? "").trim() || null;
 
-  const problem = recordProblem({ memberNumber, category });
+  const problem = recordProblem({ memberNumber, category, note: note ?? "" });
   if (problem) {
     return NextResponse.json({ error: problem }, { status: 400 });
   }
