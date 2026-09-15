@@ -17,6 +17,12 @@ import { dayTally, flowByAccount, flowTotal, inByCategory } from "@/lib/statemen
 import { bankFromDescription } from "@/lib/thaiBanks";
 import { cooperativeToday, shiftDay } from "@/lib/cooperativeClock";
 import { describeDeductionHint } from "@/lib/deductionMatch";
+import {
+  SECTION_OPEN_BY_DEFAULT,
+  allSections,
+  sectionOpen,
+  type SectionKey,
+} from "@/lib/dailySections";
 import PanelHelp from "@/components/PanelHelp";
 import DateField from "@/components/DateField";
 import {
@@ -211,10 +217,10 @@ export default function DailyReconcilePanel() {
   const [data, setData] = useState<DailyReconcileResult | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [showOther, setShowOther] = useState(false);
-  const [showStatement, setShowStatement] = useState(false);
-  const [showReport, setShowReport] = useState(false);
-  const [showKnown, setShowKnown] = useState(false);
+  // What this person has clicked open or shut. Empty until they touch a
+  // section, which is what lets the defaults and the search rule apply — see
+  // lib/dailySections.ts.
+  const [clicked, setClicked] = useState<Partial<Record<SectionKey, boolean>>>({});
   // Uploading right here rather than sending staff to the round tab: checking
   // one day's money has nothing to do with the month-end round.
   const [account, setAccount] = useState("413");
@@ -256,6 +262,15 @@ export default function DailyReconcilePanel() {
   useEffect(() => {
     fetchDay(from, to);
   }, [from, to, fetchDay]);
+
+  // A new search makes every section a different list, so what was folded
+  // about the old one stops meaning anything. Without this, ย่อทั้งหมด
+  // followed by a search left the hits hidden behind seven closed headers —
+  // the counts updated, the rows did not appear, and the page read as though
+  // the box had found nothing.
+  useEffect(() => {
+    setClicked({});
+  }, [search]);
 
   const uploadStatement = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -488,6 +503,17 @@ export default function DailyReconcilePanel() {
   const tally = dayTally(statementRows);
   const narrowed = branch !== "" || searching;
 
+  // Whether each section is showing its rows, and the one click that changes
+  // it. The rows a search found are what let a folded section open itself —
+  // see sectionOpen for the trap that avoids.
+  const isOpen = (key: SectionKey, matches = 0) =>
+    sectionOpen(
+      { clicked: clicked[key], searching, matches },
+      SECTION_OPEN_BY_DEFAULT[key]
+    );
+  const toggle = (key: SectionKey, matches = 0) =>
+    setClicked((prev) => ({ ...prev, [key]: !isOpen(key, matches) }));
+
   return (
     <section className="bg-white rounded-lg border border-slate-200">
       <div className="px-4 py-3 border-b border-slate-100">
@@ -685,6 +711,25 @@ export default function DailyReconcilePanel() {
                 {searching ? "ที่ค้นหา" : ""})
               </span>
             )}
+            {/* Seven sections is too many to fold one at a time when the
+                answer is "show me everything" or "get all of it out of the
+                way". Pushed to the right so it reads as a control over the
+                page rather than as part of the day's figures. */}
+            <span className="ml-auto flex items-center gap-2 text-xs">
+              <button
+                onClick={() => setClicked(allSections(true))}
+                className="text-slate-500 hover:underline"
+              >
+                ขยายทั้งหมด
+              </button>
+              <span className="text-slate-300">·</span>
+              <button
+                onClick={() => setClicked(allSections(false))}
+                className="text-slate-500 hover:underline"
+              >
+                ย่อทั้งหมด
+              </button>
+            </span>
           </div>
 
           {/* One account in the range is not a reason to say nothing. It
@@ -772,12 +817,13 @@ export default function DailyReconcilePanel() {
           <div className="px-4 py-3 border-t border-slate-100 print-report">
             <div className="flex flex-wrap items-center gap-3">
               <button
-                onClick={() => setShowReport((v) => !v)}
+                onClick={() => toggle("report")}
+                aria-expanded={isOpen("report")}
                 className="text-sm text-slate-700 hover:underline font-medium no-print"
               >
-                {showReport ? "▾" : "▸"} 🧾 สรุปยอดเงินเข้า-เงินออก
+                {isOpen("report") ? "▾" : "▸"} 🧾 สรุปยอดเงินเข้า-เงินออก
               </button>
-              {showReport && (
+              {isOpen("report") && (
                 <button
                   onClick={() => window.print()}
                   className="text-xs border border-slate-300 rounded-md px-2 py-1 hover:bg-slate-50 no-print"
@@ -787,7 +833,7 @@ export default function DailyReconcilePanel() {
               )}
             </div>
 
-            {showReport && (
+            {isOpen("report") && (
               <div className="mt-3">
                 {/* Only on paper: on screen the date and the account are in
                     the boxes above, but a printed page has to say what it is
@@ -925,10 +971,11 @@ export default function DailyReconcilePanel() {
               collapsed, cannot answer it. */}
           <div className="px-4 py-3 border-t border-slate-100">
             <button
-              onClick={() => setShowStatement((v) => !v)}
+              onClick={() => toggle("statement", statementRows.length)}
+              aria-expanded={isOpen("statement", statementRows.length)}
               className="text-sm text-slate-700 hover:underline font-medium"
             >
-              {showStatement ? "▾" : "▸"} 📄 รายการทั้งหมดในสเตทเมนต์
+              {isOpen("statement", statementRows.length) ? "▾" : "▸"} 📄 รายการทั้งหมดในสเตทเมนต์
               {from === to ? "วันนี้" : "ช่วงนี้"} (
               {countLabel(statementRows.length, data.statement.length, "รายการ")})
             </button>
@@ -941,7 +988,7 @@ export default function DailyReconcilePanel() {
               </strong>{" "}
               (กลุ่มด้านล่างแบ่งตามข้อสรุป บางกลุ่มพับไว้ เลยดูเหมือนมีน้อยกว่าความเป็นจริง)
             </p>
-            {showStatement &&
+            {isOpen("statement", statementRows.length) &&
               /* Said plainly rather than shown as an empty table: "no results"
                  and "nothing in the file" look identical otherwise, and only
                  one of them is fixed by clearing the box. */
@@ -962,9 +1009,12 @@ export default function DailyReconcilePanel() {
             tone="text-green-800"
             note={
               "เงินเข้าและสลิปคู่กันได้ — ไม่ต้องทำอะไร · " +
-              'กด "ดูสลิป" เพื่อตรวจคู่ที่ยังไม่แน่ใจได้ โดยเฉพาะแถวที่จับคู่จาก "ยอดตรงเท่านั้น"'
+              'กด "ดูสลิป" เพื่อตรวจคู่ที่ยังไม่แน่ใจได้ โดยเฉพาะแถวที่จับคู่จาก "ยอดตรงเท่านั้น"' +
+              " · พับไว้ให้เพราะกลุ่มนี้ไม่มีอะไรต้องทำและมักยาวที่สุดในหน้า"
             }
             empty={matchedRows.length === 0}
+            open={isOpen("matched", matchedRows.length)}
+            onToggle={() => toggle("matched", matchedRows.length)}
           >
             <table className="w-full text-sm">
               <thead className="text-slate-500 text-left text-xs uppercase tracking-wide">
@@ -1024,6 +1074,8 @@ export default function DailyReconcilePanel() {
             tone="text-red-700"
             note="สมาชิกส่งสลิปมาแต่หาเงินก้อนที่ตรงกันในบัญชีไม่เจอ — อาจโอนเข้าบัญชีอื่น สลิปซ้ำ หรือสลิปไม่จริง ควรตรวจก่อน"
             empty={data.slipsWithoutMoney.length === 0}
+            open={isOpen("slipsWithoutMoney", unmatchedSlips.length)}
+            onToggle={() => toggle("slipsWithoutMoney", unmatchedSlips.length)}
           >
             <SlipTable slips={unmatchedSlips} />
           </Section>
@@ -1047,6 +1099,8 @@ export default function DailyReconcilePanel() {
               '"บันทึกรายการ" = ลงเป็นรายการของสมาชิกเหมือนสลิปที่ส่งทางไลน์'
             }
             empty={unknownPayer.length === 0}
+            open={isOpen("unknownPayer", unknownRows.length)}
+            onToggle={() => toggle("unknownPayer", unknownRows.length)}
           >
             <DepositTable
               deposits={unknownRows}
@@ -1071,56 +1125,46 @@ export default function DailyReconcilePanel() {
           </Section>
 
           {knownPayer.length > 0 && (
-            <div className="px-4 py-3 border-t border-slate-100">
-              <button
-                onClick={() => setShowKnown((v) => !v)}
-                className="text-sm text-slate-600 hover:underline"
-              >
-                {showKnown ? "▾" : "▸"} เงินเข้าที่รู้ว่าใครโอน แต่ไม่ได้ส่งสลิป (
-                {countLabel(knownRows.length, knownPayer.length, "รายการ")})
-              </button>
-              <p className="text-xs text-slate-500 mt-1">
-                รู้เจ้าของจากเลขบัญชีแล้ว แค่ไม่ได้ส่งสลิปเข้าบอท —
-                ปกติเป็นการจ่ายค่าหักไม่ได้ที่แท็บ "เทียบ Statement" จับคู่ให้อยู่แล้ว
-                ไม่ต้องทำอะไรเพิ่ม
-              </p>
-              {showKnown && (
-                <div className="overflow-x-auto mt-2">
-                  <DepositTable deposits={knownRows} showDate={from !== to} />
-                </div>
-              )}
-            </div>
+            <Section
+              title={`เงินเข้าที่รู้ว่าใครโอน แต่ไม่ได้ส่งสลิป (${countLabel(
+                knownRows.length,
+                knownPayer.length,
+                "รายการ"
+              )})`}
+              tone="text-slate-600"
+              note={
+                'รู้เจ้าของจากเลขบัญชีแล้ว แค่ไม่ได้ส่งสลิปเข้าบอท — ปกติเป็นการจ่ายค่าหักไม่ได้ที่แท็บ "เทียบ Statement" จับคู่ให้อยู่แล้ว ไม่ต้องทำอะไรเพิ่ม'
+              }
+              empty={false}
+              open={isOpen("knownPayer", knownRows.length)}
+              onToggle={() => toggle("knownPayer", knownRows.length)}
+            >
+              <DepositTable deposits={knownRows} showDate={from !== to} />
+            </Section>
           )}
 
           {data.otherLines.length > 0 && (
-            <div className="px-4 py-3 border-t border-slate-100">
-              <button
-                onClick={() => setShowOther((v) => !v)}
-                className="text-sm text-slate-600 hover:underline"
-              >
-                {showOther ? "▾" : "▸"} รายการอื่นในบัญชี
-                {from === to ? "วันนี้" : "ช่วงนี้"} (
-                {countLabel(otherRows.length, data.otherLines.length, "รายการ")})
-              </button>
-              <p className="text-xs text-slate-500 mt-1">
-                รายการที่ไม่ใช่สมาชิกโอนเข้ามา — เงินหน่วยงาน ฌาปนกิจ ค่าธรรมเนียม เงินโอนออก
-                ไม่นับในการเทียบด้านบน แต่แสดงไว้ให้เห็น ·{" "}
-                <strong>
-                  ถ้าเจอเงินเข้าที่จริงๆ แล้วเป็นของสมาชิก กด "เป็นเงินสมาชิก" ที่แถวนั้นได้เลย
-                </strong>{" "}
-                ไม่ต้องรอเพิ่มรหัส — ระบบจะย้ายไปอยู่ในกลุ่ม "เงินเข้าที่ไม่รู้ว่าใครโอน"
-                ให้บันทึกต่อ (ย้อนกลับได้ ถ้ายังไม่ได้บันทึกเป็นรายการ) ·
-                ถ้าเป็นรหัสที่เจอบ่อยและควรนับเป็นเงินสมาชิกทุกครั้ง บอกได้ จะเพิ่มให้ถาวร
-              </p>
-              {showOther && (
-                <OtherTable
-                  lines={otherRows}
-                  showDate={from !== to}
-                  onMark={markMemberMoney}
-                  saving={saving}
-                />
-              )}
-            </div>
+            <Section
+              title={`รายการอื่นในบัญชี${from === to ? "วันนี้" : "ช่วงนี้"} (${countLabel(
+                otherRows.length,
+                data.otherLines.length,
+                "รายการ"
+              )})`}
+              tone="text-slate-600"
+              note={
+                'รายการที่ไม่ใช่สมาชิกโอนเข้ามา — เงินหน่วยงาน ฌาปนกิจ ค่าธรรมเนียม เงินโอนออก ไม่นับในการเทียบด้านบน แต่แสดงไว้ให้เห็น · ถ้าเจอเงินเข้าที่จริงๆ แล้วเป็นของสมาชิก กด "เป็นเงินสมาชิก" ที่แถวนั้นได้เลย ไม่ต้องรอเพิ่มรหัส — ระบบจะย้ายไปอยู่ในกลุ่ม "เงินเข้าที่ไม่รู้ว่าใครโอน" ให้บันทึกต่อ (ย้อนกลับได้ ถ้ายังไม่ได้บันทึกเป็นรายการ) · ถ้าเป็นรหัสที่เจอบ่อยและควรนับเป็นเงินสมาชิกทุกครั้ง บอกได้ จะเพิ่มให้ถาวร'
+              }
+              empty={false}
+              open={isOpen("otherLines", otherRows.length)}
+              onToggle={() => toggle("otherLines", otherRows.length)}
+            >
+              <OtherTable
+                lines={otherRows}
+                showDate={from !== to}
+                onMark={markMemberMoney}
+                saving={saving}
+              />
+            </Section>
           )}
         </>
       )}
@@ -1266,26 +1310,48 @@ const StatementTable = ({
   </table>
 );
 
+// One finding, folded or not. The heading is the control: a whole page of
+// stacked tables is only navigable if every one of them can be got out of the
+// way, and the count stays on the header so a folded section still says how
+// much is inside it.
+//
+// An empty section has nothing to fold, so it does not pretend to — the
+// triangle would be a control that does nothing, and "— ไม่มี —" is already
+// the whole answer.
 const Section = ({
   title,
   tone,
   note,
   empty,
+  open,
+  onToggle,
   children,
 }: {
   title: string;
   tone: string;
   note: string;
   empty: boolean;
+  open: boolean;
+  onToggle: () => void;
   children: React.ReactNode;
 }) => (
   <div className="px-4 py-3 border-t border-slate-100">
-    <h3 className={`text-sm font-semibold ${tone}`}>{title}</h3>
+    {empty ? (
+      <h3 className={`text-sm font-semibold ${tone}`}>{title}</h3>
+    ) : (
+      <button
+        onClick={onToggle}
+        aria-expanded={open}
+        className={`text-sm font-semibold text-left hover:underline ${tone}`}
+      >
+        {open ? "▾" : "▸"} {title}
+      </button>
+    )}
     <p className="text-xs text-slate-500 mt-1">{note}</p>
     {empty ? (
       <p className="text-sm text-slate-400 py-3">— ไม่มี —</p>
     ) : (
-      <div className="overflow-x-auto mt-2">{children}</div>
+      open && <div className="overflow-x-auto mt-2">{children}</div>
     )}
   </div>
 );
@@ -1579,8 +1645,9 @@ const OtherTable = ({
   onMark: (lineId: string) => void;
   saving?: boolean;
 }) => (
-  <div className="overflow-x-auto mt-2">
-    <table className="w-full text-sm">
+  /* No scroll wrapper of its own: Section provides one, and nesting two
+     makes the horizontal scroll fight itself. */
+  <table className="w-full text-sm">
       <thead className="text-slate-500 text-left text-xs uppercase tracking-wide">
         <tr>
           <th className="px-2 py-1.5 font-semibold">{showDate ? "วันที่ / เวลา" : "เวลา"}</th>
@@ -1630,7 +1697,6 @@ const OtherTable = ({
             </td>
           </tr>
         ))}
-      </tbody>
-    </table>
-  </div>
+    </tbody>
+  </table>
 );
