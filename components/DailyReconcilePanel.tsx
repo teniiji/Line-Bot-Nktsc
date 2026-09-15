@@ -17,6 +17,7 @@ import { dayTally, flowByAccount, flowTotal, inByCategory } from "@/lib/statemen
 import { bankFromDescription } from "@/lib/thaiBanks";
 import { cooperativeToday, shiftDay } from "@/lib/cooperativeClock";
 import { describeDeductionHint } from "@/lib/deductionMatch";
+import { overlapsAnotherAccount, type StatementUpload } from "@/lib/statementUploads";
 import {
   SECTION_OPEN_BY_DEFAULT,
   allSections,
@@ -226,6 +227,10 @@ export default function DailyReconcilePanel() {
   const [account, setAccount] = useState("413");
   const [uploading, setUploading] = useState(false);
   const [uploadNotice, setUploadNotice] = useState<string | null>(null);
+  // What has been loaded, and the way to take one back out. Null until asked
+  // for: most visits never need it.
+  const [showUploads, setShowUploads] = useState(false);
+  const [uploads, setUploads] = useState<StatementUpload[] | null>(null);
   // Which unclaimed deposit has its form open, and which of the two answers
   // it is being given. Only one at a time — the work is one payment, one
   // phone call.
@@ -307,6 +312,42 @@ export default function DailyReconcilePanel() {
       await fetchDay(from, to);
     } finally {
       setUploading(false);
+    }
+  };
+
+  const fetchUploads = useCallback(async () => {
+    setUploads(null);
+    const res = await fetch("/api/statement-lines/uploads");
+    const body = await res.json();
+    setUploads(res.ok ? body.uploads : []);
+  }, []);
+
+  // Taking one back out. Refused by the route while a transaction is filed
+  // against any of its lines, which is the one case where deleting would take
+  // somebody's payment down with it.
+  const removeUpload = async (upload: StatementUpload) => {
+    setSaving(true);
+    setError(null);
+    setUploadNotice(null);
+    try {
+      const res = await fetch("/api/statement-lines/uploads", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ account: upload.account, sourceFile: upload.sourceFile }),
+      });
+      const body = await res.json();
+      if (!res.ok) {
+        setError(body.error || "ลบไฟล์ไม่สำเร็จ");
+        return;
+      }
+      setUploadNotice(
+        `ลบ ${body.removed} บรรทัดของไฟล์ ${upload.sourceFile ?? "(ไม่ทราบชื่อไฟล์)"} ` +
+          `ออกจากบัญชี ${upload.account} ${upload.branch} แล้ว`
+      );
+      await fetchUploads();
+      await fetchDay(from, to);
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -714,9 +755,96 @@ export default function DailyReconcilePanel() {
           />
         </label>
         <span className="text-xs text-slate-400">
-          อัปทับไฟล์เดิมได้ ไม่นับเงินซ้ำ · อัปกี่วันก็ได้ในไฟล์เดียว
+          อัปทับไฟล์เดิมได้ ไม่นับเงินซ้ำ · อัปกี่วันก็ได้ในไฟล์เดียว ·{" "}
+          <strong className="text-amber-700">เลือกบัญชีให้ตรงกับไฟล์</strong>
         </span>
+        <button
+          onClick={() => {
+            setShowUploads((v) => !v);
+            if (!showUploads) fetchUploads();
+          }}
+          className="ml-auto text-xs text-slate-500 hover:underline"
+        >
+          {showUploads ? "▾" : "▸"} ไฟล์ Statement ที่อัปไว้
+        </button>
       </div>
+
+      {/* The one action on this page that repeating cannot undo, so the only
+          one that needs a list and a way out. See lib/statementUploads.ts. */}
+      {showUploads && (
+        <div className="px-4 py-3 border-b border-slate-100 bg-slate-50">
+          <p className="text-xs text-slate-500 mb-2">
+            ทุกไฟล์ที่เคยอัปไว้ แยกตามบัญชี — ลบได้ถ้าอัปผิดบัญชี
+            (ลบเฉพาะบรรทัดในไฟล์นั้น ไม่กระทบไฟล์อื่น) ·
+            ถ้ามีรายการที่บันทึกไว้จากบรรทัดในไฟล์ ระบบจะไม่ยอมลบจนกว่าจะลบรายการนั้นก่อน
+          </p>
+          {uploads === null ? (
+            <p className="text-sm text-slate-400">กำลังโหลด…</p>
+          ) : uploads.length === 0 ? (
+            <p className="text-sm text-slate-400">— ยังไม่มีไฟล์ —</p>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead className="text-slate-500 text-left text-xs uppercase tracking-wide">
+                  <tr>
+                    <th className="px-2 py-1.5 font-semibold">บัญชี</th>
+                    <th className="px-2 py-1.5 font-semibold">ไฟล์</th>
+                    <th className="px-2 py-1.5 font-semibold">ช่วงวันที่</th>
+                    <th className="px-2 py-1.5 font-semibold text-right">บรรทัด</th>
+                    <th className="px-2 py-1.5 font-semibold"></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {uploads.map((upload) => {
+                    const twin = overlapsAnotherAccount(upload, uploads);
+                    return (
+                      <tr
+                        key={`${upload.account}-${upload.sourceFile ?? ""}`}
+                        className={`border-t border-slate-200 ${twin ? "bg-amber-50" : ""}`}
+                      >
+                        <td className="px-2 py-1.5 whitespace-nowrap">
+                          <span className="num">{upload.account}</span> {upload.branch}
+                        </td>
+                        <td className="px-2 py-1.5">
+                          {upload.sourceFile ?? (
+                            <span className="text-slate-400">(ไม่ทราบชื่อไฟล์)</span>
+                          )}
+                          {/* Two accounts holding the same number of lines
+                              over the same days is what one file loaded
+                              twice looks like from here. */}
+                          {twin && (
+                            <span
+                              className="text-amber-800 text-xs"
+                              title="อีกบัญชีหนึ่งมีไฟล์ที่ครอบคลุมวันเดียวกันและจำนวนบรรทัดเท่ากันพอดี — น่าจะเป็นไฟล์เดียวกันที่อัปผิดบัญชี ตรวจสอบก่อนลบ"
+                            >
+                              {" "}
+                              ⚠️ ซ้ำกับอีกบัญชี
+                            </span>
+                          )}
+                        </td>
+                        <td className="px-2 py-1.5 whitespace-nowrap text-slate-500">
+                          {formatStatementDate(upload.from)}
+                          {upload.from !== upload.to && ` – ${formatStatementDate(upload.to)}`}
+                        </td>
+                        <td className="px-2 py-1.5 num text-right">{upload.lines}</td>
+                        <td className="px-2 py-1.5 whitespace-nowrap text-right">
+                          <button
+                            onClick={() => removeUpload(upload)}
+                            disabled={saving}
+                            className="text-xs text-red-700 hover:underline disabled:opacity-40"
+                          >
+                            ลบไฟล์นี้
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
 
       {uploadNotice && (
         <p className="px-4 py-2 text-sm text-green-700 bg-green-50">{uploadNotice}</p>

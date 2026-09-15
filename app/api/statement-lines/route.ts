@@ -3,6 +3,8 @@ import { prisma } from "@/lib/prisma";
 import { checkUploadedFile, describeReadError, readFirstSheetRows } from "@/lib/excelUpload";
 import { STATEMENT_ACCOUNTS } from "@/lib/statementReconcile";
 import { storeStatementLines } from "@/lib/statementLineStore";
+import { parseStatementLines, statementLineIdentity } from "@/lib/statementLines";
+import { mixedUpWith, mixupError } from "@/lib/statementAccountMixup";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -50,6 +52,43 @@ export async function POST(request: NextRequest) {
     rows = await readFirstSheetRows(checked.file);
   } catch (err) {
     return NextResponse.json({ error: describeReadError(err) }, { status: 400 });
+  }
+
+  // Before writing anything: is this file already here under a different
+  // account? That is what picking the wrong one out of the dropdown looks
+  // like, and nothing else looks like it — see lib/statementAccountMixup.ts.
+  const parsed = parseStatementLines(rows);
+  const others = Object.keys(STATEMENT_ACCOUNTS).filter((a) => a !== account);
+  if (parsed.length > 0 && others.length > 0) {
+    const identities = parsed.map(statementLineIdentity);
+    const elsewhere = await prisma.statementLine.findMany({
+      where: {
+        account: { in: others },
+        fingerprint: {
+          in: others.flatMap((a) => identities.map((id) => `${a}|${id}`)),
+        },
+      },
+      select: { account: true },
+    });
+
+    const byAccount = new Map<string, number>();
+    for (const row of elsewhere) {
+      byAccount.set(row.account, (byAccount.get(row.account) ?? 0) + 1);
+    }
+    const mixup = mixedUpWith(
+      parsed.length,
+      [...byAccount].map(([a, lines]) => ({
+        account: a,
+        branch: STATEMENT_ACCOUNTS[a] ?? a,
+        lines,
+      }))
+    );
+    if (mixup) {
+      return NextResponse.json(
+        { error: mixupError({ account, branch }, mixup, parsed.length) },
+        { status: 409 }
+      );
+    }
   }
 
   const stored = await storeStatementLines(rows, account, branch, checked.file.name);
