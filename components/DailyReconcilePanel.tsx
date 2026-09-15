@@ -244,6 +244,14 @@ export default function DailyReconcilePanel() {
   const [actNote, setActNote] = useState("");
   const [saving, setSaving] = useState(false);
   const [actionNotice, setActionNotice] = useState<string | null>(null);
+  // Offered after a recording, when the line's account is plainly the payer's
+  // and nothing had claimed it — one click to make the next transfer from it
+  // recognise itself.
+  const [bindOffer, setBindOffer] = useState<{
+    accountNumber: string;
+    memberNumber: string;
+    memberName: string | null;
+  } | null>(null);
 
   const fetchDay = useCallback(async (start: string, end: string) => {
     setLoading(true);
@@ -315,6 +323,7 @@ export default function DailyReconcilePanel() {
   // blank on purpose — a category defaulted for somebody is a category
   // nobody chose.
   const openForm = (target: ActingTarget, memberNumber: string | null = null) => {
+    setBindOffer(null);
     setActing(target);
     setActMemberNumber(memberNumber ?? "");
     setActMemberName("");
@@ -327,17 +336,18 @@ export default function DailyReconcilePanel() {
   // combined with recording the payment: the same call often answers only one
   // of the two, and pretending otherwise would file a transaction nobody
   // asked for.
-  const bindAccount = async (accountNumber: string) => {
+  const bindAccount = async (accountNumber: string, memberNumber = actMemberNumber) => {
     setSaving(true);
     setError(null);
     setActionNotice(null);
+    setBindOffer(null);
     try {
       const res = await fetch("/api/member-bank-accounts", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           accountNumber,
-          memberNumber: actMemberNumber.trim(),
+          memberNumber: memberNumber.trim(),
           note: "ระบุจากหน้าเงินเข้าประจำวัน",
         }),
       });
@@ -390,6 +400,23 @@ export default function DailyReconcilePanel() {
           ` ให้ ${body.memberNumber} ${body.memberFullName ?? ""} แล้ว` +
           (body.inRoster ? "" : " — ⚠️ ไม่พบเลขสมาชิกนี้ในทะเบียนสมาชิก ตรวจสอบอีกครั้ง")
       );
+
+      // Recording says what this one payment was. It does not teach the
+      // system whose account the money came from — which is why the same
+      // member's next transfer arrives as money nobody can name, and why
+      // "เหมือนเคยบันทึกสมาชิกแล้วแต่ไม่ขึ้นสมาชิก" is the reasonable thing
+      // to conclude. So when the line carries an account that is plainly the
+      // payer's and nothing has claimed it yet, the offer is made here, once,
+      // with the number already known.
+      const line = (data?.statement ?? []).find((row) => row.id === depositId);
+      if (line?.senderAccount && !line.memberNumber && !accountCaveat(line)) {
+        setBindOffer({
+          accountNumber: line.senderAccount,
+          memberNumber: body.memberNumber,
+          memberName: body.memberFullName ?? null,
+        });
+      }
+
       closeForm();
       await fetchDay(from, to);
     } finally {
@@ -697,6 +724,32 @@ export default function DailyReconcilePanel() {
 
       {actionNotice && (
         <p className="px-4 py-2 text-sm text-green-700 bg-green-50">{actionNotice}</p>
+      )}
+
+      {/* The half a recording does not do. Said here rather than left to be
+          discovered when the same account arrives again as money nobody can
+          name. */}
+      {bindOffer && (
+        <p className="px-4 py-2 text-sm bg-sky-50 text-sky-900 flex flex-wrap items-center gap-2">
+          <span>
+            เลขบัญชี <strong className="num">{bindOffer.accountNumber}</strong>{" "}
+            ยังไม่ได้ผูกกับใคร — บันทึกรายการไม่ได้จำเลขบัญชีไว้ให้
+            ครั้งหน้าที่โอนมาจากบัญชีนี้ระบบจะยังไม่รู้ว่าเป็นใคร
+          </span>
+          <button
+            onClick={() => bindAccount(bindOffer.accountNumber, bindOffer.memberNumber)}
+            disabled={saving}
+            className="px-2 py-1 rounded bg-sky-700 text-white text-xs disabled:opacity-40"
+          >
+            จำไว้ว่าเป็นของ {bindOffer.memberNumber} {bindOffer.memberName ?? ""}
+          </button>
+          <button
+            onClick={() => setBindOffer(null)}
+            className="text-xs text-sky-700 hover:underline"
+          >
+            ไม่ต้อง
+          </button>
+        </p>
       )}
 
       {error && <p className="px-4 py-3 text-sm text-red-600">{error}</p>}
@@ -1508,7 +1561,7 @@ interface RecordActions {
   note: string;
   setNote: (value: string) => void;
   saving: boolean;
-  onBind: (accountNumber: string) => void;
+  onBind: (accountNumber: string, memberNumber?: string) => void;
   onRecord: (depositId: string) => void;
   // Only ever called for a line a person marked as member money themselves,
   // which is also the only kind of row it is offered on.
@@ -1635,7 +1688,7 @@ const DepositTable = ({
           actions?.acting?.id === deposit.id && actions.acting.scope === "deposits"
             ? actions.acting.kind
             : null;
-        const caveat = accountCaveat(deposit.channel);
+        const caveat = accountCaveat(deposit);
 
         return (
           <Fragment key={deposit.id}>

@@ -25,6 +25,7 @@
 // counts as a bindable account.
 
 import { categoryNeedsDetail, isStaffCategory } from "./categories";
+import { bankFromDescription } from "./thaiBanks";
 
 // Channels where the digits the statement shows are known to be the paying
 // account, and so mean something bound to a member. See MEMBER_CHANNELS in
@@ -38,16 +39,30 @@ const CHANNELS_WITH_PAYER_ACCOUNT = new Set(["transfer", "mobile"]);
 // the payment than the transaction code does, and a rule that blocks them
 // would be worse than one that warns.
 //
-// "counter" is the case this exists for and the one that is certain: somebody
-// walked into a branch and paid in cash, so there is no paying account at
-// all, and what the description carries is the branch's own reference for
-// that deposit. extractSenderAccount pulls those digits out because it cannot
-// tell the two apart from the text — the channel is what tells them apart.
+// "counter" was written as the certain case: somebody walked into a branch
+// and paid in cash, so there is no paying account and the digits are the
+// branch's own reference for that deposit.
+//
+// That was wrong about the data, and expensively so. Every "NNN-NNNNNNNNNN"
+// line in the cooperative's statements — all 209 of them, across seven
+// prefixes — leads with a national interbank code (004 กสิกร, 025 กรุงศรี,
+// 030 ออมสิน …), which means an interbank transfer in, and the digits after
+// the dash are the payer's own account at that bank. Not one line carried a
+// prefix that was not a bank code.
+//
+// So for a year this warned staff off binding 193 perfectly good accounts,
+// and told them to use "บันทึกรายการ" instead — which files the payment and
+// remembers nothing, so the same member's next transfer arrived as money
+// nobody could name, again. "เลขที่บัญชีนี้เหมือนเคยบันทึกสมาชิกแล้วแต่ไม่ขึ้น
+// สมาชิก" is what that looks like from the desk.
+//
+// It is kept, narrowed to what it was always true of: a line whose digits
+// nothing identifies as a payer's account. See bankNamesThePayer below.
 const CHANNEL_CAVEATS: Record<string, string> = {
   counter:
-    "รายการฝากที่เคาน์เตอร์ไม่มีบัญชีต้นทาง — ตัวเลขที่เห็นคือเลขอ้างอิงใบฝากของสาขา " +
-    "ไม่ใช่เลขบัญชีของใคร ผูกไว้ครั้งหน้าก็ใช้ไม่ได้เพราะจะได้เลขใหม่ทุกครั้ง — " +
-    'ปกติควรใช้ "บันทึกรายการ" แทน',
+    "รายการนี้ไม่มีชื่อธนาคารต้นทางกำกับ — ตัวเลขที่เห็นอาจเป็นเลขอ้างอิงใบฝากของสาขา " +
+    "ไม่ใช่เลขบัญชีของใคร ถ้าเป็นแบบนั้น ผูกไว้ครั้งหน้าก็ใช้ไม่ได้เพราะจะได้เลขใหม่ทุกครั้ง — " +
+    'ถ้าไม่แน่ใจ ใช้ "บันทึกรายการ" อย่างเดียว',
 };
 
 const GENERIC_CAVEAT =
@@ -58,11 +73,26 @@ export function senderAccountIsPayer(channel: string): boolean {
   return CHANNELS_WITH_PAYER_ACCOUNT.has(channel);
 }
 
+// The other way a line can say its digits are a payer's account: the
+// description leads with a national interbank code, which only an interbank
+// transfer does. "025-2021709698" is somebody's account at กรุงศรีอยุธยา,
+// whatever transaction code the bank filed it under — and the screen already
+// says so, since the same three digits are what print "· ธ.กรุงศรีอยุธยา"
+// beside the number.
+export function bankNamesThePayer(description: string): boolean {
+  return bankFromDescription(description) !== null;
+}
+
 // Why binding this line's account to a member is doubtful, or null when it is
 // straightforwardly the payer's own account.
-export function accountCaveat(channel: string): string | null {
-  if (senderAccountIsPayer(channel)) return null;
-  return CHANNEL_CAVEATS[channel] ?? GENERIC_CAVEAT;
+//
+// Takes the line rather than the channel: the transaction code is not the
+// only thing that knows, and on these statements it is the less reliable of
+// the two.
+export function accountCaveat(line: { channel: string; description: string }): string | null {
+  if (senderAccountIsPayer(line.channel)) return null;
+  if (bankNamesThePayer(line.description)) return null;
+  return CHANNEL_CAVEATS[line.channel] ?? GENERIC_CAVEAT;
 }
 
 // The one case that is a refusal rather than a caveat: there are no digits at
