@@ -40,6 +40,22 @@ export function statementLineStatus(line: {
   return line.ownerMemberNumber ? "knownPayer" : "unknownPayer";
 }
 
+// Whether the ทำรายการ column can still be filled in on this line.
+//
+// The column is filled from the slip a line was paired with, so on a day
+// nobody has worked through it reads "—" all the way down. That is the job,
+// and until now it could only be done from the unclaimed list — which meant a
+// payment whose payer the account directory already recognised could be read
+// in the statement and recorded nowhere, because knowing who paid is exactly
+// what keeps it out of that list.
+//
+// A line already paired with a slip has its answer and must not be given a
+// second one; the bank's own postings were never a member's payment to
+// record. What is left is money in with nothing accounted for yet.
+export function canRecordFromLine(status: StatementLineStatus): boolean {
+  return status === "knownPayer" || status === "unknownPayer";
+}
+
 // The label staff read, and the section it corresponds to above — worded so
 // the two can be recognised as the same thing.
 export const STATUS_LABELS: Record<StatementLineStatus, string> = {

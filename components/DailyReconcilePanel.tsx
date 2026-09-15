@@ -10,7 +10,7 @@ import {
 import { STAFF_CATEGORIES, categoryNeedsDetail } from "@/lib/categories";
 import { accountCaveat, canBindAccount } from "@/lib/depositRecord";
 import { CHANNEL_LABELS, STAFF_CHANNEL } from "@/lib/statementLines";
-import { STATUS_LABELS } from "@/lib/statementDayView";
+import { STATUS_LABELS, canRecordFromLine } from "@/lib/statementDayView";
 import { STATEMENT_ACCOUNTS } from "@/lib/statementReconcile";
 import { branchesIn, missingBranches, summariseByAccount } from "@/lib/dailyAccountSummary";
 import { dayTally, flowByAccount, flowTotal, inByCategory } from "@/lib/statementTotals";
@@ -229,7 +229,7 @@ export default function DailyReconcilePanel() {
   // Which unclaimed deposit has its form open, and which of the two answers
   // it is being given. Only one at a time — the work is one payment, one
   // phone call.
-  const [acting, setActing] = useState<{ id: string; kind: "bind" | "record" } | null>(null);
+  const [acting, setActing] = useState<ActingTarget | null>(null);
   const [actMemberNumber, setActMemberNumber] = useState("");
   // Starts unchosen on purpose. Defaulting to the first category would let a
   // distracted click file a ฿90,000 payment as ซื้อหุ้น without anyone having
@@ -305,6 +305,18 @@ export default function DailyReconcilePanel() {
   const closeForm = () => {
     setActing(null);
     setActMemberNumber("");
+    setActMemberName("");
+    setActCategory("");
+    setActNote("");
+  };
+
+  // Opening one form closes whatever was open, and starts the fields from
+  // what the row already knows. Everything but the member number is left
+  // blank on purpose — a category defaulted for somebody is a category
+  // nobody chose.
+  const openForm = (target: ActingTarget, memberNumber: string | null = null) => {
+    setActing(target);
+    setActMemberNumber(memberNumber ?? "");
     setActMemberName("");
     setActCategory("");
     setActNote("");
@@ -513,6 +525,27 @@ export default function DailyReconcilePanel() {
     );
   const toggle = (key: SectionKey, matches = 0) =>
     setClicked((prev) => ({ ...prev, [key]: !isOpen(key, matches) }));
+
+  // One set of handlers for all three tables that offer them, so a payment
+  // can be recorded from whichever view a person happened to be reading — and
+  // so only one form is ever open, wherever it was opened from.
+  const actions = {
+    acting,
+    open: openForm,
+    close: closeForm,
+    memberNumber: actMemberNumber,
+    setMemberNumber: setActMemberNumber,
+    memberName: actMemberName,
+    setMemberName: setActMemberName,
+    category: actCategory,
+    setCategory: setActCategory,
+    note: actNote,
+    setNote: setActNote,
+    saving,
+    onBind: bindAccount,
+    onRecord: recordDeposit,
+    onUnmark: unmarkMemberMoney,
+  };
 
   return (
     <section className="bg-white rounded-lg border border-slate-200">
@@ -959,7 +992,12 @@ export default function DailyReconcilePanel() {
                   รายการทั้งหมด ({statementRows.length} รายการ)
                 </h3>
                 <div className="overflow-x-auto mt-2">
-                  <StatementTable rows={statementRows} showDate={from !== to} />
+                  <StatementTable
+                    rows={statementRows}
+                    showDate={from !== to}
+                    actions={actions}
+                    scope="report"
+                  />
                 </div>
               </div>
             )}
@@ -999,7 +1037,11 @@ export default function DailyReconcilePanel() {
                 </p>
               ) : (
                 <div className="overflow-x-auto mt-2">
-                  <StatementTable rows={statementRows} showDate={from !== to} />
+                  <StatementTable
+                    rows={statementRows}
+                    showDate={from !== to}
+                    actions={actions}
+                  />
                 </div>
               ))}
           </div>
@@ -1102,26 +1144,7 @@ export default function DailyReconcilePanel() {
             open={isOpen("unknownPayer", unknownRows.length)}
             onToggle={() => toggle("unknownPayer", unknownRows.length)}
           >
-            <DepositTable
-              deposits={unknownRows}
-              showDate={from !== to}
-              actions={{
-                acting,
-                setActing,
-                memberNumber: actMemberNumber,
-                setMemberNumber: setActMemberNumber,
-                memberName: actMemberName,
-                setMemberName: setActMemberName,
-                category: actCategory,
-                setCategory: setActCategory,
-                note: actNote,
-                setNote: setActNote,
-                saving,
-                onBind: bindAccount,
-                onRecord: recordDeposit,
-                onUnmark: unmarkMemberMoney,
-              }}
-            />
+            <DepositTable deposits={unknownRows} showDate={from !== to} actions={actions} />
           </Section>
 
           {knownPayer.length > 0 && (
@@ -1133,13 +1156,13 @@ export default function DailyReconcilePanel() {
               )})`}
               tone="text-slate-600"
               note={
-                'รู้เจ้าของจากเลขบัญชีแล้ว แค่ไม่ได้ส่งสลิปเข้าบอท — ปกติเป็นการจ่ายค่าหักไม่ได้ที่แท็บ "เทียบ Statement" จับคู่ให้อยู่แล้ว ไม่ต้องทำอะไรเพิ่ม'
+                'รู้เจ้าของจากเลขบัญชีแล้ว แค่ไม่ได้ส่งสลิปเข้าบอท — ปกติเป็นการจ่ายค่าหักไม่ได้ที่แท็บ "เทียบ Statement" จับคู่ให้อยู่แล้ว ไม่ต้องทำอะไรเพิ่ม · ถ้าอยากลงเป็นรายการของสมาชิกด้วย กด "บันทึกรายการ" ได้ที่แถวนั้น — เลขสมาชิกใส่ให้อัตโนมัติแล้ว เหลือแค่เลือกว่าจ่ายเป็นอะไร'
               }
               empty={false}
               open={isOpen("knownPayer", knownRows.length)}
               onToggle={() => toggle("knownPayer", knownRows.length)}
             >
-              <DepositTable deposits={knownRows} showDate={from !== to} />
+              <DepositTable deposits={knownRows} showDate={from !== to} actions={actions} />
             </Section>
           )}
 
@@ -1214,11 +1237,19 @@ const Member = ({
 const StatementTable = ({
   rows,
   showDate = false,
+  actions,
+  scope = "statement",
 }: {
   rows: DailyStatementRow[];
   // Only when the window spans more than one day: repeating the same date on
   // every row of a single day is noise in a column that is read constantly.
   showDate?: boolean;
+  // Read-only without these.
+  actions?: RecordActions;
+  // The same day is on screen twice — in its own section and again inside the
+  // report. Without telling them apart, clicking บันทึก in one opened the form
+  // in both.
+  scope?: "statement" | "report";
 }) => (
   <table className="w-full text-sm">
     <thead className="text-slate-500 text-left text-xs uppercase tracking-wide">
@@ -1235,8 +1266,15 @@ const StatementTable = ({
       </tr>
     </thead>
     <tbody>
-      {rows.map((row) => (
-        <tr key={row.id} className="border-t border-slate-100 hover:bg-slate-50">
+      {rows.map((row) => {
+        const open =
+          actions?.acting?.id === row.id && actions.acting.scope === scope
+            ? actions.acting.kind
+            : null;
+
+        return (
+        <Fragment key={row.id}>
+        <tr className="border-t border-slate-100 hover:bg-slate-50">
           <td className="px-2 py-1.5 whitespace-nowrap">
             <ExactClock iso={row.postedAt} withDate={showDate} />
           </td>
@@ -1300,12 +1338,49 @@ const StatementTable = ({
             ) : (
               <span className="text-slate-300">—</span>
             )}
+            {/* The column names the job, so the job is offered in it. Before
+                this, a line whose payer the directory already recognised
+                could be read here and recorded nowhere: the unclaimed list
+                carries the buttons and this money never reaches that list. */}
+            {actions && canRecordFromLine(row.status) && !row.category && (
+              <button
+                onClick={() =>
+                  actions.open({ id: row.id, kind: "record", scope }, row.memberNumber)
+                }
+                className="ml-2 text-xs text-slate-900 hover:underline no-print"
+                title="บันทึกเงินก้อนนี้เป็นรายการของสมาชิก เหมือนที่สลิปทางไลน์ทำ — ยอดและวันที่ใช้ตามธนาคาร"
+              >
+                บันทึก
+              </button>
+            )}
           </td>
           <td className="px-2 py-1.5 whitespace-nowrap">
             <StatusTag status={row.status} />
           </td>
         </tr>
-      ))}
+
+        {actions && open && (
+          <tr className="bg-slate-50 border-t border-slate-100">
+            <td colSpan={9} className="px-3 py-2.5">
+              <ActionForm
+                actions={actions}
+                mode={open}
+                targetId={row.id}
+                amount={row.amount}
+                senderAccount={row.senderAccount}
+              />
+              <p className="text-xs text-slate-500 mt-2">
+                ยอดและวันที่ใช้ตามที่ธนาคารบันทึกไว้ ไม่ต้องพิมพ์เอง ·
+                ชื่อใส่เฉพาะตอนที่เลขสมาชิกยังไม่มีในทะเบียน · ถ้าไม่เข้าหมวดไหนเลย เลือก
+                &ldquo;อื่นๆ&rdquo; แล้วเขียนว่าเป็นค่าอะไร — ถ้าบันทึกผิด ลบได้ที่แท็บ
+                &ldquo;รายการ&rdquo;
+              </p>
+            </td>
+          </tr>
+        )}
+        </Fragment>
+        );
+      })}
     </tbody>
   </table>
 );
@@ -1399,13 +1474,30 @@ const SlipTable = ({ slips }: { slips: DailySlipRow[] }) => (
   </table>
 );
 
-// What staff can do with an unclaimed deposit, and the forms behind the two
-// buttons. Everything here is optional: the table renders read-only when no
-// handlers are passed, which is what the "already know who paid, just no
-// slip" list wants.
-interface DepositActions {
-  acting: { id: string; kind: "bind" | "record" } | null;
-  setActing: (next: { id: string; kind: "bind" | "record" } | null) => void;
+// Which row has a form open, and which answer it is being given.
+//
+// `scope` is there because one bank line shows up in two tables — once under
+// the finding it fell into, and once in the statement read in the bank's own
+// order. Keyed by id alone, clicking บันทึก in one opened the form in both.
+export interface ActingTarget {
+  id: string;
+  kind: "bind" | "record";
+  // "deposits" — one of the findings lists. "statement" and "report" — the two
+  // places the whole day is shown in the bank's own order.
+  scope: "deposits" | "statement" | "report";
+}
+
+// What staff can do with a payment that has no slip behind it, and the form
+// behind the buttons. Everything here is optional on a table: one renders
+// read-only when no handlers are passed.
+interface RecordActions {
+  acting: ActingTarget | null;
+  // Opens a form, clearing the last one. The member number is prefilled where
+  // the row already knows it — on a line whose payer the directory
+  // recognised, that number is on screen two columns away, and asking somebody
+  // to retype it is asking them to mistype it.
+  open: (target: ActingTarget, memberNumber?: string | null) => void;
+  close: () => void;
   memberNumber: string;
   setMemberNumber: (value: string) => void;
   memberName: string;
@@ -1423,13 +1515,105 @@ interface DepositActions {
   onUnmark: (lineId: string) => void;
 }
 
+// The form itself, shared by both tables that offer it so the two cannot
+// drift on what a recording asks for.
+const ActionForm = ({
+  actions,
+  mode,
+  targetId,
+  amount,
+  senderAccount,
+}: {
+  actions: RecordActions;
+  mode: "bind" | "record";
+  targetId: string;
+  amount: number;
+  senderAccount: string | null;
+}) => {
+  const detailMissing = categoryNeedsDetail(actions.category) && !actions.note.trim();
+  const ready =
+    actions.memberNumber.trim() !== "" &&
+    (mode === "bind" ? senderAccount !== null : actions.category !== "" && !detailMissing);
+  const submit = () => {
+    if (mode === "bind" && senderAccount) actions.onBind(senderAccount);
+    else if (mode === "record") actions.onRecord(targetId);
+  };
+
+  return (
+    <div className="flex flex-wrap items-center gap-2 text-sm">
+      <span className="text-slate-500">
+        {mode === "bind"
+          ? `เลขบัญชี ${senderAccount} เป็นของสมาชิกเลข`
+          : `${formatAmount(amount)} นี้ เป็นเงินของสมาชิกเลข`}
+      </span>
+      <input
+        value={actions.memberNumber}
+        onChange={(e) => actions.setMemberNumber(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Escape") actions.close();
+          if (e.key === "Enter" && ready) submit();
+        }}
+        placeholder="เลขสมาชิก"
+        autoFocus
+        className="border border-slate-300 rounded px-2 py-1 w-40 bg-white"
+      />
+      {mode === "record" && (
+        <>
+          <input
+            value={actions.memberName}
+            onChange={(e) => actions.setMemberName(e.target.value)}
+            placeholder="ชื่อ-นามสกุล (ใส่เมื่อไม่มีในทะเบียน)"
+            title="ปล่อยว่างได้ถ้าเลขสมาชิกมีในทะเบียนอยู่แล้ว — ระบบจะใช้ชื่อจากทะเบียนเสมอ"
+            className="border border-slate-300 rounded px-2 py-1 w-64 bg-white"
+          />
+          <span className="text-slate-500">จ่ายเป็น</span>
+          <select
+            value={actions.category}
+            onChange={(e) => actions.setCategory(e.target.value)}
+            className="border border-slate-300 rounded px-2 py-1 bg-white"
+          >
+            <option value="">— เลือก —</option>
+            {STAFF_CATEGORIES.map((c) => (
+              <option key={c} value={c}>
+                {c}
+              </option>
+            ))}
+          </select>
+          {/* อื่นๆ on its own says nothing, so it brings its own question with
+              it rather than filing a transaction nobody can read back. */}
+          {categoryNeedsDetail(actions.category) && (
+            <input
+              value={actions.note}
+              onChange={(e) => actions.setNote(e.target.value)}
+              placeholder="ระบุว่าเป็นรายการอะไร"
+              autoFocus
+              title="เลือกอื่นๆ แล้วต้องเขียนด้วยว่าเงินก้อนนี้เป็นค่าอะไร ข้อความนี้จะไปอยู่ในรายละเอียดของรายการ"
+              className="border border-amber-400 rounded px-2 py-1 w-56 bg-white"
+            />
+          )}
+        </>
+      )}
+      <button
+        onClick={submit}
+        disabled={actions.saving || !ready}
+        className="px-3 py-1 rounded bg-slate-900 text-white disabled:opacity-40"
+      >
+        {actions.saving ? "กำลังบันทึก…" : "บันทึก"}
+      </button>
+      <button onClick={actions.close} className="text-slate-500 hover:underline">
+        ยกเลิก
+      </button>
+    </div>
+  );
+};
+
 const DepositTable = ({
   deposits,
   actions,
   showDate = false,
 }: {
   deposits: DailyDepositRow[];
-  actions?: DepositActions;
+  actions?: RecordActions;
   // Only when the window spans more than one day — see Clock.
   showDate?: boolean;
 }) => (
@@ -1447,7 +1631,10 @@ const DepositTable = ({
     </thead>
     <tbody>
       {deposits.map((deposit) => {
-        const open = actions?.acting?.id === deposit.id ? actions.acting.kind : null;
+        const open =
+          actions?.acting?.id === deposit.id && actions.acting.scope === "deposits"
+            ? actions.acting.kind
+            : null;
         const caveat = accountCaveat(deposit.channel);
 
         return (
@@ -1479,13 +1666,9 @@ const DepositTable = ({
                         transaction code does. */}
                     {canBindAccount(deposit) && (
                       <button
-                        onClick={() => {
-                          actions.setActing({ id: deposit.id, kind: "bind" });
-                          actions.setMemberNumber("");
-                          actions.setMemberName("");
-                          actions.setCategory("");
-                          actions.setNote("");
-                        }}
+                        onClick={() =>
+                          actions.open({ id: deposit.id, kind: "bind", scope: "deposits" })
+                        }
                         className={`hover:underline ${caveat ? "text-amber-700" : "text-slate-900"}`}
                         title={caveat ?? "จำไว้ว่าเลขบัญชีนี้เป็นของสมาชิกคนนี้ ใช้ได้ทุกครั้งต่อไป"}
                       >
@@ -1493,13 +1676,12 @@ const DepositTable = ({
                       </button>
                     )}
                     <button
-                      onClick={() => {
-                        actions.setActing({ id: deposit.id, kind: "record" });
-                        actions.setMemberNumber("");
-                        actions.setMemberName("");
-                        actions.setCategory("");
-                        actions.setNote("");
-                      }}
+                      onClick={() =>
+                        actions.open(
+                          { id: deposit.id, kind: "record", scope: "deposits" },
+                          deposit.memberNumber
+                        )
+                      }
                       className="text-slate-900 hover:underline"
                       title="บันทึกเงินก้อนนี้เป็นรายการของสมาชิก เหมือนที่สลิปทางไลน์ทำ"
                     >
@@ -1529,96 +1711,13 @@ const DepositTable = ({
                   {open === "bind" && caveat && (
                     <p className="text-xs text-amber-800 mb-2">⚠️ {caveat}</p>
                   )}
-                  <div className="flex flex-wrap items-center gap-2 text-sm">
-                    <span className="text-slate-500">
-                      {open === "bind"
-                        ? `เลขบัญชี ${deposit.senderAccount} เป็นของสมาชิกเลข`
-                        : `${formatAmount(deposit.amount)} นี้ เป็นเงินของสมาชิกเลข`}
-                    </span>
-                    <input
-                      value={actions.memberNumber}
-                      onChange={(e) => actions.setMemberNumber(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === "Escape") actions.setActing(null);
-                        if (e.key === "Enter" && actions.memberNumber.trim()) {
-                          if (open === "bind" && deposit.senderAccount) {
-                            actions.onBind(deposit.senderAccount);
-                          } else if (
-                            open === "record" &&
-                            actions.category &&
-                            !(categoryNeedsDetail(actions.category) && !actions.note.trim())
-                          ) {
-                            actions.onRecord(deposit.id);
-                          }
-                        }
-                      }}
-                      placeholder="เลขสมาชิก"
-                      autoFocus
-                      className="border border-slate-300 rounded px-2 py-1 w-40 bg-white"
-                    />
-                    {open === "record" && (
-                      <>
-                        <input
-                          value={actions.memberName}
-                          onChange={(e) => actions.setMemberName(e.target.value)}
-                          placeholder="ชื่อ-นามสกุล (ใส่เมื่อไม่มีในทะเบียน)"
-                          title="ปล่อยว่างได้ถ้าเลขสมาชิกมีในทะเบียนอยู่แล้ว — ระบบจะใช้ชื่อจากทะเบียนเสมอ"
-                          className="border border-slate-300 rounded px-2 py-1 w-64 bg-white"
-                        />
-                        <span className="text-slate-500">จ่ายเป็น</span>
-                        <select
-                          value={actions.category}
-                          onChange={(e) => actions.setCategory(e.target.value)}
-                          className="border border-slate-300 rounded px-2 py-1 bg-white"
-                        >
-                          <option value="">— เลือก —</option>
-                          {STAFF_CATEGORIES.map((c) => (
-                            <option key={c} value={c}>
-                              {c}
-                            </option>
-                          ))}
-                        </select>
-                        {/* อื่นๆ on its own says nothing, so it brings its own
-                            question with it rather than filing a transaction
-                            nobody can read back later. */}
-                        {categoryNeedsDetail(actions.category) && (
-                          <input
-                            value={actions.note}
-                            onChange={(e) => actions.setNote(e.target.value)}
-                            placeholder="ระบุว่าเป็นรายการอะไร"
-                            autoFocus
-                            title="เลือกอื่นๆ แล้วต้องเขียนด้วยว่าเงินก้อนนี้เป็นค่าอะไร ข้อความนี้จะไปอยู่ในรายละเอียดของรายการ"
-                            className="border border-amber-400 rounded px-2 py-1 w-56 bg-white"
-                          />
-                        )}
-                      </>
-                    )}
-                    <button
-                      onClick={() => {
-                        if (open === "bind" && deposit.senderAccount) {
-                          actions.onBind(deposit.senderAccount);
-                        } else if (open === "record") {
-                          actions.onRecord(deposit.id);
-                        }
-                      }}
-                      disabled={
-                        actions.saving ||
-                        !actions.memberNumber.trim() ||
-                        (open === "record" &&
-                          (!actions.category ||
-                            (categoryNeedsDetail(actions.category) && !actions.note.trim())))
-                      }
-                      className="px-3 py-1 rounded bg-slate-900 text-white disabled:opacity-40"
-                    >
-                      {actions.saving ? "กำลังบันทึก…" : "บันทึก"}
-                    </button>
-                    <button
-                      onClick={() => actions.setActing(null)}
-                      className="text-slate-500 hover:underline"
-                    >
-                      ยกเลิก
-                    </button>
-                  </div>
+                  <ActionForm
+                    actions={actions}
+                    mode={open}
+                    targetId={deposit.id}
+                    amount={deposit.amount}
+                    senderAccount={deposit.senderAccount}
+                  />
                   <p className="text-xs text-slate-500 mt-2">
                     {open === "bind"
                       ? "ผูกเลขบัญชีไว้กับสมาชิก — ไม่ได้บันทึกเงินก้อนนี้เป็นรายการ ถ้าต้องการบันทึกด้วย ให้กด \"บันทึกรายการ\" อีกที"

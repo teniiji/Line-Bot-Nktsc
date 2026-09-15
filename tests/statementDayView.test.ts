@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { STATUS_LABELS, statementLineStatus, type StatementLineStatus } from "../lib/statementDayView";
+import {
+  STATUS_LABELS,
+  canRecordFromLine,
+  statementLineStatus,
+  type StatementLineStatus,
+} from "../lib/statementDayView";
 
 describe("statementLineStatus", () => {
   it("calls a paired line matched", () => {
@@ -47,6 +52,23 @@ describe("statementLineStatus", () => {
     for (const status of all) {
       expect(STATUS_LABELS[status]).toBeTruthy();
     }
+  });
+
+  it("offers recording on money that nothing has accounted for yet", () => {
+    // Including the payer the directory recognised: knowing whose money it is
+    // keeps the line out of the unclaimed list, which is where the only
+    // record button used to be — so that payment could be read here and
+    // filed nowhere.
+    expect(canRecordFromLine("unknownPayer")).toBe(true);
+    expect(canRecordFromLine("knownPayer")).toBe(true);
+  });
+
+  it("refuses to offer it twice, or on the bank's own postings", () => {
+    // A line paired with a slip has its answer; a fee never was a member's
+    // payment. Recording either would file money that is already filed or
+    // never arrived from anyone.
+    expect(canRecordFromLine("matched")).toBe(false);
+    expect(canRecordFromLine("notMemberMoney")).toBe(false);
   });
 
   it("puts every line in exactly one status", () => {
