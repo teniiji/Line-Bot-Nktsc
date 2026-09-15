@@ -176,15 +176,27 @@ function lineKey(
   ].join("|");
 }
 
+// What makes a statement line itself, before it is attributed to one of the
+// cooperative's accounts.
+//
+// The running balance is in here, and it is what makes this a near-perfect
+// identity: two different accounts cannot post the same amount at the same
+// second and arrive at the same balance. So two lines sharing this are the
+// same line out of the same file, whatever account somebody filed them under
+// — which is how a statement uploaded a second time with the wrong account
+// selected can be recognised as the file it already is.
+export function statementLineIdentity(line: StatementLineRow): string {
+  return [
+    line.postedAt ? lineKey(line.postedAt, line.txnCode, line.amount, line.balance) : "",
+    line.occurrence,
+  ].join("|");
+}
+
 // What makes a statement line itself, stable across uploads of overlapping
 // date ranges. Unlike transferFingerprint this carries the full timestamp:
 // these rows are new, so there is no earlier data at day resolution to stay
 // compatible with, and the clock reading tells apart two lines that a date
 // alone would merge.
 export function statementLineFingerprint(account: string, line: StatementLineRow): string {
-  return [
-    account,
-    line.postedAt ? lineKey(line.postedAt, line.txnCode, line.amount, line.balance) : "",
-    line.occurrence,
-  ].join("|");
+  return [account, statementLineIdentity(line)].join("|");
 }
