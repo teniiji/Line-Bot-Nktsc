@@ -24,17 +24,38 @@ describe("senderAccountIsPayer", () => {
 });
 
 describe("accountCaveat", () => {
+  const line = (channel: string, description = "ฝากเงินสด") => ({ channel, description });
+
   it("says nothing about a plain transfer", () => {
-    expect(accountCaveat("transfer")).toBeNull();
-    expect(accountCaveat("mobile")).toBeNull();
+    expect(accountCaveat(line("transfer", "TR fr 4131386828"))).toBeNull();
+    expect(accountCaveat(line("mobile", "TR fr 4131386828"))).toBeNull();
   });
 
-  it("explains why binding a counter deposit's digits is useless", () => {
-    const caveat = accountCaveat("counter");
+  it("says nothing when the description names the paying bank", () => {
+    // "025-2021709698 · ธ.กรุงศรีอยุธยา" is an interbank transfer in, and the
+    // digits after the code are somebody's account at that bank — whatever
+    // transaction code the bank filed the line under. Every NNN-NNNNNNNNNN
+    // line in the cooperative's statements is one of these; warning staff off
+    // binding them is what left the same accounts unnamed month after month.
+    expect(accountCaveat(line("counter", "025-2021709698"))).toBeNull();
+    expect(accountCaveat(line("counter", "004-0161850640"))).toBeNull();
+    expect(accountCaveat(line("atm", "030-0202170969"))).toBeNull();
+  });
+
+  it("still warns on a counter deposit with no bank behind it", () => {
+    // Cash over the branch counter: no paying account exists, so whatever
+    // digits the line carries are the branch's own reference.
+    const caveat = accountCaveat(line("counter", "CASH DEPOSIT 120"));
     expect(caveat).toContain("เลขอ้างอิงใบฝาก");
     // The consequence, not just the fact: a binding that will never match
     // again is the part staff need to hear before they make one.
     expect(caveat).toContain("ครั้งหน้า");
+  });
+
+  it("is not fooled by three digits that are not a bank", () => {
+    // 999 is not an interbank code, so nothing has said these digits are an
+    // account and the caveat stands.
+    expect(accountCaveat(line("counter", "999-1234567890"))).not.toBeNull();
   });
 
   it("admits uncertainty for a channel nobody has checked, rather than guessing", () => {
@@ -42,7 +63,7 @@ describe("accountCaveat", () => {
     // real statement. Claiming they are payer accounts would be a guess, and
     // refusing them outright would block staff who know better.
     for (const channel of ["atm", "ewallet", "cheque"]) {
-      expect(accountCaveat(channel)).toContain("ยังไม่แน่ใจ");
+      expect(accountCaveat(line(channel))).toContain("ยังไม่แน่ใจ");
     }
   });
 });
