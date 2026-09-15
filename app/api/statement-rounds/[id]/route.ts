@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { matchSlipHints } from "@/lib/statementSlipHints";
+import { countedElsewhere } from "@/lib/roundDoubleCount";
 
 export const dynamic = "force-dynamic";
 
@@ -84,6 +85,36 @@ export async function GET(
     }))
   );
 
+  // The same bank line counting in another round as well. Loading one export
+  // into two rounds is the obvious thing to do — September's file into August
+  // for the late payers and into September for the current month — and it
+  // marks everyone who paid once as having settled both. See
+  // lib/roundDoubleCount.ts.
+  const counts = (t: { memberNumber: string | null; excludedReason: string | null }) =>
+    t.memberNumber !== null && t.excludedReason === null;
+  const twins = await prisma.statementTransfer.findMany({
+    where: {
+      fingerprint: { in: transfers.map((t) => t.fingerprint) },
+      roundId: { not: round.id },
+    },
+    select: { fingerprint: true, roundId: true, memberNumber: true, excludedReason: true },
+  });
+  const otherRounds = twins.length
+    ? await prisma.statementRound.findMany({
+        where: { id: { in: [...new Set(twins.map((t) => t.roundId))] } },
+        select: { id: true, label: true },
+      })
+    : [];
+  const labelByRound = new Map(otherRounds.map((r) => [r.id, r.label]));
+  const doubles = countedElsewhere(
+    transfers.map((t) => ({ id: t.id, fingerprint: t.fingerprint, counts: counts(t) })),
+    twins.map((t) => ({
+      fingerprint: t.fingerprint,
+      label: labelByRound.get(t.roundId) ?? t.roundId,
+      counts: counts(t),
+    }))
+  );
+
   const withHints = transfers.map((t) => ({
     id: t.id,
     memberNumber: t.memberNumber,
@@ -94,6 +125,8 @@ export async function GET(
     description: t.description,
     excludedReason: t.excludedReason,
     slipHint: hints.get(t.id) ?? null,
+    // Empty on all but the few lines being counted more than once.
+    alsoCountedIn: doubles.get(t.id) ?? [],
   }));
 
   const excluded = withHints.filter((t) => t.excludedReason);
