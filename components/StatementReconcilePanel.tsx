@@ -1124,6 +1124,30 @@ export default function StatementReconcilePanel() {
                             ระบุเจ้าของ
                           </button>
                         )}
+                        {/* The daily page has already been told whose this
+                            is — staff rang round and recorded the payment
+                            there. The round cannot hear about a recording, so
+                            it says so here and offers the one click that
+                            makes it official. */}
+                        {t.recordedAs && assigningAccount !== t.accountNumber && (
+                          <span className="block max-w-md text-xs text-sky-800 mt-1 whitespace-normal">
+                            เงินเข้าประจำวันบันทึกไว้แล้วว่าเป็นของ{" "}
+                            <strong className="num">{t.recordedAs.memberNumber}</strong>{" "}
+                            {t.recordedAs.memberName ?? ""}
+                            {t.recordedAs.category ? ` · ${t.recordedAs.category}` : ""}{" "}
+                            <button
+                              onClick={() => {
+                                setAssigningAccount(t.accountNumber);
+                                setAssignMemberNumber(t.recordedAs!.memberNumber);
+                                setAssignNote(null);
+                              }}
+                              className="text-sky-800 underline"
+                              title="ใส่เลขสมาชิกนี้ให้ แล้วกดบันทึกเพื่อผูกเลขบัญชี — รอบจะจับคู่ให้ทันทีถ้าสมาชิกอยู่ในรายชื่อรอบนี้"
+                            >
+                              ใช้เลขนี้
+                            </button>
+                          </span>
+                        )}
                         {/* The answer, where the click was. The panel's own
                             error and notice sit at the top of the tab, far
                             above this table. */}

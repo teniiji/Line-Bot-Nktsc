@@ -256,6 +256,10 @@ export interface StatementUnmatchedRow {
   transferredAt: string | null;
   branch: string | null;
   description: string | null;
+  // Who the daily page was told this account belongs to, when staff have
+  // already recorded a payment from one of its lines. Null for an account
+  // nobody has placed anywhere — see lib/recordedOwners.ts.
+  recordedAs: { memberNumber: string; memberName: string | null; category: string | null } | null;
 }
 
 // One line of money arriving in a cooperative account, for the daily
