@@ -144,6 +144,13 @@ export default function StatementReconcilePanel() {
   const [hCodeFilter, setHCodeFilter] = useState("");
   const [assigningAccount, setAssigningAccount] = useState<string | null>(null);
   const [assignMemberNumber, setAssignMemberNumber] = useState("");
+  // What happened to the last attempt on this account, shown at its own row.
+  // Both the panel's error and its notice are painted at the top, thousands of
+  // pixels above a table that runs to hundreds of rows — from down here,
+  // failure and a success with a caveat both look like nothing happening.
+  const [assignNote, setAssignNote] = useState<
+    { account: string; text: string; bad: boolean } | null
+  >(null);
   const [sort, setSort] = useState<StatementSort>("default");
 
   const [showNew, setShowNew] = useState(false);
@@ -360,13 +367,27 @@ export default function StatementReconcilePanel() {
       });
       const body = await res.json();
       if (!res.ok) {
-        setError(body.error || "ระบุเจ้าของไม่สำเร็จ");
+        const message = body.error || "ระบุเจ้าของไม่สำเร็จ";
+        setAssignNote({ account: accountNumber, text: message, bad: true });
+        setError(message);
         return;
       }
-      setNotice(
-        `ผูกบัญชี ${body.accountNumber} เข้ากับ ${body.memberNumber} ${body.memberName} แล้ว ` +
-          `(${body.transfers} รายการ ${formatAmount(body.amount)}) — จำไว้ใช้รอบต่อไปให้แล้ว`
-      );
+
+      const saved =
+        `ผูกบัญชี ${body.accountNumber} เข้ากับ ${body.memberNumber} ${body.memberName ?? ""} แล้ว ` +
+        (body.onRound
+          ? `(${body.transfers} รายการ ${formatAmount(body.amount)}) — จำไว้ใช้รอบต่อไปให้แล้ว`
+          : "— จำไว้ใช้รอบต่อไปและหน้าเงินเข้าประจำวันให้แล้ว · " +
+            `แต่รอบนี้ยังไม่นับเป็นการชำระ เพราะ ${body.memberNumber} ไม่ได้อยู่ในรายชื่อหักไม่ได้รอบนี้ ` +
+            "(ไม่ได้ค้างอะไรในรอบนี้ จึงไม่มีอะไรให้ตัด)") +
+        (body.inRoster || body.onRound
+          ? ""
+          : " — ⚠️ ไม่พบเลขสมาชิกนี้ในทะเบียนสมาชิกด้วย ตรวจสอบว่าพิมพ์ถูกไหม");
+      setNotice(saved);
+      // A binding that matched nothing leaves its row exactly where it was, so
+      // the row is where the explanation has to be — otherwise the only sign
+      // anything happened is a line of text nowhere near the screen.
+      setAssignNote(body.onRound ? null : { account: accountNumber, text: saved, bad: false });
       setAssigningAccount(null);
       setAssignMemberNumber("");
       await Promise.all([fetchRound(selectedId), fetchRounds()]);
@@ -1057,10 +1078,13 @@ export default function StatementReconcilePanel() {
                       </td>
                       <td className="px-2 py-1 whitespace-nowrap">
                         {assigningAccount === t.accountNumber ? (
-                          <span className="inline-flex items-center gap-2">
+                          <span className="inline-flex flex-wrap items-center gap-2">
                             <input
                               value={assignMemberNumber}
-                              onChange={(e) => setAssignMemberNumber(e.target.value)}
+                              onChange={(e) => {
+                                setAssignMemberNumber(e.target.value);
+                                setAssignNote(null);
+                              }}
                               onKeyDown={(e) => {
                                 if (e.key === "Enter") assignAccount(t.accountNumber);
                                 if (e.key === "Escape") setAssigningAccount(null);
@@ -1078,22 +1102,40 @@ export default function StatementReconcilePanel() {
                               บันทึก
                             </button>
                             <button
-                              onClick={() => setAssigningAccount(null)}
+                              onClick={() => {
+                                setAssigningAccount(null);
+                                setAssignNote(null);
+                              }}
                               className="text-slate-500 hover:underline"
                             >
                               ยกเลิก
                             </button>
+
                           </span>
                         ) : (
                           <button
                             onClick={() => {
                               setAssigningAccount(t.accountNumber);
                               setAssignMemberNumber("");
+                              setAssignNote(null);
                             }}
                             className="text-slate-900 hover:underline"
                           >
                             ระบุเจ้าของ
                           </button>
+                        )}
+                        {/* The answer, where the click was. The panel's own
+                            error and notice sit at the top of the tab, far
+                            above this table. */}
+                        {assignNote?.account === t.accountNumber && (
+                          <span
+                            className={`block max-w-md text-xs mt-1 whitespace-normal ${
+                              assignNote.bad ? "text-red-700" : "text-amber-800"
+                            }`}
+                          >
+                            {assignNote.bad ? "⚠️ " : "ℹ️ "}
+                            {assignNote.text}
+                          </span>
                         )}
                       </td>
                     </tr>
