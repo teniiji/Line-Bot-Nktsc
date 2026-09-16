@@ -18,6 +18,8 @@ import { bankFromDescription } from "@/lib/thaiBanks";
 import { cooperativeToday, shiftDay } from "@/lib/cooperativeClock";
 import { describeDeductionHint } from "@/lib/deductionMatch";
 import { overlapsAnotherAccount, type StatementUpload } from "@/lib/statementUploads";
+import { bindMissedRoundNote, recordMissedRoundNote } from "@/lib/roundReach";
+import { DEDUCTION_CATEGORY } from "@/lib/statementSlipHints";
 import {
   SECTION_OPEN_BY_DEFAULT,
   allSections,
@@ -257,6 +259,9 @@ export default function DailyReconcilePanel() {
     memberNumber: string;
     memberName: string | null;
   } | null>(null);
+  // Said when something done here has not reached the หักไม่ได้ round, which
+  // is invisible otherwise — see lib/roundReach.ts.
+  const [roundNote, setRoundNote] = useState<string | null>(null);
 
   const fetchDay = useCallback(async (start: string, end: string) => {
     setLoading(true);
@@ -365,6 +370,7 @@ export default function DailyReconcilePanel() {
   // nobody chose.
   const openForm = (target: ActingTarget, memberNumber: string | null = null) => {
     setBindOffer(null);
+    setRoundNote(null);
     setActing(target);
     setActMemberNumber(memberNumber ?? "");
     setActMemberName("");
@@ -381,6 +387,7 @@ export default function DailyReconcilePanel() {
     setSaving(true);
     setError(null);
     setActionNotice(null);
+    setRoundNote(null);
     setBindOffer(null);
     try {
       const res = await fetch("/api/member-bank-accounts", {
@@ -403,6 +410,10 @@ export default function DailyReconcilePanel() {
           (body.rounds ? ` · จับคู่รอบเก็บไม่ได้ใหม่ ${body.rounds} รอบ` : "") +
           " · ครั้งต่อไปรู้เองไม่ต้องระบุซ้ำ"
       );
+      // Binding can only re-match transfers a round already holds, so where
+      // the statement never went into one, nothing moved there and the notice
+      // above would otherwise read as though it had.
+      setRoundNote(bindMissedRoundNote(body.rounds ?? 0, data?.round ?? null));
       closeForm();
       await fetchDay(from, to);
     } finally {
@@ -417,6 +428,7 @@ export default function DailyReconcilePanel() {
     setSaving(true);
     setError(null);
     setActionNotice(null);
+    setRoundNote(null);
     try {
       const res = await fetch(`/api/statement-lines/${depositId}/record`, {
         method: "POST",
@@ -440,6 +452,13 @@ export default function DailyReconcilePanel() {
           (actNote.trim() ? ` (${actNote.trim()})` : "") +
           ` ให้ ${body.memberNumber} ${body.memberFullName ?? ""} แล้ว` +
           (body.inRoster ? "" : " — ⚠️ ไม่พบเลขสมาชิกนี้ในทะเบียนสมาชิก ตรวจสอบอีกครั้ง")
+      );
+      // A round keeps score from the statement uploaded into it and has never
+      // read a transaction, so filing one as a deduction payment leaves the
+      // member still owing there. Said only for that category: every other
+      // one has nothing to do with a round.
+      setRoundNote(
+        recordMissedRoundNote(actCategory, DEDUCTION_CATEGORY, data?.round ?? null)
       );
 
       // Recording says what this one payment was. It does not teach the
@@ -473,6 +492,7 @@ export default function DailyReconcilePanel() {
     setSaving(true);
     setError(null);
     setActionNotice(null);
+    setRoundNote(null);
     try {
       const res = await fetch(`/api/statement-lines/${lineId}/member-money`, { method: "POST" });
       const body = await res.json();
@@ -497,6 +517,7 @@ export default function DailyReconcilePanel() {
     setSaving(true);
     setError(null);
     setActionNotice(null);
+    setRoundNote(null);
     try {
       const res = await fetch(`/api/statement-lines/${lineId}/member-money`, { method: "DELETE" });
       const body = await res.json();
@@ -852,6 +873,13 @@ export default function DailyReconcilePanel() {
 
       {actionNotice && (
         <p className="px-4 py-2 text-sm text-green-700 bg-green-50">{actionNotice}</p>
+      )}
+
+      {/* What the daily page cannot do. Kept apart from the green notice
+          because it is not a failure — the thing asked for was done, and this
+          is the next step nobody would guess at. */}
+      {roundNote && (
+        <p className="px-4 py-2 text-sm bg-amber-50 text-amber-900">ℹ️ {roundNote}</p>
       )}
 
       {/* The half a recording does not do. Said here rather than left to be
