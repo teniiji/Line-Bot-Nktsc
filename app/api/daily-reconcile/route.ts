@@ -332,6 +332,10 @@ export async function GET(request: NextRequest) {
     // `date` stays the first day of the window, so a caller that only ever
     // asked for one still reads the field it always read.
     date: fromParam,
+    // The newest round, so the page can name it when it has to say that
+    // something done here has not reached one — see lib/roundReach.ts. Null
+    // when no round exists, which is also when there is nothing to say.
+    round: latestRound ? { period: latestRound.period, label: latestRound.label } : null,
     from: fromParam,
     to: toParam,
     statement,

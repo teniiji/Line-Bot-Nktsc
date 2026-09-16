@@ -336,6 +336,9 @@ export interface DailyStatementRow {
 
 export interface DailyReconcileResult {
   date: string;
+  // The newest หักไม่ได้ round, so the page can name it when saying that
+  // something done here has not reached one. Null when no round exists.
+  round: { period: string; label: string } | null;
   // The whole day in the bank's order, for reading against the statement
   // itself rather than by what the system concluded.
   statement: DailyStatementRow[];
