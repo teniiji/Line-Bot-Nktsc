@@ -17,6 +17,11 @@
 // confirms the transfer rather than casting doubt on it.
 export const DEDUCTION_CATEGORY = "ชำระเก็บไม่ได้รายเดือน";
 
+// The reason a transfer is set aside because it settles a different month —
+// named so the round view can offer it directly on a line it has found
+// counting in more than one round. See lib/roundDoubleCount.ts.
+export const OTHER_ROUND_REASON = "ชำระของรอบอื่น";
+
 // The purposes a transfer can be set aside under: the bot's own transaction
 // categories minus the deduction payment itself, plus a catch-all. A fixed
 // list rather than free text, so the reason on a row is something the next
@@ -28,6 +33,14 @@ export const EXCLUDE_REASONS = [
   "ฝากเงิน",
   "ชำระประกัน",
   "ชำระฌาปนกิจ",
+  // Not a purpose like the ones above: this money really was a deduction
+  // payment, just not this round's. A round counts whatever statement was
+  // uploaded into it, and nothing on a transfer says which month it was
+  // meant for — so a September export loaded into August to catch the late
+  // payers, or a member who owes two months and transfers once, both end up
+  // counting in a round they do not settle. Until now the only way to set one
+  // aside was "อื่นๆ", which three months later reads as nobody knowing why.
+  OTHER_ROUND_REASON,
   "อื่นๆ",
 ];
 

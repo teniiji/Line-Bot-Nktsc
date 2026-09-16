@@ -20,6 +20,7 @@ import PanelHelp from "@/components/PanelHelp";
 import { describeDeductionPeriod } from "@/lib/deductionPeriod";
 import { downloadStatementMembersCsv } from "@/lib/csv";
 import { EXCLUDE_REASONS } from "@/lib/statementSlipHints";
+import { describeDoubleCount } from "@/lib/roundDoubleCount";
 import {
   StatementSort,
   filterStatementMembers,
@@ -435,6 +436,8 @@ export default function StatementReconcilePanel() {
   const memberHasHint = (memberNumber: string) =>
     transfers.some((t) => t.memberNumber === memberNumber && t.slipHint && !t.excludedReason);
   const excludedTransfers = transfers.filter((t) => t.excludedReason);
+  // The lines this round is counting that another round is counting too.
+  const doubleCounted = transfers.filter((t) => t.alsoCountedIn.length > 0);
 
   const clearFilters = () => {
     setStatusFilter("all");
@@ -789,6 +792,29 @@ export default function StatementReconcilePanel() {
             </>
           )}
 
+          {/* Said at the top, because the flag itself lives on a transfer row
+              inside a member's expanded detail — nobody would find it by
+              looking. This is money counted twice, so it belongs beside the
+              totals it is wrong about. */}
+          {doubleCounted.length > 0 && (
+            <div className="px-4 py-2.5 border-t border-slate-100 bg-red-50 text-sm text-red-800">
+              🔁 มี <strong className="num">{doubleCounted.length}</strong> รายการโอนที่ถูกนับเป็นการชำระ
+              <strong>ในรอบอื่นด้วย</strong> — เงินก้อนเดียวกันนับสองรอบ ยอดที่จ่ายแล้วของรอบนี้จึงสูงเกินจริง
+              <span className="block text-xs mt-1">
+                เกิดจากการอัป Statement ไฟล์เดียวเข้าหลายรอบ (ซึ่งจำเป็นเวลาไล่คนจ่ายช้า) ·
+                กดดูสมาชิกเลข{" "}
+                <strong className="num">
+                  {[...new Set(doubleCounted.map((t) => t.memberNumber))]
+                    .filter(Boolean)
+                    .slice(0, 8)
+                    .join(", ")}
+                  {new Set(doubleCounted.map((t) => t.memberNumber)).size > 8 && " …"}
+                </strong>{" "}
+                แล้วเลือก <strong>"ชำระของรอบอื่น"</strong> ในรอบที่เงินก้อนนั้นไม่ได้จ่ายให้
+              </span>
+            </div>
+          )}
+
           {loadingRound ? (
             <p className="text-slate-500 text-sm py-8 text-center">กำลังโหลด…</p>
           ) : members.length === 0 ? (
@@ -925,6 +951,23 @@ export default function StatementReconcilePanel() {
                                     ⚠️ อาจเป็น <strong>{t.slipHint.category}</strong>{" "}
                                     {formatAmount(t.slipHint.amount)} (สมาชิกส่งสลิป{" "}
                                     {formatStatementDate(t.slipHint.date)})
+                                  </span>
+                                )}
+                                {/* One payment settling two months at once.
+                                    Louder than the slip hint because this one
+                                    is arithmetic, not a guess: the money is
+                                    counted twice until somebody says which
+                                    month it was for. */}
+                                {t.alsoCountedIn.length > 0 && (
+                                  <span
+                                    className="text-xs text-red-700"
+                                    title={
+                                      "เงินก้อนเดียวกันนี้ถูกนับเป็นการชำระในรอบอื่นด้วย — " +
+                                      "รวมแล้วนับซ้ำ ถ้ารู้ว่าจ่ายของเดือนไหน " +
+                                      'ให้เลือก "ชำระของรอบอื่น" ในรอบที่ไม่ใช่'
+                                    }
+                                  >
+                                    🔁 {describeDoubleCount(t.alsoCountedIn)}
                                   </span>
                                 )}
                                 <span className="ml-auto flex items-center gap-2">

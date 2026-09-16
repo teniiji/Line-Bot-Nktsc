@@ -241,6 +241,10 @@ export interface StatementTransferRow {
   // A slip the member filed through the bot under some other purpose that
   // lines up with this transfer — a prompt to check, never a decision.
   slipHint: { category: string; amount: number; date: string } | null;
+  // Other rounds counting this same bank line toward somebody's payment.
+  // Empty on nearly every transfer; where it is not, one payment is settling
+  // two months at once — see lib/roundDoubleCount.ts.
+  alsoCountedIn: string[];
 }
 
 // A transfer that matched nobody on the round's list — money that arrived
