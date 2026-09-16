@@ -11,6 +11,13 @@
 // with work in them. "ตรงกัน" says on its own face that there is nothing to
 // do about it, and it is usually the longest list on the page — it stays
 // folded until somebody asks for it.
+//
+// The rule for what counts as open lives in lib/sections.ts, shared with the
+// เทียบ Statement tab; this file is only this tab's sections and defaults.
+
+import { openAll } from "./sections";
+
+export { sectionOpen, type SectionState } from "./sections";
 
 export type SectionKey =
   | "report"
@@ -45,44 +52,7 @@ export const SECTION_OPEN_BY_DEFAULT: Record<SectionKey, boolean> = {
   otherLines: false,
 };
 
-export interface SectionState {
-  // What this person last clicked on this section, if anything. Undefined
-  // until they touch it, which is what lets the two rules below apply.
-  clicked?: boolean;
-  searching: boolean;
-  // Rows in this section that match the search.
-  matches: number;
-}
-
-// Whether a section is showing its rows.
-//
-// A click wins while it stands — having asked for a section to be shut, a
-// person should not find it open again because of something else on the page.
-// It stands until the search box changes, which is the panel's job (see
-// DailyReconcilePanel): a new search makes every section a different list, so
-// what was clicked about the old one no longer means anything.
-//
-// Failing a click, a search opens whatever it found. Searching a page whose
-// sections are folded is otherwise a trap: the header counts the hits, the
-// rows stay hidden, and the obvious reading is that the box found nothing —
-// which is exactly what ย่อทั้งหมด followed by a search did before the clicks
-// were cleared, since it had written seven deliberate-looking closes.
-export function sectionOpen(state: SectionState, fallback: boolean): boolean {
-  if (state.clicked !== undefined) return state.clicked;
-  // While searching, the page is the result: the sections that found
-  // something are open and the rest are out of the way. A section that
-  // matched nothing but happens to open by default would otherwise sit there
-  // as a column of headings with no rows under them.
-  if (state.searching) return state.matches > 0;
-  return fallback;
-}
-
-// Every section at once, for the ขยายทั้งหมด / ย่อทั้งหมด pair. Written as
-// explicit clicks on all seven rather than as a mode, so one of them can be
-// folded again straight afterwards without the rest springing open.
+// Every section at once, for the ขยายทั้งหมด / ย่อทั้งหมด pair.
 export function allSections(open: boolean): Record<SectionKey, boolean> {
-  return Object.fromEntries(SECTION_KEYS.map((key) => [key, open])) as Record<
-    SectionKey,
-    boolean
-  >;
+  return openAll(SECTION_KEYS, open);
 }

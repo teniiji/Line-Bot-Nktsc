@@ -21,6 +21,13 @@ import { describeDeductionPeriod } from "@/lib/deductionPeriod";
 import { downloadStatementMembersCsv } from "@/lib/csv";
 import { EXCLUDE_REASONS } from "@/lib/statementSlipHints";
 import { describeDoubleCount } from "@/lib/roundDoubleCount";
+import { sectionOpen } from "@/lib/sections";
+import {
+  STATEMENT_SECTION_OPEN_BY_DEFAULT,
+  STATEMENT_SECTION_SEARCHABLE,
+  allStatementSections,
+  type StatementSectionKey,
+} from "@/lib/statementSections";
 import {
   StatementSort,
   filterStatementMembers,
@@ -152,6 +159,10 @@ export default function StatementReconcilePanel() {
     { account: string; text: string; bad: boolean } | null
   >(null);
   const [sort, setSort] = useState<StatementSort>("default");
+  // What this person has clicked open or shut. Empty until they touch a
+  // heading, which is what leaves the defaults and the search free to decide
+  // — see lib/statementSections.ts.
+  const [clicked, setClicked] = useState<Partial<Record<StatementSectionKey, boolean>>>({});
 
   const [showNew, setShowNew] = useState(false);
   const [newPeriod, setNewPeriod] = useState("");
@@ -218,6 +229,14 @@ export default function StatementReconcilePanel() {
     return () => clearTimeout(timer);
   }, [searchInput]);
 
+  // A new search makes every section a different list, so what was clicked
+  // about the old one stops meaning anything. Without this, ย่อทั้งหมด
+  // followed by a search hides the rows it just found — the headings count
+  // the hits and nothing appears under them.
+  useEffect(() => {
+    setClicked({});
+  }, [search]);
+
   useEffect(() => {
     if (selectedId) fetchRound(selectedId);
     else {
@@ -235,6 +254,7 @@ export default function StatementReconcilePanel() {
     setSearch("");
     setUnitFilter("");
     setHCodeFilter("");
+    setClicked({});
   }, [selectedId, fetchRound]);
 
   const createRound = async () => {
@@ -459,6 +479,26 @@ export default function StatementReconcilePanel() {
   const excludedTransfers = transfers.filter((t) => t.excludedReason);
   // The lines this round is counting that another round is counting too.
   const doubleCounted = transfers.filter((t) => t.alsoCountedIn.length > 0);
+
+  // Whether each section is showing its rows, and the one click that changes
+  // it. Only the member list is searchable, so the other two keep their
+  // default while somebody types rather than folding for want of hits they
+  // were never offered — see sectionOpen.
+  const isOpen = (key: StatementSectionKey, matches = 0) =>
+    sectionOpen(
+      {
+        clicked: clicked[key],
+        searching: STATEMENT_SECTION_SEARCHABLE[key] && search !== "",
+        matches,
+      },
+      STATEMENT_SECTION_OPEN_BY_DEFAULT[key]
+    );
+  const toggle = (key: StatementSectionKey, matches = 0) =>
+    setClicked((prev) => ({ ...prev, [key]: !isOpen(key, matches) }));
+
+  const membersOpen = isOpen("members", shown.length);
+  const unmatchedOpen = isOpen("unmatched", unmatched.length);
+  const excludedOpen = isOpen("excluded", excludedTransfers.length);
 
   const clearFilters = () => {
     setStatusFilter("all");
@@ -809,6 +849,25 @@ export default function StatementReconcilePanel() {
                     (ทั้งรอบ: คงเหลือ {formatAmount(totals.outstanding)})
                   </span>
                 )}
+                {/* Folding three tables of this size one heading at a time is
+                    its own chore when the answer is "show me everything" or
+                    "get all of it out of the way". Pushed right so it reads
+                    as a control over the page, not as part of the figures. */}
+                <span className="ml-auto flex items-center gap-2 text-xs">
+                  <button
+                    onClick={() => setClicked(allStatementSections(true))}
+                    className="text-slate-500 hover:underline"
+                  >
+                    ขยายทั้งหมด
+                  </button>
+                  <span className="text-slate-300">·</span>
+                  <button
+                    onClick={() => setClicked(allStatementSections(false))}
+                    className="text-slate-500 hover:underline"
+                  >
+                    ย่อทั้งหมด
+                  </button>
+                </span>
               </div>
             </>
           )}
@@ -850,322 +909,354 @@ export default function StatementReconcilePanel() {
               </button>
             </p>
           ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm min-w-[1240px]">
-                {/* The header sticks because these rounds run to hundreds of
-                    rows and the columns are otherwise indistinguishable once
-                    it scrolls away — four of them are money.
+            <>
+              {/* The heading is the control. This table is the round itself —
+                  1,173 rows on a real one — and it sits above the two lists
+                  staff work through by hand, so reaching them meant scrolling
+                  past the whole thing, again after every save. */}
+              <div className="px-4 pt-3">
+                <button
+                  onClick={() => toggle("members", shown.length)}
+                  aria-expanded={membersOpen}
+                  className="text-sm font-semibold text-slate-700 hover:underline"
+                >
+                  {membersOpen ? "▾" : "▸"} รายชื่อหักไม่ได้รอบนี้ (
+                  <span className="num">{shown.length}</span>
+                  {filtered && (
+                    <>
+                      {" จาก "}
+                      <span className="num">{members.length}</span>
+                    </>
+                  )}{" "}
+                  คน)
+                </button>
+              </div>
+              {membersOpen && (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm min-w-[1240px]">
+                    {/* The header sticks because these rounds run to hundreds of
+                        rows and the columns are otherwise indistinguishable once
+                        it scrolls away — four of them are money.
 
-                    Names and สังกัด carry minimum widths because Thai has no
-                    spaces between words: squeezed into a narrow column the
-                    browser breaks them mid-word, and a member's name split
-                    across three lines is hard to match against a list. */}
-                <thead className="sticky top-0 z-10 bg-slate-100 text-slate-600 text-left text-xs uppercase tracking-wide">
-                  <tr>
-                    <th className="px-4 py-2.5 font-semibold">เลขสมาชิก</th>
-                    <th className="px-4 py-2.5 font-semibold min-w-[13rem]">ชื่อ-สกุล</th>
-                    <th className="px-4 py-2.5 font-semibold">หน่วยคุม</th>
-                    <th className="px-4 py-2.5 font-semibold min-w-[12rem]">สังกัด</th>
-                    <th className="px-4 py-2.5 font-semibold">เลขบัญชี</th>
-                    <th className="px-4 py-2.5 font-semibold text-right">ยอดหักไม่ได้</th>
-                    <th className="px-4 py-2.5 font-semibold text-right">โอนมาแล้ว</th>
-                    <th className="px-4 py-2.5 font-semibold text-right">ส่วนต่าง</th>
-                    <th className="px-4 py-2.5 font-semibold">วันเวลาที่โอน</th>
-                    <th className="px-4 py-2.5 font-semibold">สถานะ</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {shown.map((m) => {
-                    const diff = Math.round((m.amountPaid - m.amountDue) * 100) / 100;
-                    return (
-                      <Fragment key={m.id}>
-                      <tr className="border-t border-slate-100 hover:bg-slate-50/75">
-                        <td className="px-4 py-2.5 num whitespace-nowrap">{m.memberNumber}</td>
-                        <td className="px-4 py-2.5">
-                          {m.name}
-                          {m.note && (
-                            <span className="text-xs text-slate-400"> · {m.note}</span>
-                          )}
-                        </td>
-                        <td className="px-4 py-2.5 num whitespace-nowrap text-slate-500">
-                          {m.hCode ?? "—"}
-                        </td>
-                        <td className="px-4 py-2.5">{m.unitName ?? "—"}</td>
-                        <td className="px-4 py-2.5 font-mono text-xs">
-                          {m.accountNumber ?? (
-                            <span className="font-sans text-amber-700">ไม่มีเลขบัญชี</span>
-                          )}
-                        </td>
-                        <td className="px-4 py-2.5 num text-right whitespace-nowrap">
-                          {formatAmount(m.amountDue)}
-                        </td>
-                        <td className="px-4 py-2.5 num text-right whitespace-nowrap">
-                          {m.amountPaid > 0 ? (
-                            <button
-                              onClick={() =>
-                                setExpandedMember(
-                                  expandedMember === m.memberNumber ? null : m.memberNumber
-                                )
-                              }
-                              className="hover:underline"
-                              title="ดูรายการโอนของคนนี้ / ระบุว่าเงินก้อนไหนไม่ใช่ค่าหักไม่ได้"
-                            >
-                              {formatAmount(m.amountPaid)}
-                              {memberHasHint(m.memberNumber) && (
-                                <span className="text-amber-600" title="อาจเป็นเงินที่โอนมาด้วยเหตุผลอื่น">
-                                  {" "}⚠️
-                                </span>
-                              )}
-                            </button>
-                          ) : (
-                            "—"
-                          )}
-                        </td>
-                        <td
-                          className={`px-4 py-2.5 num text-right whitespace-nowrap ${
-                            diff < 0
-                              ? "text-red-600 font-medium"
-                              : diff > 0
-                                ? "text-amber-700 font-medium"
-                                : "text-slate-400"
-                          }`}
-                        >
-                          {diff === 0 ? "0" : formatAmount(diff)}
-                        </td>
-                        <td className="px-4 py-2.5 whitespace-nowrap text-slate-500">
-                          {m.paidAt ? <DateTimeCell iso={m.paidAt} suffix={m.paidBranch} /> : "—"}
-                        </td>
-                        <td className="px-4 py-2.5 whitespace-nowrap">
-                          <span
-                            className={`inline-block px-2.5 py-1 rounded-full text-xs font-medium border ${
-                              STATUS_CLASS[m.status] ?? STATUS_CLASS.unpaid
-                            }`}
-                          >
-                            {STATUS_LABEL[m.status] ?? m.status}
-                          </span>
-                        </td>
+                        Names and สังกัด carry minimum widths because Thai has no
+                        spaces between words: squeezed into a narrow column the
+                        browser breaks them mid-word, and a member's name split
+                        across three lines is hard to match against a list. */}
+                    <thead className="sticky top-0 z-10 bg-slate-100 text-slate-600 text-left text-xs uppercase tracking-wide">
+                      <tr>
+                        <th className="px-4 py-2.5 font-semibold">เลขสมาชิก</th>
+                        <th className="px-4 py-2.5 font-semibold min-w-[13rem]">ชื่อ-สกุล</th>
+                        <th className="px-4 py-2.5 font-semibold">หน่วยคุม</th>
+                        <th className="px-4 py-2.5 font-semibold min-w-[12rem]">สังกัด</th>
+                        <th className="px-4 py-2.5 font-semibold">เลขบัญชี</th>
+                        <th className="px-4 py-2.5 font-semibold text-right">ยอดหักไม่ได้</th>
+                        <th className="px-4 py-2.5 font-semibold text-right">โอนมาแล้ว</th>
+                        <th className="px-4 py-2.5 font-semibold text-right">ส่วนต่าง</th>
+                        <th className="px-4 py-2.5 font-semibold">วันเวลาที่โอน</th>
+                        <th className="px-4 py-2.5 font-semibold">สถานะ</th>
                       </tr>
-
-                      {expandedMember === m.memberNumber && (
-                        <tr className="bg-slate-50">
-                          <td colSpan={10} className="px-4 py-2">
-                            <p className="text-xs text-slate-500 mb-1">
-                              รายการโอนของ {m.name} — ถ้าก้อนไหน<strong>ไม่ใช่</strong>เงินจ่ายค่าหักไม่ได้
-                              (ซื้อหุ้น / ชำระหนี้ / ฝากเงิน ฯลฯ) เลือกเหตุผลไว้ ระบบจะไม่นับเป็นการชำระ
-                            </p>
-                            {transfersOf(m.memberNumber).map((t) => (
-                              <div
-                                key={t.id}
-                                className="flex flex-wrap items-center gap-3 text-sm py-1 border-t border-slate-200"
+                    </thead>
+                    <tbody>
+                      {shown.map((m) => {
+                        const diff = Math.round((m.amountPaid - m.amountDue) * 100) / 100;
+                        return (
+                          <Fragment key={m.id}>
+                          <tr className="border-t border-slate-100 hover:bg-slate-50/75">
+                            <td className="px-4 py-2.5 num whitespace-nowrap">{m.memberNumber}</td>
+                            <td className="px-4 py-2.5">
+                              {m.name}
+                              {m.note && (
+                                <span className="text-xs text-slate-400"> · {m.note}</span>
+                              )}
+                            </td>
+                            <td className="px-4 py-2.5 num whitespace-nowrap text-slate-500">
+                              {m.hCode ?? "—"}
+                            </td>
+                            <td className="px-4 py-2.5">{m.unitName ?? "—"}</td>
+                            <td className="px-4 py-2.5 font-mono text-xs">
+                              {m.accountNumber ?? (
+                                <span className="font-sans text-amber-700">ไม่มีเลขบัญชี</span>
+                              )}
+                            </td>
+                            <td className="px-4 py-2.5 num text-right whitespace-nowrap">
+                              {formatAmount(m.amountDue)}
+                            </td>
+                            <td className="px-4 py-2.5 num text-right whitespace-nowrap">
+                              {m.amountPaid > 0 ? (
+                                <button
+                                  onClick={() =>
+                                    setExpandedMember(
+                                      expandedMember === m.memberNumber ? null : m.memberNumber
+                                    )
+                                  }
+                                  className="hover:underline"
+                                  title="ดูรายการโอนของคนนี้ / ระบุว่าเงินก้อนไหนไม่ใช่ค่าหักไม่ได้"
+                                >
+                                  {formatAmount(m.amountPaid)}
+                                  {memberHasHint(m.memberNumber) && (
+                                    <span className="text-amber-600" title="อาจเป็นเงินที่โอนมาด้วยเหตุผลอื่น">
+                                      {" "}⚠️
+                                    </span>
+                                  )}
+                                </button>
+                              ) : (
+                                "—"
+                              )}
+                            </td>
+                            <td
+                              className={`px-4 py-2.5 num text-right whitespace-nowrap ${
+                                diff < 0
+                                  ? "text-red-600 font-medium"
+                                  : diff > 0
+                                    ? "text-amber-700 font-medium"
+                                    : "text-slate-400"
+                              }`}
+                            >
+                              {diff === 0 ? "0" : formatAmount(diff)}
+                            </td>
+                            <td className="px-4 py-2.5 whitespace-nowrap text-slate-500">
+                              {m.paidAt ? <DateTimeCell iso={m.paidAt} suffix={m.paidBranch} /> : "—"}
+                            </td>
+                            <td className="px-4 py-2.5 whitespace-nowrap">
+                              <span
+                                className={`inline-block px-2.5 py-1 rounded-full text-xs font-medium border ${
+                                  STATUS_CLASS[m.status] ?? STATUS_CLASS.unpaid
+                                }`}
                               >
-                                <span className="num whitespace-nowrap font-medium">
-                                  {formatAmount(t.amount)}
-                                </span>
-                                <span className="num text-slate-500 whitespace-nowrap">
-                                  {formatStatementDateTime(t.transferredAt)}
-                                </span>
-                                <span className="font-mono text-xs text-slate-400">
-                                  {t.accountNumber}
-                                </span>
-                                {t.slipHint && !t.excludedReason && (
-                                  <span className="text-xs text-amber-700">
-                                    ⚠️ อาจเป็น <strong>{t.slipHint.category}</strong>{" "}
-                                    {formatAmount(t.slipHint.amount)} (สมาชิกส่งสลิป{" "}
-                                    {formatStatementDate(t.slipHint.date)})
-                                  </span>
-                                )}
-                                {/* One payment settling two months at once.
-                                    Louder than the slip hint because this one
-                                    is arithmetic, not a guess: the money is
-                                    counted twice until somebody says which
-                                    month it was for. */}
-                                {t.alsoCountedIn.length > 0 && (
-                                  <span
-                                    className="text-xs text-red-700"
-                                    title={
-                                      "เงินก้อนเดียวกันนี้ถูกนับเป็นการชำระในรอบอื่นด้วย — " +
-                                      "รวมแล้วนับซ้ำ ถ้ารู้ว่าจ่ายของเดือนไหน " +
-                                      'ให้เลือก "ชำระของรอบอื่น" ในรอบที่ไม่ใช่'
-                                    }
+                                {STATUS_LABEL[m.status] ?? m.status}
+                              </span>
+                            </td>
+                          </tr>
+
+                          {expandedMember === m.memberNumber && (
+                            <tr className="bg-slate-50">
+                              <td colSpan={10} className="px-4 py-2">
+                                <p className="text-xs text-slate-500 mb-1">
+                                  รายการโอนของ {m.name} — ถ้าก้อนไหน<strong>ไม่ใช่</strong>เงินจ่ายค่าหักไม่ได้
+                                  (ซื้อหุ้น / ชำระหนี้ / ฝากเงิน ฯลฯ) เลือกเหตุผลไว้ ระบบจะไม่นับเป็นการชำระ
+                                </p>
+                                {transfersOf(m.memberNumber).map((t) => (
+                                  <div
+                                    key={t.id}
+                                    className="flex flex-wrap items-center gap-3 text-sm py-1 border-t border-slate-200"
                                   >
-                                    🔁 {describeDoubleCount(t.alsoCountedIn)}
-                                  </span>
-                                )}
-                                <span className="ml-auto flex items-center gap-2">
-                                  <select
-                                    value={t.excludedReason ?? ""}
-                                    onChange={(e) =>
-                                      setTransferReason(t.id, e.target.value || null)
-                                    }
-                                    disabled={busy}
-                                    className={`border rounded px-2 py-1 text-xs ${
-                                      t.excludedReason
-                                        ? "border-amber-300 bg-amber-50"
-                                        : "border-slate-300"
-                                    }`}
-                                  >
-                                    <option value="">นับเป็นจ่ายค่าหักไม่ได้</option>
-                                    {EXCLUDE_REASONS.map((r) => (
-                                      <option key={r} value={r}>
-                                        ไม่เกี่ยวกับรอบนี้ — {r}
-                                      </option>
-                                    ))}
-                                  </select>
-                                </span>
-                              </div>
-                            ))}
-                          </td>
-                        </tr>
-                      )}
-                      </Fragment>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
+                                    <span className="num whitespace-nowrap font-medium">
+                                      {formatAmount(t.amount)}
+                                    </span>
+                                    <span className="num text-slate-500 whitespace-nowrap">
+                                      {formatStatementDateTime(t.transferredAt)}
+                                    </span>
+                                    <span className="font-mono text-xs text-slate-400">
+                                      {t.accountNumber}
+                                    </span>
+                                    {t.slipHint && !t.excludedReason && (
+                                      <span className="text-xs text-amber-700">
+                                        ⚠️ อาจเป็น <strong>{t.slipHint.category}</strong>{" "}
+                                        {formatAmount(t.slipHint.amount)} (สมาชิกส่งสลิป{" "}
+                                        {formatStatementDate(t.slipHint.date)})
+                                      </span>
+                                    )}
+                                    {/* One payment settling two months at once.
+                                        Louder than the slip hint because this one
+                                        is arithmetic, not a guess: the money is
+                                        counted twice until somebody says which
+                                        month it was for. */}
+                                    {t.alsoCountedIn.length > 0 && (
+                                      <span
+                                        className="text-xs text-red-700"
+                                        title={
+                                          "เงินก้อนเดียวกันนี้ถูกนับเป็นการชำระในรอบอื่นด้วย — " +
+                                          "รวมแล้วนับซ้ำ ถ้ารู้ว่าจ่ายของเดือนไหน " +
+                                          'ให้เลือก "ชำระของรอบอื่น" ในรอบที่ไม่ใช่'
+                                        }
+                                      >
+                                        🔁 {describeDoubleCount(t.alsoCountedIn)}
+                                      </span>
+                                    )}
+                                    <span className="ml-auto flex items-center gap-2">
+                                      <select
+                                        value={t.excludedReason ?? ""}
+                                        onChange={(e) =>
+                                          setTransferReason(t.id, e.target.value || null)
+                                        }
+                                        disabled={busy}
+                                        className={`border rounded px-2 py-1 text-xs ${
+                                          t.excludedReason
+                                            ? "border-amber-300 bg-amber-50"
+                                            : "border-slate-300"
+                                        }`}
+                                      >
+                                        <option value="">นับเป็นจ่ายค่าหักไม่ได้</option>
+                                        {EXCLUDE_REASONS.map((r) => (
+                                          <option key={r} value={r}>
+                                            ไม่เกี่ยวกับรอบนี้ — {r}
+                                          </option>
+                                        ))}
+                                      </select>
+                                    </span>
+                                  </div>
+                                ))}
+                              </td>
+                            </tr>
+                          )}
+                          </Fragment>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </>
           )}
 
           {unmatched.length > 0 && (
             <div className="px-4 py-3 border-t border-slate-100">
-              <h3 className="text-sm font-semibold text-amber-800">
-                โอนเข้ามาแต่ไม่พบเจ้าของ ({unmatched.length} รายการ)
-              </h3>
+              <button
+                onClick={() => toggle("unmatched", unmatched.length)}
+                aria-expanded={unmatchedOpen}
+                className="text-sm font-semibold text-amber-800 text-left hover:underline"
+              >
+                {unmatchedOpen ? "▾" : "▸"} โอนเข้ามาแต่ไม่พบเจ้าของ (
+                <span className="num">{unmatched.length}</span> รายการ)
+              </button>
               <p className="text-xs text-slate-500 mt-1">
                 เลขบัญชีที่โอนเข้ามาไม่ตรงกับใครในรายชื่อหักไม่ได้รอบนี้ —
                 กด <strong>"ระบุเจ้าของ"</strong> แล้วใส่เลขสมาชิก ระบบจะจับคู่ให้ทันที
                 และ<strong>จำเลขบัญชีนี้ไว้ใช้รอบต่อๆ ไป</strong>ด้วย ไม่ต้องมาระบุซ้ำทุกเดือน
                 (หรือจะแก้เลขบัญชีในไฟล์รายชื่อแล้วอัปโหลดใหม่ก็ได้เหมือนเดิม)
               </p>
-              <table className="w-full text-sm mt-2">
-                <thead className="text-slate-500 text-left">
-                  <tr>
-                    <th className="px-2 py-1.5 font-medium">เลขบัญชี</th>
-                    <th className="px-2 py-1.5 font-medium text-right">ยอด</th>
-                    <th className="px-2 py-1.5 font-medium">วันเวลาที่โอน</th>
-                    <th className="px-2 py-1.5 font-medium">บัญชีที่รับ</th>
-                    <th className="px-2 py-1.5 font-medium">เป็นเงินอะไร</th>
-                    <th className="px-2 py-1.5 font-medium">เจ้าของ</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {unmatched.map((t) => (
-                    <tr key={t.id} className="border-t border-slate-100 hover:bg-slate-50">
-                      <td className="px-2 py-1.5 font-mono text-xs">{t.accountNumber}</td>
-                      <td className="px-2 py-1.5 num text-right whitespace-nowrap font-medium">
-                        {formatAmount(t.amount)}
-                      </td>
-                      <td className="px-2 py-1.5 whitespace-nowrap text-slate-500">
-                        <DateTimeCell iso={t.transferredAt} />
-                      </td>
-                      <td className="px-2 py-1.5 text-slate-500">{t.branch ?? "—"}</td>
-                      <td className="px-2 py-1.5">
-                        <select
-                          value=""
-                          onChange={(e) =>
-                            e.target.value && setTransferReason(t.id, e.target.value)
-                          }
-                          disabled={busy}
-                          className="border border-slate-300 rounded px-2 py-1 text-xs"
-                          title="เงินก้อนนี้ไม่ใช่ค่าหักไม่ได้ — เอาออกจากรายการที่ต้องตาม"
-                        >
-                          <option value="">ยังไม่ระบุ</option>
-                          {EXCLUDE_REASONS.map((r) => (
-                            <option key={r} value={r}>
-                              ไม่เกี่ยวกับรอบนี้ — {r}
-                            </option>
-                          ))}
-                        </select>
-                      </td>
-                      <td className="px-2 py-1 whitespace-nowrap">
-                        {assigningAccount === t.accountNumber ? (
-                          <span className="inline-flex flex-wrap items-center gap-2">
-                            <input
-                              value={assignMemberNumber}
-                              onChange={(e) => {
-                                setAssignMemberNumber(e.target.value);
-                                setAssignNote(null);
-                              }}
-                              onKeyDown={(e) => {
-                                if (e.key === "Enter") assignAccount(t.accountNumber);
-                                if (e.key === "Escape") setAssigningAccount(null);
-                              }}
-                              list="statement-member-numbers"
-                              placeholder="เลขสมาชิก"
-                              autoFocus
-                              className="border border-slate-300 rounded px-2 py-1 text-sm w-44"
-                            />
-                            <button
-                              onClick={() => assignAccount(t.accountNumber)}
-                              disabled={busy || !assignMemberNumber.trim()}
-                              className="text-slate-900 hover:underline disabled:opacity-40"
-                            >
-                              บันทึก
-                            </button>
-                            <button
-                              onClick={() => {
-                                setAssigningAccount(null);
-                                setAssignNote(null);
-                              }}
-                              className="text-slate-500 hover:underline"
-                            >
-                              ยกเลิก
-                            </button>
-
-                          </span>
-                        ) : (
-                          <button
-                            onClick={() => {
-                              setAssigningAccount(t.accountNumber);
-                              setAssignMemberNumber("");
-                              setAssignNote(null);
-                            }}
-                            className="text-slate-900 hover:underline"
+              {unmatchedOpen && (
+                <table className="w-full text-sm mt-2">
+                  <thead className="text-slate-500 text-left">
+                    <tr>
+                      <th className="px-2 py-1.5 font-medium">เลขบัญชี</th>
+                      <th className="px-2 py-1.5 font-medium text-right">ยอด</th>
+                      <th className="px-2 py-1.5 font-medium">วันเวลาที่โอน</th>
+                      <th className="px-2 py-1.5 font-medium">บัญชีที่รับ</th>
+                      <th className="px-2 py-1.5 font-medium">เป็นเงินอะไร</th>
+                      <th className="px-2 py-1.5 font-medium">เจ้าของ</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {unmatched.map((t) => (
+                      <tr key={t.id} className="border-t border-slate-100 hover:bg-slate-50">
+                        <td className="px-2 py-1.5 font-mono text-xs">{t.accountNumber}</td>
+                        <td className="px-2 py-1.5 num text-right whitespace-nowrap font-medium">
+                          {formatAmount(t.amount)}
+                        </td>
+                        <td className="px-2 py-1.5 whitespace-nowrap text-slate-500">
+                          <DateTimeCell iso={t.transferredAt} />
+                        </td>
+                        <td className="px-2 py-1.5 text-slate-500">{t.branch ?? "—"}</td>
+                        <td className="px-2 py-1.5">
+                          <select
+                            value=""
+                            onChange={(e) =>
+                              e.target.value && setTransferReason(t.id, e.target.value)
+                            }
+                            disabled={busy}
+                            className="border border-slate-300 rounded px-2 py-1 text-xs"
+                            title="เงินก้อนนี้ไม่ใช่ค่าหักไม่ได้ — เอาออกจากรายการที่ต้องตาม"
                           >
-                            ระบุเจ้าของ
-                          </button>
-                        )}
-                        {/* The daily page has already been told whose this
-                            is — staff rang round and recorded the payment
-                            there. The round cannot hear about a recording, so
-                            it says so here and offers the one click that
-                            makes it official. */}
-                        {t.recordedAs && assigningAccount !== t.accountNumber && (
-                          <span className="block max-w-md text-xs text-sky-800 mt-1 whitespace-normal">
-                            เงินเข้าประจำวันบันทึกไว้แล้วว่าเป็นของ{" "}
-                            <strong className="num">{t.recordedAs.memberNumber}</strong>{" "}
-                            {t.recordedAs.memberName ?? ""}
-                            {t.recordedAs.category ? ` · ${t.recordedAs.category}` : ""}{" "}
+                            <option value="">ยังไม่ระบุ</option>
+                            {EXCLUDE_REASONS.map((r) => (
+                              <option key={r} value={r}>
+                                ไม่เกี่ยวกับรอบนี้ — {r}
+                              </option>
+                            ))}
+                          </select>
+                        </td>
+                        <td className="px-2 py-1 whitespace-nowrap">
+                          {assigningAccount === t.accountNumber ? (
+                            <span className="inline-flex flex-wrap items-center gap-2">
+                              <input
+                                value={assignMemberNumber}
+                                onChange={(e) => {
+                                  setAssignMemberNumber(e.target.value);
+                                  setAssignNote(null);
+                                }}
+                                onKeyDown={(e) => {
+                                  if (e.key === "Enter") assignAccount(t.accountNumber);
+                                  if (e.key === "Escape") setAssigningAccount(null);
+                                }}
+                                list="statement-member-numbers"
+                                placeholder="เลขสมาชิก"
+                                autoFocus
+                                className="border border-slate-300 rounded px-2 py-1 text-sm w-44"
+                              />
+                              <button
+                                onClick={() => assignAccount(t.accountNumber)}
+                                disabled={busy || !assignMemberNumber.trim()}
+                                className="text-slate-900 hover:underline disabled:opacity-40"
+                              >
+                                บันทึก
+                              </button>
+                              <button
+                                onClick={() => {
+                                  setAssigningAccount(null);
+                                  setAssignNote(null);
+                                }}
+                                className="text-slate-500 hover:underline"
+                              >
+                                ยกเลิก
+                              </button>
+
+                            </span>
+                          ) : (
                             <button
                               onClick={() => {
                                 setAssigningAccount(t.accountNumber);
-                                setAssignMemberNumber(t.recordedAs!.memberNumber);
+                                setAssignMemberNumber("");
                                 setAssignNote(null);
                               }}
-                              className="text-sky-800 underline"
-                              title="ใส่เลขสมาชิกนี้ให้ แล้วกดบันทึกเพื่อผูกเลขบัญชี — รอบจะจับคู่ให้ทันทีถ้าสมาชิกอยู่ในรายชื่อรอบนี้"
+                              className="text-slate-900 hover:underline"
                             >
-                              ใช้เลขนี้
+                              ระบุเจ้าของ
                             </button>
-                          </span>
-                        )}
-                        {/* The answer, where the click was. The panel's own
-                            error and notice sit at the top of the tab, far
-                            above this table. */}
-                        {assignNote?.account === t.accountNumber && (
-                          <span
-                            className={`block max-w-md text-xs mt-1 whitespace-normal ${
-                              assignNote.bad ? "text-red-700" : "text-amber-800"
-                            }`}
-                          >
-                            {assignNote.bad ? "⚠️ " : "ℹ️ "}
-                            {assignNote.text}
-                          </span>
-                        )}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+                          )}
+                          {/* The daily page has already been told whose this
+                              is — staff rang round and recorded the payment
+                              there. The round cannot hear about a recording, so
+                              it says so here and offers the one click that
+                              makes it official. */}
+                          {t.recordedAs && assigningAccount !== t.accountNumber && (
+                            <span className="block max-w-md text-xs text-sky-800 mt-1 whitespace-normal">
+                              เงินเข้าประจำวันบันทึกไว้แล้วว่าเป็นของ{" "}
+                              <strong className="num">{t.recordedAs.memberNumber}</strong>{" "}
+                              {t.recordedAs.memberName ?? ""}
+                              {t.recordedAs.category ? ` · ${t.recordedAs.category}` : ""}{" "}
+                              <button
+                                onClick={() => {
+                                  setAssigningAccount(t.accountNumber);
+                                  setAssignMemberNumber(t.recordedAs!.memberNumber);
+                                  setAssignNote(null);
+                                }}
+                                className="text-sky-800 underline"
+                                title="ใส่เลขสมาชิกนี้ให้ แล้วกดบันทึกเพื่อผูกเลขบัญชี — รอบจะจับคู่ให้ทันทีถ้าสมาชิกอยู่ในรายชื่อรอบนี้"
+                              >
+                                ใช้เลขนี้
+                              </button>
+                            </span>
+                          )}
+                          {/* The answer, where the click was. The panel's own
+                              error and notice sit at the top of the tab, far
+                              above this table. */}
+                          {assignNote?.account === t.accountNumber && (
+                            <span
+                              className={`block max-w-md text-xs mt-1 whitespace-normal ${
+                                assignNote.bad ? "text-red-700" : "text-amber-800"
+                              }`}
+                            >
+                              {assignNote.bad ? "⚠️ " : "ℹ️ "}
+                              {assignNote.text}
+                            </span>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
 
               {/* Native autocomplete over this round's members, so staff can
                   type either the number or the name to find it. */}
@@ -1182,55 +1273,62 @@ export default function StatementReconcilePanel() {
 
           {excludedTransfers.length > 0 && (
             <div className="px-4 py-3 border-t border-slate-100">
-              <h3 className="text-sm font-semibold text-slate-700">
-                เงินเข้าที่ไม่เกี่ยวกับรอบนี้ ({excludedTransfers.length} รายการ ·{" "}
-                {formatAmount(excludedTotal)})
-              </h3>
+              <button
+                onClick={() => toggle("excluded", excludedTransfers.length)}
+                aria-expanded={excludedOpen}
+                className="text-sm font-semibold text-slate-700 text-left hover:underline"
+              >
+                {excludedOpen ? "▾" : "▸"} เงินเข้าที่ไม่เกี่ยวกับรอบนี้ (
+                <span className="num">{excludedTransfers.length}</span> รายการ ·{" "}
+                <span className="num">{formatAmount(excludedTotal)}</span>)
+              </button>
               <p className="text-xs text-slate-500 mt-1">
                 เงินที่โอนเข้ามาจริงแต่เป็นเรื่องอื่น (ซื้อหุ้น ชำระหนี้ ฝากเงิน ฯลฯ)
                 ไม่ถูกนับเป็นการจ่ายค่าหักไม่ได้ — เก็บไว้ให้เห็นเพราะเป็นเงินที่เข้ามาจริง
                 ถ้าระบุผิดเลือก "นับเป็นจ่ายค่าหักไม่ได้" เพื่อเอากลับเข้ารอบได้
               </p>
-              <table className="w-full text-sm mt-2">
-                <thead className="text-slate-500 text-left">
-                  <tr>
-                    <th className="px-2 py-1.5 font-medium">เลขบัญชี</th>
-                    <th className="px-2 py-1.5 font-medium text-right">ยอด</th>
-                    <th className="px-2 py-1.5 font-medium">วันเวลาที่โอน</th>
-                    <th className="px-2 py-1.5 font-medium">เจ้าของ</th>
-                    <th className="px-2 py-1.5 font-medium">เป็นเงินอะไร</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {excludedTransfers.map((t) => (
-                    <tr key={t.id} className="border-t border-slate-100 hover:bg-slate-50">
-                      <td className="px-2 py-1.5 font-mono text-xs">{t.accountNumber}</td>
-                      <td className="px-2 py-1.5 num text-right whitespace-nowrap font-medium">
-                        {formatAmount(t.amount)}
-                      </td>
-                      <td className="px-2 py-1.5 whitespace-nowrap text-slate-500">
-                        <DateTimeCell iso={t.transferredAt} />
-                      </td>
-                      <td className="px-2 py-1.5 num text-slate-500">{t.memberNumber ?? "—"}</td>
-                      <td className="px-2 py-1.5">
-                        <select
-                          value={t.excludedReason ?? ""}
-                          onChange={(e) => setTransferReason(t.id, e.target.value || null)}
-                          disabled={busy}
-                          className="border border-amber-300 bg-amber-50 rounded px-2 py-1 text-xs"
-                        >
-                          <option value="">นับเป็นจ่ายค่าหักไม่ได้</option>
-                          {EXCLUDE_REASONS.map((r) => (
-                            <option key={r} value={r}>
-                              {r}
-                            </option>
-                          ))}
-                        </select>
-                      </td>
+              {excludedOpen && (
+                <table className="w-full text-sm mt-2">
+                  <thead className="text-slate-500 text-left">
+                    <tr>
+                      <th className="px-2 py-1.5 font-medium">เลขบัญชี</th>
+                      <th className="px-2 py-1.5 font-medium text-right">ยอด</th>
+                      <th className="px-2 py-1.5 font-medium">วันเวลาที่โอน</th>
+                      <th className="px-2 py-1.5 font-medium">เจ้าของ</th>
+                      <th className="px-2 py-1.5 font-medium">เป็นเงินอะไร</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody>
+                    {excludedTransfers.map((t) => (
+                      <tr key={t.id} className="border-t border-slate-100 hover:bg-slate-50">
+                        <td className="px-2 py-1.5 font-mono text-xs">{t.accountNumber}</td>
+                        <td className="px-2 py-1.5 num text-right whitespace-nowrap font-medium">
+                          {formatAmount(t.amount)}
+                        </td>
+                        <td className="px-2 py-1.5 whitespace-nowrap text-slate-500">
+                          <DateTimeCell iso={t.transferredAt} />
+                        </td>
+                        <td className="px-2 py-1.5 num text-slate-500">{t.memberNumber ?? "—"}</td>
+                        <td className="px-2 py-1.5">
+                          <select
+                            value={t.excludedReason ?? ""}
+                            onChange={(e) => setTransferReason(t.id, e.target.value || null)}
+                            disabled={busy}
+                            className="border border-amber-300 bg-amber-50 rounded px-2 py-1 text-xs"
+                          >
+                            <option value="">นับเป็นจ่ายค่าหักไม่ได้</option>
+                            {EXCLUDE_REASONS.map((r) => (
+                              <option key={r} value={r}>
+                                {r}
+                              </option>
+                            ))}
+                          </select>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
             </div>
           )}
         </>
