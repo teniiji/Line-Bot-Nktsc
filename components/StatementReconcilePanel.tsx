@@ -128,6 +128,10 @@ export default function StatementReconcilePanel() {
   // lib/boundTransfers.ts.
   const [outsideRound, setOutsideRound] = useState<StatementOutsideRoundRow[]>([]);
   const [outsideRoundTotal, setOutsideRoundTotal] = useState(0);
+  // Whether the "take every answer the daily page already has" list is up for
+  // approval. A flag rather than a copy of the list, so the dialog reads the
+  // rows on screen and cannot show one thing while sending another.
+  const [confirmRecorded, setConfirmRecorded] = useState(false);
   const [statements, setStatements] = useState<StatementFileSummary[]>([]);
   const [transfers, setTransfers] = useState<StatementTransferRow[]>([]);
   const [excludedTotal, setExcludedTotal] = useState(0);
@@ -430,6 +434,49 @@ export default function StatementReconcilePanel() {
     }
   };
 
+  // Takes every answer the daily page already has, in one save. Each of these
+  // can be made by hand on its own row; this is the same thing for somebody
+  // who has just read the list and agreed with all of it, which is why the
+  // list is shown first and the rows are sent back as they were displayed.
+  const applyRecordedOwners = async () => {
+    if (!selectedId) return;
+    setConfirmRecorded(false);
+    setBusy(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const res = await fetch(`/api/statement-rounds/${selectedId}/assign-recorded`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          bindings: recordedBindings.map((b) => ({
+            accountNumber: b.accountNumber,
+            memberNumber: b.memberNumber,
+          })),
+        }),
+      });
+      const body = await res.json();
+      if (!res.ok) {
+        setError(body.error || "ผูกเจ้าของไม่สำเร็จ");
+        return;
+      }
+      setNotice(
+        `ผูกเลขบัญชีตามที่เงินเข้าประจำวันบันทึกไว้ ${body.applied} บัญชี — ` +
+          `รอบนี้จับคู่ได้ ${body.matched} บัญชี` +
+          (body.outsideRound > 0
+            ? `, อีก ${body.outsideRound} บัญชีเป็นสมาชิกที่ไม่ได้อยู่ในรอบนี้ ` +
+              '(ไปอยู่หัวข้อ "รู้เจ้าของแล้ว แต่ไม่ได้อยู่ในรอบนี้")'
+            : "") +
+          (body.stale > 0
+            ? ` — ⚠️ ข้าม ${body.stale} บัญชีที่ข้อมูลเปลี่ยนไประหว่างนี้ ให้ดูทีละแถวเอง`
+            : "")
+      );
+      await Promise.all([fetchRound(selectedId), fetchRounds()]);
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const confirmClearAccount = async () => {
     if (!pendingClear || !selectedId) return;
     const { account: acct, branch } = pendingClear;
@@ -513,6 +560,25 @@ export default function StatementReconcilePanel() {
   const membersOpen = isOpen("members", shown.length);
   const unmatchedOpen = isOpen("unmatched", unmatched.length);
   const outsideRoundOpen = isOpen("outsideRound", outsideRound.length);
+
+  // The answers the daily page already has for rows still on the list of
+  // work: the same "ใช้เลขนี้" each row offers, gathered one per account so a
+  // member who paid in three times is one binding, not three.
+  const recordedBindings = [
+    ...new Map(
+      unmatched
+        .filter((t) => t.recordedAs)
+        .map((t) => [
+          t.accountNumber,
+          {
+            accountNumber: t.accountNumber,
+            memberNumber: t.recordedAs!.memberNumber,
+            memberName: t.recordedAs!.memberName,
+            category: t.recordedAs!.category,
+          },
+        ])
+    ).values(),
+  ];
   const excludedOpen = isOpen("excluded", excludedTransfers.length);
 
   const clearFilters = () => {
@@ -1134,6 +1200,21 @@ export default function StatementReconcilePanel() {
                 {unmatchedOpen ? "▾" : "▸"} โอนเข้ามาแต่ไม่พบเจ้าของ (
                 <span className="num">{unmatched.length}</span> รายการ)
               </button>
+              {/* The same two clicks a row, for rows the system already has
+                  the answer to. Offered here rather than only on each row
+                  because on a list of hundreds the repetition is the work. */}
+              {recordedBindings.length > 0 && (
+                <button
+                  onClick={() => setConfirmRecorded(true)}
+                  disabled={busy}
+                  className="ml-3 text-xs px-2.5 py-1 border border-sky-300 bg-sky-50 text-sky-800 rounded disabled:opacity-50"
+                  title="เงินเข้าประจำวันบันทึกไว้แล้วว่าบัญชีเหล่านี้เป็นของใคร — ผูกให้ทีเดียว โดยขอดูรายการก่อน"
+                  aria-label="ใช้เลขที่เงินเข้าประจำวันบันทึกไว้ทั้งหมด"
+                >
+                  ใช้เลขที่เงินเข้าประจำวันบันทึกไว้ทั้งหมด (
+                  <span className="num">{recordedBindings.length}</span> บัญชี)
+                </button>
+              )}
               <p className="text-xs text-slate-500 mt-1">
                 เลขบัญชีที่โอนเข้ามาไม่ตรงกับใครในรายชื่อหักไม่ได้รอบนี้ —
                 กด <strong>"ระบุเจ้าของ"</strong> แล้วใส่เลขสมาชิก ระบบจะจับคู่ให้ทันที
@@ -1503,6 +1584,39 @@ export default function StatementReconcilePanel() {
         onConfirm={confirmClearAccount}
         onCancel={() => setPendingClear(null)}
       />
+
+      {/* The list, before it is written. "ผูก 37 บัญชี" is not a question
+          anybody can answer without seeing the 37 — and one of them naming
+          the wrong person is exactly what this is for catching. */}
+      <ConfirmDialog
+        open={confirmRecorded}
+        tone="neutral"
+        title={`ผูกเลขบัญชีตามที่เงินเข้าประจำวันบันทึกไว้ ${recordedBindings.length} บัญชี?`}
+        description={
+          "เจ้าหน้าที่บันทึกรายการเหล่านี้ไว้ที่หน้าเงินเข้าประจำวันแล้ว — กดยืนยันเพื่อผูกเลขบัญชีให้ทั้งหมดทีเดียว " +
+          "(เท่ากับกด “ใช้เลขนี้” ทีละแถว) · ถ้ามีแถวไหนเป็นคนโอนแทน ไม่ใช่เจ้าของบัญชี ให้ยกเลิกแล้วทำทีละแถวแทน"
+        }
+        confirmLabel="ผูกทั้งหมด"
+        cancelLabel="ยกเลิก"
+        onConfirm={applyRecordedOwners}
+        onCancel={() => setConfirmRecorded(false)}
+      >
+        <div className="max-h-64 overflow-y-auto border border-slate-200 rounded divide-y divide-slate-100">
+          {recordedBindings.map((b) => (
+            <div key={b.accountNumber} className="flex items-baseline gap-2 px-3 py-1.5 text-sm">
+              <span className="font-mono text-xs text-slate-500">{b.accountNumber}</span>
+              <span className="text-slate-400">→</span>
+              <strong className="num">{b.memberNumber}</strong>
+              <span className="truncate">{b.memberName ?? ""}</span>
+              {b.category && (
+                <span className="text-xs text-slate-400 ml-auto whitespace-nowrap">
+                  {b.category}
+                </span>
+              )}
+            </div>
+          ))}
+        </div>
+      </ConfirmDialog>
 
       <ConfirmDialog
         open={pendingShrink !== null}
