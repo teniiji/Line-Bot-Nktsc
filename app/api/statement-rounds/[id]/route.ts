@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { matchSlipHints } from "@/lib/statementSlipHints";
 import { countedElsewhere } from "@/lib/roundDoubleCount";
 import { ownersFromRecordings } from "@/lib/recordedOwners";
+import { splitByBinding } from "@/lib/boundTransfers";
 
 export const dynamic = "force-dynamic";
 
@@ -67,10 +68,44 @@ export async function GET(
     }))
   );
 
-  const unmatched = unmatchedRows.map((t) => ({
-    ...t,
-    recordedAs: recordedOwners.get(t.accountNumber) ?? null,
-  }));
+  // Which of these accounts staff have already bound to a member. A binding
+  // to somebody on this round's list would have matched the transfer, so
+  // every one found here names a member the round has no row for — see
+  // lib/boundTransfers.ts for why they must not stay under "ไม่พบเจ้าของ".
+  const bindings = unknownAccounts.length
+    ? await prisma.memberBankAccount.findMany({
+        where: { accountNumber: { in: unknownAccounts } },
+        select: { accountNumber: true, memberNumber: true, memberName: true },
+      })
+    : [];
+  // A bound member number that is in no list at all is the shape of a typo,
+  // and stays on the list of work rather than being taken as knowledge.
+  const boundRoster = bindings.length
+    ? await prisma.memberRoster.findMany({
+        where: { memberNumber: { in: [...new Set(bindings.map((b) => b.memberNumber))] } },
+        select: { memberNumber: true },
+      })
+    : [];
+  const inRoster = new Set(boundRoster.map((m) => m.memberNumber));
+  const onRoundNumbers = new Set(members.map((m) => m.memberNumber));
+
+  const { unknown, outsideRound } = splitByBinding(
+    unmatchedRows.map((t) => ({
+      ...t,
+      recordedAs: recordedOwners.get(t.accountNumber) ?? null,
+    })),
+    new Map(
+      bindings.map((row) => [
+        row.accountNumber,
+        {
+          memberNumber: row.memberNumber,
+          memberName: row.memberName,
+          inRoster: inRoster.has(row.memberNumber) || onRoundNumbers.has(row.memberNumber),
+        },
+      ])
+    )
+  );
+  const unmatched = unknown;
 
   // Still-owing first, then overpaid, then settled: a round runs to hundreds
   // of members and the ones staff opened this tab to chase should not be
@@ -177,6 +212,12 @@ export async function GET(
     round,
     data: members,
     unmatched,
+    // Money whose owner staff have already written down, kept apart from the
+    // money nobody has placed: the list of work has to shrink as the work is
+    // done, or pressing บันทึก reads as having done nothing.
+    outsideRound,
+    outsideRoundTotal:
+      Math.round(outsideRound.reduce((sum, t) => sum + t.amount, 0) * 100) / 100,
     transfers: withHints,
     excluded,
     excludedTotal:

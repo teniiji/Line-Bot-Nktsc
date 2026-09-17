@@ -12,6 +12,7 @@ import {
   StatementMemberRow,
   StatementRoundSummary,
   StatementTransferRow,
+  StatementOutsideRoundRow,
   StatementUnmatchedRow,
 } from "@/lib/types";
 
@@ -122,6 +123,11 @@ export default function StatementReconcilePanel() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [members, setMembers] = useState<StatementMemberRow[]>([]);
   const [unmatched, setUnmatched] = useState<StatementUnmatchedRow[]>([]);
+  // Bound to a member who is not on this round's list. Kept apart from the
+  // list above so that pressing บันทึก visibly finishes a row — see
+  // lib/boundTransfers.ts.
+  const [outsideRound, setOutsideRound] = useState<StatementOutsideRoundRow[]>([]);
+  const [outsideRoundTotal, setOutsideRoundTotal] = useState(0);
   const [statements, setStatements] = useState<StatementFileSummary[]>([]);
   const [transfers, setTransfers] = useState<StatementTransferRow[]>([]);
   const [excludedTotal, setExcludedTotal] = useState(0);
@@ -188,6 +194,8 @@ export default function StatementReconcilePanel() {
     const body = await res.json();
     setMembers(body.data ?? []);
     setUnmatched(body.unmatched ?? []);
+    setOutsideRound(body.outsideRound ?? []);
+    setOutsideRoundTotal(body.outsideRoundTotal ?? 0);
     setStatements(body.statements ?? []);
     setTransfers(body.transfers ?? []);
     setExcludedTotal(body.excludedTotal ?? 0);
@@ -242,6 +250,7 @@ export default function StatementReconcilePanel() {
     else {
       setMembers([]);
       setUnmatched([]);
+      setOutsideRound([]);
       setStatements([]);
     }
     setNotice(null);
@@ -393,21 +402,26 @@ export default function StatementReconcilePanel() {
         return;
       }
 
+      const notCounted =
+        "— จำไว้ใช้รอบต่อไปและหน้าเงินเข้าประจำวันให้แล้ว · " +
+        `แต่รอบนี้ยังไม่นับเป็นการชำระ เพราะ ${body.memberNumber} ไม่ได้อยู่ในรายชื่อหักไม่ได้รอบนี้ ` +
+        "(ไม่ได้ค้างอะไรในรอบนี้ จึงไม่มีอะไรให้ตัด)";
       const saved =
         `ผูกบัญชี ${body.accountNumber} เข้ากับ ${body.memberNumber} ${body.memberName ?? ""} แล้ว ` +
         (body.onRound
           ? `(${body.transfers} รายการ ${formatAmount(body.amount)}) — จำไว้ใช้รอบต่อไปให้แล้ว`
-          : "— จำไว้ใช้รอบต่อไปและหน้าเงินเข้าประจำวันให้แล้ว · " +
-            `แต่รอบนี้ยังไม่นับเป็นการชำระ เพราะ ${body.memberNumber} ไม่ได้อยู่ในรายชื่อหักไม่ได้รอบนี้ ` +
-            "(ไม่ได้ค้างอะไรในรอบนี้ จึงไม่มีอะไรให้ตัด)") +
-        (body.inRoster || body.onRound
-          ? ""
-          : " — ⚠️ ไม่พบเลขสมาชิกนี้ในทะเบียนสมาชิกด้วย ตรวจสอบว่าพิมพ์ถูกไหม");
+          : body.inRoster
+            ? `${notCounted} · ย้ายไปอยู่ในหัวข้อ "รู้เจ้าของแล้ว แต่ไม่ได้อยู่ในรอบนี้" ข้างล่างแล้ว`
+            : // In no list at all: the row stays where it is on purpose, so
+              // the message must not claim it moved.
+              `${notCounted} — ⚠️ ไม่พบเลขสมาชิกนี้ในทะเบียนสมาชิกด้วย ` +
+              "ตรวจสอบว่าพิมพ์ถูกไหม · รายการยังอยู่ในรายการเดิม พร้อมคำเตือนที่แถวนั้น");
       setNotice(saved);
-      // A binding that matched nothing leaves its row exactly where it was, so
-      // the row is where the explanation has to be — otherwise the only sign
-      // anything happened is a line of text nowhere near the screen.
-      setAssignNote(body.onRound ? null : { account: accountNumber, text: saved, bad: false });
+      // A row bound to somebody real leaves this list — matched into the
+      // round, or down into "รู้เจ้าของแล้ว แต่ไม่ได้อยู่ในรอบนี้" — and the
+      // list shrinking is the answer. A number in no list keeps its row, and
+      // the row carries its own warning, so neither case needs a note here.
+      setAssignNote(null);
       setAssigningAccount(null);
       setAssignMemberNumber("");
       await Promise.all([fetchRound(selectedId), fetchRounds()]);
@@ -498,6 +512,7 @@ export default function StatementReconcilePanel() {
 
   const membersOpen = isOpen("members", shown.length);
   const unmatchedOpen = isOpen("unmatched", unmatched.length);
+  const outsideRoundOpen = isOpen("outsideRound", outsideRound.length);
   const excludedOpen = isOpen("excluded", excludedTransfers.length);
 
   const clearFilters = () => {
@@ -1238,6 +1253,19 @@ export default function StatementReconcilePanel() {
                               </button>
                             </span>
                           )}
+                          {/* Bound, but to a number that is in no list at all.
+                              The row stays here rather than reading as
+                              settled: a member nobody has heard of is a typo
+                              until somebody says otherwise, and the money is
+                              still nobody's. */}
+                          {t.boundTo && !t.boundTo.inRoster && assigningAccount !== t.accountNumber && (
+                            <span className="block max-w-md text-xs text-red-700 mt-1 whitespace-normal">
+                              ⚠️ ผูกไว้กับเลขสมาชิก{" "}
+                              <strong className="num">{t.boundTo.memberNumber}</strong>{" "}
+                              ซึ่ง<strong>ไม่พบในทะเบียนสมาชิก</strong>และไม่ได้อยู่ในรอบนี้ —
+                              ตรวจสอบว่าพิมพ์ถูกไหม แล้วกด "ระบุเจ้าของ" ใหม่เพื่อแก้
+                            </span>
+                          )}
                           {/* The answer, where the click was. The panel's own
                               error and notice sit at the top of the tab, far
                               above this table. */}
@@ -1258,16 +1286,114 @@ export default function StatementReconcilePanel() {
                 </table>
               )}
 
-              {/* Native autocomplete over this round's members, so staff can
-                  type either the number or the name to find it. */}
-              <datalist id="statement-member-numbers">
-                {members.map((m) => (
-                  <option key={m.id} value={m.memberNumber}>
-                    {m.name}
-                    {m.unitName ? ` · ${m.unitName}` : ""}
-                  </option>
-                ))}
-              </datalist>
+            </div>
+          )}
+
+          {/* Native autocomplete over this round's members, so staff can type
+              either the number or the name to find it. Panel-level because
+              both lists below offer the same box. */}
+          <datalist id="statement-member-numbers">
+            {members.map((m) => (
+              <option key={m.id} value={m.memberNumber}>
+                {m.name}
+                {m.unitName ? ` · ${m.unitName}` : ""}
+              </option>
+            ))}
+          </datalist>
+
+          {/* The rows staff have finished with. They left the list above the
+              moment the owner was written down, which is what makes working
+              through that list feel like getting somewhere — see
+              lib/boundTransfers.ts. */}
+          {outsideRound.length > 0 && (
+            <div className="px-4 py-3 border-t border-slate-100">
+              <button
+                onClick={() => toggle("outsideRound", outsideRound.length)}
+                aria-expanded={outsideRoundOpen}
+                className="text-sm font-semibold text-slate-700 text-left hover:underline"
+              >
+                {outsideRoundOpen ? "▾" : "▸"} รู้เจ้าของแล้ว แต่ไม่ได้อยู่ในรอบนี้ (
+                <span className="num">{outsideRound.length}</span> รายการ ·{" "}
+                <span className="num">{formatAmount(outsideRoundTotal)}</span>)
+              </button>
+              <p className="text-xs text-slate-500 mt-1">
+                ผูกเลขบัญชีกับสมาชิกไว้แล้ว แต่สมาชิกคนนั้น<strong>ไม่ได้อยู่ในรายชื่อหักไม่ได้รอบนี้</strong> —
+                รอบนี้จึงไม่นับเป็นการชำระ เพราะเขาไม่ได้ค้างอะไรในรอบนี้ ไม่มีอะไรให้ตัด
+                (เงินเข้ามาจริง และหน้าเงินเข้าประจำวันกับรอบต่อๆ ไปรู้จักเลขบัญชีนี้แล้ว) ·
+                ถ้าผูกผิดคน กด <strong>"แก้เจ้าของ"</strong> เพื่อเปลี่ยนได้
+              </p>
+              {outsideRoundOpen && (
+                <table className="w-full text-sm mt-2">
+                  <thead className="text-slate-500 text-left">
+                    <tr>
+                      <th className="px-2 py-1.5 font-medium">เลขบัญชี</th>
+                      <th className="px-2 py-1.5 font-medium text-right">ยอด</th>
+                      <th className="px-2 py-1.5 font-medium">วันเวลาที่โอน</th>
+                      <th className="px-2 py-1.5 font-medium">บัญชีที่รับ</th>
+                      <th className="px-2 py-1.5 font-medium">เป็นของ</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {outsideRound.map((t) => (
+                      <tr key={t.id} className="border-t border-slate-100 hover:bg-slate-50">
+                        <td className="px-2 py-1.5 font-mono text-xs">{t.accountNumber}</td>
+                        <td className="px-2 py-1.5 num text-right whitespace-nowrap font-medium">
+                          {formatAmount(t.amount)}
+                        </td>
+                        <td className="px-2 py-1.5 whitespace-nowrap text-slate-500">
+                          <DateTimeCell iso={t.transferredAt} />
+                        </td>
+                        <td className="px-2 py-1.5 text-slate-500">{t.branch ?? "—"}</td>
+                        <td className="px-2 py-1 whitespace-nowrap">
+                          {assigningAccount === t.accountNumber ? (
+                            <span className="inline-flex flex-wrap items-center gap-2">
+                              <input
+                                value={assignMemberNumber}
+                                onChange={(e) => setAssignMemberNumber(e.target.value)}
+                                onKeyDown={(e) => {
+                                  if (e.key === "Enter") assignAccount(t.accountNumber);
+                                  if (e.key === "Escape") setAssigningAccount(null);
+                                }}
+                                list="statement-member-numbers"
+                                placeholder="เลขสมาชิก"
+                                autoFocus
+                                className="border border-slate-300 rounded px-2 py-1 text-sm w-44"
+                              />
+                              <button
+                                onClick={() => assignAccount(t.accountNumber)}
+                                disabled={busy || !assignMemberNumber.trim()}
+                                className="text-slate-900 hover:underline disabled:opacity-40"
+                              >
+                                บันทึก
+                              </button>
+                              <button
+                                onClick={() => setAssigningAccount(null)}
+                                className="text-slate-500 hover:underline"
+                              >
+                                ยกเลิก
+                              </button>
+                            </span>
+                          ) : (
+                            <>
+                              <strong className="num">{t.boundTo.memberNumber}</strong>{" "}
+                              {t.boundTo.memberName ?? ""}{" "}
+                              <button
+                                onClick={() => {
+                                  setAssigningAccount(t.accountNumber);
+                                  setAssignMemberNumber(t.boundTo.memberNumber);
+                                }}
+                                className="text-slate-500 hover:underline text-xs"
+                              >
+                                แก้เจ้าของ
+                              </button>
+                            </>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
             </div>
           )}
 

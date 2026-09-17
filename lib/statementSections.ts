@@ -13,11 +13,12 @@
 
 import { openAll } from "./sections";
 
-export type StatementSectionKey = "members" | "unmatched" | "excluded";
+export type StatementSectionKey = "members" | "unmatched" | "outsideRound" | "excluded";
 
 export const STATEMENT_SECTION_KEYS: StatementSectionKey[] = [
   "members",
   "unmatched",
+  "outsideRound",
   "excluded",
 ];
 
@@ -29,6 +30,10 @@ export const STATEMENT_SECTION_KEYS: StatementSectionKey[] = [
 export const STATEMENT_SECTION_OPEN_BY_DEFAULT: Record<StatementSectionKey, boolean> = {
   members: true,
   unmatched: true,
+  // Owner already written down, member not on this round's list: the work on
+  // these rows is done and the round has nothing to do with the money. It is
+  // kept, and counted on its heading, but it does not open by itself.
+  outsideRound: false,
   excluded: false,
 };
 
@@ -38,6 +43,7 @@ export const STATEMENT_SECTION_OPEN_BY_DEFAULT: Record<StatementSectionKey, bool
 export const STATEMENT_SECTION_SEARCHABLE: Record<StatementSectionKey, boolean> = {
   members: true,
   unmatched: false,
+  outsideRound: false,
   excluded: false,
 };
 
