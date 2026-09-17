@@ -260,6 +260,19 @@ export interface StatementUnmatchedRow {
   // already recorded a payment from one of its lines. Null for an account
   // nobody has placed anywhere — see lib/recordedOwners.ts.
   recordedAs: { memberNumber: string; memberName: string | null; category: string | null } | null;
+  // Who staff bound this account to, when the number they gave is in no list
+  // at all — the shape of a typo, which keeps the row here rather than
+  // letting it read as settled. Null on a row nobody has bound.
+  boundTo: { memberNumber: string; memberName: string | null; inRoster: boolean } | null;
+}
+
+// A transfer whose paying account staff have already bound to a member, where
+// that member is not on this round's หักไม่ได้ list. The round still cannot
+// count it — they owe nothing here, so there is nothing to settle — but it is
+// no longer money with no owner, and it leaves the list of work rather than
+// sitting in it looking untouched. See lib/boundTransfers.ts.
+export interface StatementOutsideRoundRow extends StatementUnmatchedRow {
+  boundTo: { memberNumber: string; memberName: string | null; inRoster: boolean };
 }
 
 // One line of money arriving in a cooperative account, for the daily
