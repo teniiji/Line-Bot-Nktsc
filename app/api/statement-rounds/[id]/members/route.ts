@@ -138,7 +138,7 @@ export async function POST(
     }
 
     const plan = planDeductionUpload(roster, allRows);
-    await applyRoundSheet(round.id, plan);
+    const filled = await applyRoundSheet(round.id, plan);
     const progress = await refreshRoundProgress(round.id);
     const missingAccountNow = await prisma.statementMember.count({
       where: { roundId: round.id, accountNumber: null, deductionResult: "uncollected" },
@@ -156,6 +156,9 @@ export async function POST(
       untouched: plan.untouched,
       skippedRows: mapped?.skipped ?? 0,
       missingAccount: missingAccountNow,
+      filledFromDirectory: filled.fromDirectory,
+      filledFromPrevious: filled.fromPrevious,
+      ambiguousAccounts: filled.ambiguous,
       ...progress,
     });
   }
@@ -228,7 +231,7 @@ export async function POST(
   // Members the sheet left without an account number may already be known to
   // the directory from an earlier round, so filling those in first means the
   // work of binding accounts is not repeated every month.
-  const filledFromDirectory = await applyDirectoryAccounts(round.id);
+  const filled = await applyDirectoryAccounts(round.id);
 
   // Statements already uploaded for this round keep their transfers, so a
   // corrected member list re-reconciles against them instead of making staff
@@ -251,7 +254,9 @@ export async function POST(
     // Members with no account number can never be matched to a transfer, so
     // staff need to know up front rather than wondering why they stay ❌.
     missingAccount,
-    filledFromDirectory,
+    filledFromDirectory: filled.fromDirectory,
+    filledFromPrevious: filled.fromPrevious,
+    ambiguousAccounts: filled.ambiguous,
     awaitingUnits: awaitingFromSheet.units,
     awaitingMembers: awaitingFromSheet.members,
     awaitingAmount: awaitingFromSheet.amount,

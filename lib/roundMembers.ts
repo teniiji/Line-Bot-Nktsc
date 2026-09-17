@@ -4,6 +4,7 @@ import {
   applyDirectoryAccounts,
   recomputeRoundPayments,
   rematchRoundTransfers,
+  type AccountFillResult,
 } from "@/lib/statementRecompute";
 
 // Writing an upload plan into a round, and saying where the round now stands.
@@ -13,7 +14,10 @@ import {
 // re-reconciled the same way: accounts filled from the directory, transfers
 // re-matched, totals rebuilt. See lib/deductionUpload.ts for the plan itself.
 
-export async function applyRoundSheet(roundId: string, plan: UploadPlan): Promise<void> {
+export async function applyRoundSheet(
+  roundId: string,
+  plan: UploadPlan
+): Promise<AccountFillResult> {
   if (plan.create.length > 0) {
     await prisma.statementMember.createMany({
       data: plan.create.map((row) => ({
@@ -62,9 +66,10 @@ export async function applyRoundSheet(roundId: string, plan: UploadPlan): Promis
   // the directory from an earlier round, so the work of binding accounts is
   // not repeated every month. Then the transfers already read out of
   // statements are re-matched against the list as it now stands.
-  await applyDirectoryAccounts(roundId);
+  const filled = await applyDirectoryAccounts(roundId);
   await rematchRoundTransfers(roundId);
   await recomputeRoundPayments(roundId);
+  return filled;
 }
 
 export interface RoundProgress {

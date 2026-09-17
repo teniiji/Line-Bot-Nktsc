@@ -72,7 +72,7 @@ export async function POST(
     select: { memberNumber: true, deductionResult: true },
   });
   const plan = planDeductionUpload(existing, sheet.rows);
-  await applyRoundSheet(round.id, plan);
+  const filled = await applyRoundSheet(round.id, plan);
   const progress = await refreshRoundProgress(round.id);
 
   return NextResponse.json({
@@ -87,6 +87,9 @@ export async function POST(
     // that has since replied.
     keptResult: plan.keptResult.length,
     untouched: plan.untouched,
+    filledFromDirectory: filled.fromDirectory,
+    filledFromPrevious: filled.fromPrevious,
+    ambiguousAccounts: filled.ambiguous,
     ...progress,
   });
 }

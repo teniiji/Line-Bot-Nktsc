@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/prisma";
 import { calcPaymentStatus } from "@/lib/statementReconcile";
+import { fillAccounts } from "@/lib/accountHistory";
 
 // Recomputes every member's payment total for a round from the transfer rows
 // that are currently stored.
@@ -176,18 +177,32 @@ export async function rematchRoundsForAccounts(accountNumbers: string[]): Promis
   return roundIds.size;
 }
 
-// Fills in the account number for members whose sheet left it blank, from the
-// directory, when the directory knows exactly one account for them. With more
-// than one there is nothing to choose between, so the column stays blank —
-// their transfers still match through rematchRoundTransfers, this only keeps
-// the "⛔ ไม่มีเลขบัญชี" bucket honest about who really cannot be matched.
-export async function applyDirectoryAccounts(roundId: string): Promise<number> {
+// Fills in the account number for members whose sheet left it blank, from
+// the directory and then from the last round that carried one — see
+// lib/accountHistory.ts for why the second source exists at all: a sheet's
+// เลขบัญชี column never reached the directory, so every account the
+// cooperative learned that way was invisible to the next month's round.
+//
+// With more than one account and nothing to choose between them the column
+// stays blank on purpose. Their transfers still match through
+// rematchRoundTransfers; this keeps the "⛔ ไม่มีเลขบัญชี" bucket honest
+// about who really cannot be matched.
+export interface AccountFillResult {
+  fromDirectory: number;
+  // Filled from an earlier round's own sheet — knowledge the cooperative had
+  // and the round could not see. See lib/accountHistory.ts.
+  fromPrevious: number;
+  // More than one account on offer with nothing to choose between them.
+  ambiguous: number;
+}
+
+export async function applyDirectoryAccounts(roundId: string): Promise<AccountFillResult> {
   // Values this function supplied earlier are handed back before it decides
   // again, so a binding that has since been corrected or deleted does not
   // leave its account number behind still matching. Sheet-supplied values are
   // never touched.
   await prisma.statementMember.updateMany({
-    where: { roundId, accountSource: "directory" },
+    where: { roundId, accountSource: { in: ["directory", "previous"] } },
     data: { accountNumber: null, accountSource: null },
   });
 
@@ -195,31 +210,73 @@ export async function applyDirectoryAccounts(roundId: string): Promise<number> {
     where: { roundId, accountNumber: null },
     select: { id: true, memberNumber: true },
   });
-  if (blanks.length === 0) return 0;
+  if (blanks.length === 0) return { fromDirectory: 0, fromPrevious: 0, ambiguous: 0 };
 
-  const known = await prisma.memberBankAccount.findMany({
-    where: { memberNumber: { in: blanks.map((m) => m.memberNumber) } },
-    select: { memberNumber: true, accountNumber: true },
-  });
-
-  const accountsByMember = new Map<string, string[]>();
-  for (const entry of known) {
-    const list = accountsByMember.get(entry.memberNumber) ?? [];
-    list.push(entry.accountNumber);
-    accountsByMember.set(entry.memberNumber, list);
+  // A round runs to thousands of members now that it starts from the
+  // รายการหัก, and Postgres has a limit on bound parameters, so the lookups
+  // go in chunks rather than as one enormous IN list.
+  const CHUNK = 1000;
+  const numbers = [...new Set(blanks.map((m) => m.memberNumber))];
+  const known: { memberNumber: string; accountNumber: string }[] = [];
+  const historic: { memberNumber: string; accountNumber: string; roundId: string }[] = [];
+  for (let i = 0; i < numbers.length; i += CHUNK) {
+    const slice = numbers.slice(i, i + CHUNK);
+    known.push(
+      ...(await prisma.memberBankAccount.findMany({
+        where: { memberNumber: { in: slice } },
+        select: { memberNumber: true, accountNumber: true },
+      }))
+    );
+    const rows = await prisma.statementMember.findMany({
+      where: { memberNumber: { in: slice }, roundId: { not: roundId }, accountNumber: { not: null } },
+      select: { memberNumber: true, accountNumber: true, roundId: true },
+    });
+    for (const row of rows) {
+      historic.push({
+        memberNumber: row.memberNumber,
+        accountNumber: row.accountNumber as string,
+        roundId: row.roundId,
+      });
+    }
   }
 
+  // Rounds in the cooperative's own order, so "the most recent round that
+  // knew one" means the most recent month rather than whichever row the
+  // database returned first.
+  const rounds = await prisma.statementRound.findMany({
+    where: { id: { in: [...new Set(historic.map((row) => row.roundId))] } },
+    select: { id: true, period: true },
+    orderBy: { period: "asc" },
+  });
+  const rankOf = new Map(rounds.map((round, index) => [round.id, index]));
+
+  const { fills, ambiguous } = fillAccounts(
+    numbers,
+    known,
+    historic.map((row) => ({
+      memberNumber: row.memberNumber,
+      accountNumber: row.accountNumber,
+      rank: rankOf.get(row.roundId) ?? -1,
+    }))
+  );
+
+  const fillByMember = new Map(fills.map((fill) => [fill.memberNumber, fill]));
   const updates = blanks
     .map((member) => {
-      const accounts = accountsByMember.get(member.memberNumber);
-      if (!accounts || accounts.length !== 1) return null;
+      const fill = fillByMember.get(member.memberNumber);
+      if (!fill) return null;
       return prisma.statementMember.update({
         where: { id: member.id },
-        data: { accountNumber: accounts[0], accountSource: "directory" },
+        data: { accountNumber: fill.accountNumber, accountSource: fill.source },
       });
     })
     .filter((p): p is NonNullable<typeof p> => p !== null);
 
   await Promise.all(updates);
-  return updates.length;
+
+  return {
+    fromDirectory: fills.filter((fill) => fill.source === "directory").length,
+    fromPrevious: fills.filter((fill) => fill.source === "previous").length,
+    ambiguous: ambiguous.length,
+  };
 }
