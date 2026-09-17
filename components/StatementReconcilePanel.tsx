@@ -59,12 +59,19 @@ const STATUS_LABEL: Record<string, string> = {
   paid: "✅ ชำระครบ",
   overpaid: "⚠️ ชำระเกิน",
   unpaid: "❌ ยังค้าง",
+  // Not payment statuses: what the member's unit has said about the deduction
+  // itself. A round that starts from the รายการหัก holds these two long
+  // before anybody is short of anything.
+  awaiting: "⏳ รอผลการหัก",
+  collected: "✅ หักได้ครบ",
 };
 
 const STATUS_CLASS: Record<string, string> = {
   paid: "bg-green-50 text-green-700 border-green-200",
   overpaid: "bg-amber-50 text-amber-700 border-amber-200",
   unpaid: "bg-red-50 text-red-700 border-red-200",
+  awaiting: "bg-slate-50 text-slate-600 border-slate-200",
+  collected: "bg-slate-50 text-slate-500 border-slate-200",
 };
 
 const ACCOUNTS = [
@@ -190,6 +197,7 @@ export default function StatementReconcilePanel() {
 
   const [account, setAccount] = useState("413");
   const membersInputRef = useRef<HTMLInputElement | null>(null);
+  const deductionListInputRef = useRef<HTMLInputElement | null>(null);
   const statementInputRef = useRef<HTMLInputElement | null>(null);
 
   const fetchRounds = useCallback(async () => {
@@ -330,6 +338,31 @@ export default function StatementReconcilePanel() {
         setError(body.error || "อัปโหลดรายชื่อไม่สำเร็จ");
         return;
       }
+      // A seeded round is updated, not replaced, so the answer is about what
+      // this file changed rather than about the round's new size — and it
+      // says how much of the round the file did not mention, which is the
+      // only way to tell one unit's file from the whole cooperative's.
+      if (body.applied) {
+        setNotice(
+          `บันทึกผลการหักแล้ว: อัปเดต ${body.updated} คน` +
+            (body.added > 0 ? `, เพิ่มใหม่ ${body.added} คน` : "") +
+            ` — ตอนนี้หักไม่ได้ ${body.uncollected} คน, หักได้ครบ ${body.collected} คน` +
+            (body.awaiting > 0
+              ? `, ยังรอผลอีก ${body.awaiting} คน (${body.unitsAwaiting?.length ?? 0} หน่วยคุม)`
+              : " — ครบทุกหน่วยแล้ว") +
+            (body.untouched > 0
+              ? ` · ไฟล์นี้ไม่ได้พูดถึงอีก ${body.untouched} คนในรอบ จึงคงไว้ตามเดิม`
+              : "") +
+            (body.keptResult > 0
+              ? ` · ${body.keptResult} คนในไฟล์ยังไม่มีผล แต่รอบมีผลอยู่แล้ว จึงไม่ทับ`
+              : "") +
+            (body.missingAccount > 0
+              ? ` — ⚠️ มี ${body.missingAccount} คนที่หักไม่ได้แต่ไม่มีเลขบัญชี จับคู่กับ Statement ไม่ได้`
+              : "")
+        );
+        await Promise.all([fetchRound(roundId), fetchRounds()]);
+        return;
+      }
       setNotice(
         `นำเข้ารายชื่อหักไม่ได้ ${body.imported} คน` +
           (body.removed > 0
@@ -358,6 +391,46 @@ export default function StatementReconcilePanel() {
     e.target.value = "";
     if (!file || !selectedId) return;
     await sendMembers(file, selectedId, false);
+  };
+
+  // The รายการหัก that starts the round. Merges, so the whole cooperative can
+  // go in at once or one เขต at a time, and re-uploading a corrected file
+  // never takes the rest of the round away.
+  const uploadDeductionList = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file || !selectedId) return;
+
+    setBusy(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const form = new FormData();
+      form.append("file", file);
+      const res = await fetch(`/api/statement-rounds/${selectedId}/deduction-list`, {
+        method: "POST",
+        body: form,
+      });
+      const body = await res.json();
+      if (!res.ok) {
+        setError(body.error || "อัปโหลดรายการหักไม่สำเร็จ");
+        return;
+      }
+      setNotice(
+        `นำเข้ารายการหัก: เพิ่มใหม่ ${body.added} คน` +
+          (body.updated > 0 ? `, อัปเดต ${body.updated} คน` : "") +
+          ` — รอบนี้มีทั้งหมด ${body.members} คน` +
+          (body.awaiting > 0
+            ? `, รอผลการหัก ${body.awaiting} คน (ส่งผลแล้ว ${body.unitsReported}/${body.units} หน่วยคุม)`
+            : "") +
+          (body.keptResult > 0
+            ? ` · ${body.keptResult} คนมีผลการหักอยู่แล้ว จึงไม่ทับด้วย "รอผล"`
+            : "")
+      );
+      await Promise.all([fetchRound(selectedId), fetchRounds()]);
+    } finally {
+      setBusy(false);
+    }
   };
 
   const uploadStatement = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -619,9 +692,17 @@ export default function StatementReconcilePanel() {
           <h2 className="font-semibold">เทียบ Statement (ใครโอนมาแล้วบ้าง)</h2>
           <PanelHelp summary="อัปโหลดรายชื่อหักไม่ได้ + Statement ธนาคารต่อรอบ แล้วระบบจับคู่รายการโอนกับสมาชิกให้เอง ว่าใครชำระครบ/เกิน/ยังค้าง">
             <p>
-              ไฟล์ที่ต้องใช้: <strong>รายชื่อหักไม่ได้</strong> (ไฟล์ "รวม_ไม่ได้" — คอลัมน์ E
-              ยอดหักไม่ได้, คอลัมน์ I เลขบัญชี) และ <strong>Statement ธนาคาร</strong> ของบัญชี 413
-              หนองคาย / 447 บึงกาฬ — ระบบจับคู่รายการ "TR fr เลขบัญชี" กับสมาชิกให้เอง
+              ลำดับการทำงาน: <strong>1. อัปโหลดรายการหัก</strong> (ไฟล์ที่ส่งให้หน่วยงาน —
+              คอลัมน์ C ยอดแจ้งหัก, I เลขบัญชี) เพื่อตั้งต้นรอบให้รู้ว่าทั้งรอบมีใครบ้าง ·
+              <strong> 2. อัปโหลดผลการหัก</strong> เมื่อหน่วยงานส่งกลับมา
+              (คอลัมน์ D ยอดหักได้, E ยอดหักไม่ได้) — <strong>ทีละหน่วยได้เลย ไม่ต้องรอครบทั้งสหกรณ์</strong>
+              ระบบอัปเดตเฉพาะคนที่อยู่ในไฟล์นั้น ที่เหลือคงไว้ตามเดิม ·
+              <strong> 3. อัปโหลด Statement</strong> ของบัญชี 413 หนองคาย / 447 บึงกาฬ
+              แล้วระบบจับคู่รายการ "TR fr เลขบัญชี" กับสมาชิกที่หักไม่ได้ให้เอง
+            </p>
+            <p>
+              รอบเก่าที่สร้างไว้ก่อนหน้านี้ยังทำงานแบบเดิมทุกอย่าง — อัปไฟล์ "รวม_ไม่ได้"
+              ทั้งก้อนแล้วแทนที่รายชื่อทั้งรอบเหมือนเดิม
             </p>
             <p>
               <strong>Statement อัปโหลดได้หลายไฟล์ต่อบัญชี</strong> (คนละช่วงวันที่) ระบบจะรวมกันให้
@@ -712,12 +793,23 @@ export default function StatementReconcilePanel() {
           {selected && (
             <>
               <div className="flex flex-wrap items-center gap-3 px-4 py-3 border-b border-slate-100 text-sm">
+                {/* The order on screen is the order of the month: the list
+                    payroll was given, then what each unit could take off it. */}
+                <button
+                  onClick={() => deductionListInputRef.current?.click()}
+                  disabled={busy}
+                  title="ไฟล์รายการหักที่ส่งให้หน่วยงาน — ตั้งต้นรอบ รู้ว่าทั้งรอบมีใครบ้าง ยอดเท่าไร และหน่วยไหนยังไม่ส่งผล · อัปทีละเขตได้"
+                  className="px-3 py-1.5 border border-slate-300 rounded disabled:opacity-50"
+                >
+                  1. อัปโหลดรายการหัก
+                </button>
                 <button
                   onClick={() => membersInputRef.current?.click()}
                   disabled={busy}
+                  title="ไฟล์ผลการหักที่หน่วยงานส่งกลับมา — จะเป็นไฟล์รวม_ไม่ได้ทั้งสหกรณ์ หรือไฟล์ของหน่วยเดียวก็ได้"
                   className="px-3 py-1.5 border border-slate-300 rounded disabled:opacity-50"
                 >
-                  อัปโหลดรายชื่อหักไม่ได้
+                  2. อัปโหลดผลการหัก
                 </button>
                 <span className="text-slate-300">|</span>
                 <select
@@ -733,9 +825,11 @@ export default function StatementReconcilePanel() {
                 </select>
                 <button
                   onClick={() => statementInputRef.current?.click()}
-                  disabled={busy || selected.totalMembers === 0}
+                  disabled={busy || selected.populationMembers === 0}
                   title={
-                    selected.totalMembers === 0 ? "อัปโหลดรายชื่อหักไม่ได้ก่อน" : undefined
+                    selected.populationMembers === 0
+                      ? "อัปโหลดรายการหัก หรือผลการหัก เข้ารอบก่อน"
+                      : undefined
                   }
                   className="px-3 py-1.5 border border-slate-300 rounded disabled:opacity-50"
                 >
@@ -753,13 +847,30 @@ export default function StatementReconcilePanel() {
                 <div className="px-4 py-2 border-b border-slate-100">
                   <p className="text-sm text-amber-800 bg-amber-50 rounded px-3 py-2">
                     ⏳ รอบนี้ยัง<strong>ไม่ครบทั้งสหกรณ์</strong> — มี{" "}
-                    <strong>{selected.awaitingUnits}</strong> หน่วยงาน (
-                    <strong>{selected.awaitingMembers}</strong> คน ยอดแจ้งหัก{" "}
+                    <strong className="num">{selected.awaitingUnits}</strong> หน่วยคุม (
+                    <strong className="num">{selected.awaitingMembers}</strong> คน ยอดแจ้งหัก{" "}
                     {formatAmount(selected.awaitingAmount)}) ที่ยัง
-                    <strong>ไม่ส่งผลการหักกลับมา</strong> ในไฟล์รายชื่อ
-                    คนกลุ่มนี้จึงยังไม่อยู่ในตารางข้างล่าง (ยังไม่รู้ว่าหักได้หรือไม่ได้
-                    ถ้านับเป็น "ยังค้าง" ไปเลยจะกลายเป็นทวงเงินคนที่อาจจะหักได้แล้ว) —
-                    พอหน่วยงานส่งผลมาครบแล้วให้อัปโหลดไฟล์รายชื่อใหม่ ตัวเลขจะอัปเดตให้เอง
+                    <strong>ไม่ส่งผลการหักกลับมา</strong>
+                    {selected.awaitingResult > 0 ? (
+                      // Seeded from the รายการหัก: these members are in the
+                      // round, marked รอผลการหัก, and the round can say who
+                      // they are — which is the whole point of putting the
+                      // list in first.
+                      <>
+                        {" "}
+                        — อยู่ในตารางข้างล่างแล้ว ติดป้าย{" "}
+                        <strong>⏳ รอผลการหัก</strong> (ยังไม่นับเป็นยอดค้าง เพราะยังไม่รู้ว่าหักได้หรือไม่ได้)
+                        · พอหน่วยไหนส่งผลมา กด <strong>"2. อัปโหลดผลการหัก"</strong> ทีละหน่วยได้เลย
+                        ไม่ต้องรอรวมทั้งสหกรณ์
+                      </>
+                    ) : (
+                      <>
+                        {" "}
+                        ในไฟล์รายชื่อ คนกลุ่มนี้จึงยังไม่อยู่ในตารางข้างล่าง
+                        (ยังไม่รู้ว่าหักได้หรือไม่ได้ ถ้านับเป็น "ยังค้าง" ไปเลยจะกลายเป็นทวงเงินคนที่อาจจะหักได้แล้ว) —
+                        พอหน่วยงานส่งผลมาครบแล้วให้อัปโหลดไฟล์รายชื่อใหม่ ตัวเลขจะอัปเดตให้เอง
+                      </>
+                    )}
                   </p>
                 </div>
               )}
@@ -809,8 +920,45 @@ export default function StatementReconcilePanel() {
                   active={statusFilter === "all"}
                   onClick={() => setStatusFilter("all")}
                   label="ทั้งหมด"
+                  count={selected.populationMembers || selected.totalMembers}
+                  suffix="คน"
+                  title="ทุกคนที่อยู่ในรอบนี้ — รวมคนที่รอผลการหักและคนที่หักได้ครบแล้ว"
+                />
+                {/* Only on a round that was started from the รายการหัก. On an
+                    old round both are zero and the chips stay out of the way. */}
+                {selected.awaitingResult > 0 && (
+                  <FilterChip
+                    active={statusFilter === "awaiting"}
+                    onClick={() =>
+                      setStatusFilter(statusFilter === "awaiting" ? "all" : "awaiting")
+                    }
+                    label="⏳ รอผลการหัก"
+                    count={selected.awaitingResult}
+                    countClass="text-slate-600"
+                    title="อยู่ในรายการหัก แต่หน่วยงานยังไม่ส่งผลกลับมาว่าหักได้หรือไม่ได้"
+                  />
+                )}
+                {selected.collectedMembers > 0 && (
+                  <FilterChip
+                    active={statusFilter === "collected"}
+                    onClick={() =>
+                      setStatusFilter(statusFilter === "collected" ? "all" : "collected")
+                    }
+                    label="✅ หักได้ครบ"
+                    count={selected.collectedMembers}
+                    countClass="text-slate-500"
+                    title="หน่วยงานหักเงินเดือนได้ครบแล้ว ไม่มีอะไรต้องตามในรอบนี้"
+                  />
+                )}
+                <FilterChip
+                  active={statusFilter === "uncollected"}
+                  onClick={() =>
+                    setStatusFilter(statusFilter === "uncollected" ? "all" : "uncollected")
+                  }
+                  label="หักไม่ได้"
                   count={selected.totalMembers}
                   suffix="คน"
+                  title="คนที่หักเงินเดือนไม่ได้ — คือกลุ่มที่ต้องตามเก็บในรอบนี้ ตัวเลขข้างล่างทั้งหมดพูดถึงกลุ่มนี้"
                 />
                 <FilterChip
                   active={statusFilter === "paid"}
@@ -1074,7 +1222,19 @@ export default function StatementReconcilePanel() {
                               )}
                             </td>
                             <td className="px-4 py-2.5 num text-right whitespace-nowrap">
-                              {formatAmount(m.amountDue)}
+                              {m.deductionResult === "uncollected" ? (
+                                formatAmount(m.amountDue)
+                              ) : (
+                                // Nothing is owed on this row — but the round
+                                // does know what payroll was asked to take,
+                                // and on a member still marked รอผลการหัก
+                                // that figure is the only number there is.
+                                <span className="text-slate-400">
+                                  {m.expectedAmount != null
+                                    ? `แจ้งหัก ${formatAmount(m.expectedAmount)}`
+                                    : "—"}
+                                </span>
+                              )}
                             </td>
                             <td className="px-4 py-2.5 num text-right whitespace-nowrap">
                               {m.amountPaid > 0 ? (
@@ -1579,6 +1739,13 @@ export default function StatementReconcilePanel() {
         type="file"
         accept=".xlsx,.xls"
         onChange={uploadMembers}
+        className="hidden"
+      />
+      <input
+        ref={deductionListInputRef}
+        type="file"
+        accept=".xlsx,.xls"
+        onChange={uploadDeductionList}
         className="hidden"
       />
       <input

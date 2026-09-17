@@ -17,6 +17,8 @@ const member = (over: Partial<StatementMemberRow>): StatementMemberRow => ({
   hCode: "1",
   note: null,
   accountNumber: "4131234567",
+  expectedAmount: null,
+  deductionResult: "uncollected",
   amountDue: 1000,
   amountPaid: 0,
   paidAt: null,

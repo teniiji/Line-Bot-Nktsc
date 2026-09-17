@@ -17,6 +17,20 @@ export interface MaiDaiRow {
   amountDue: number;
 }
 
+// What a unit has said about one member this round. One sheet layout carries
+// all three: a รายการหัก on its way out has the result columns empty, and the
+// file that comes back has them filled in.
+export type DeductionResult = "awaiting" | "collected" | "uncollected";
+
+// Every member the sheet names, whatever it says about them. The round is
+// built from the รายการหัก first now and told the results as units reply, so
+// the rows with no result yet are the point rather than a footnote.
+export interface DeductionSheetRow extends MaiDaiRow {
+  // คอลัมน์ C ยอดแจ้งหัก — what payroll was asked to take.
+  expectedAmount: number | null;
+  result: DeductionResult;
+}
+
 export interface TransferRow {
   accountNumber: string;
   amount: number;
@@ -177,6 +191,12 @@ export function pickUnitNameColumn(
 export interface MaiDaiSheet {
   // Members with something still outstanding — the round's actual list.
   rows: MaiDaiRow[];
+  // Every member the sheet names, classified. The same file read two ways:
+  // `rows` answers "who owes money", which is what a round built from the
+  // results needs; `all` answers "who was on this list and what happened to
+  // them", which is what a round built from the รายการหัก needs — including
+  // the ones payroll collected in full and the ones nobody has answered for.
+  all: DeductionSheetRow[];
   // Rows the sheet has no result for at all: neither ยอดหักได้ nor
   // ยอดหักไม่ได้. Their unit has not reported back yet ("รอผล (ยังไม่มีข้อมูล)"
   // in the sheet's own summary), so they are not people who failed to pay and
@@ -203,6 +223,7 @@ export interface MaiDaiSheet {
 // national ID numbers into this database.
 export function parseMaiDaiSheet(rows: unknown[][]): MaiDaiSheet {
   const parsed: MaiDaiRow[] = [];
+  const all: DeductionSheetRow[] = [];
   const unitColumn = pickUnitNameColumn(rows);
   // Whatever is left of the two candidates is a หมายเหตุ column only if it
   // reads as text too — otherwise it is the หน่วยงาน code, which is already
@@ -222,32 +243,42 @@ export function parseMaiDaiSheet(rows: unknown[][]): MaiDaiSheet {
     const collected = parseAmount(row[3]);
     const amountDue = parseAmount(row[4]);
     const unitName = unitColumn === null ? null : cell(row, unitColumn);
+    const expectedAmount = parseAmount(row[2]);
 
-    // Blank in both result columns is "no result yet" — distinct from a
-    // ยอดหักไม่ได้ of 0, which is a unit that reported and collected in full.
-    if (collected === null && amountDue === null) {
-      awaitingMembers += 1;
-      awaitingAmount += parseAmount(row[2]) ?? 0;
-      const unitKey = cell(row, 9) ?? unitName;
-      if (unitKey) awaitingUnits.add(unitKey);
-      continue;
-    }
-
-    if (amountDue === null || amountDue <= 0) continue;
-
-    parsed.push({
+    const member = {
       memberNumber,
       name: cell(row, 1) ?? "",
       unitName,
       note: noteColumn === null ? null : cell(row, noteColumn),
       accountNumber: normalizeAccountNumber(row[8]),
       hCode: cell(row, 9),
-      amountDue,
-    });
+    };
+
+    // Blank in both result columns is "no result yet" — distinct from a
+    // ยอดหักไม่ได้ of 0, which is a unit that reported and collected in full.
+    if (collected === null && amountDue === null) {
+      awaitingMembers += 1;
+      awaitingAmount += expectedAmount ?? 0;
+      const unitKey = cell(row, 9) ?? unitName;
+      if (unitKey) awaitingUnits.add(unitKey);
+      // Nothing is owed by somebody nobody has reported on yet, so amountDue
+      // is 0 and the result column is what says why.
+      all.push({ ...member, expectedAmount, amountDue: 0, result: "awaiting" });
+      continue;
+    }
+
+    if (amountDue === null || amountDue <= 0) {
+      all.push({ ...member, expectedAmount, amountDue: 0, result: "collected" });
+      continue;
+    }
+
+    parsed.push({ ...member, amountDue });
+    all.push({ ...member, expectedAmount, amountDue, result: "uncollected" });
   }
 
   return {
     rows: parsed,
+    all,
     awaitingMembers,
     awaitingAmount: Math.round(awaitingAmount * 100) / 100,
     awaitingUnits: [...awaitingUnits].sort((a, b) => a.localeCompare(b, "th")),

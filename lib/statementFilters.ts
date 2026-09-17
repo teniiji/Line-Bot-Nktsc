@@ -94,7 +94,13 @@ function matchesStatus(m: StatementMemberRow, status: string): boolean {
   // Not a status the reconciliation produces, but the bucket staff most need
   // to act on: without an account number the transfer can never match, so
   // these would otherwise sit in "ยังค้าง" looking like people who did not pay.
-  if (status === "no_account") return !m.accountNumber;
+  // Asked of the people this round is chasing, since a member whose unit has
+  // not reported is not somebody with a missing account — they are somebody
+  // who may turn out to owe nothing at all.
+  if (status === "no_account") return !m.accountNumber && m.deductionResult === "uncollected";
+  // The round's chase population as one bucket: everyone payroll could not
+  // deduct from, whether or not they have since transferred the money.
+  if (status === "uncollected") return m.deductionResult === "uncollected";
   return m.status === status;
 }
 

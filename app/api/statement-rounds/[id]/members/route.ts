@@ -11,6 +11,8 @@ import {
   needsShrinkConfirmation,
   summarizeMemberListChange,
 } from "@/lib/memberListChange";
+import { planDeductionUpload, wasSeeded } from "@/lib/deductionUpload";
+import { applyRoundSheet, refreshRoundProgress } from "@/lib/roundMembers";
 import {
   applyDirectoryAccounts,
   recomputeRoundPayments,
@@ -20,8 +22,21 @@ import {
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-// Takes the round's "รวม_ไม่ได้" sheet — the members payroll could not
-// deduct from — and makes it this round's list.
+// Takes a sheet of results — what each unit's payroll could and could not
+// deduct — and tells the round about it.
+//
+// There are two shapes of round now, and this behaves differently in each.
+//
+// A round started from the รายการหัก (see ../deduction-list) already knows
+// its population, so a result sheet *updates* it: the members it names get
+// their result, the members it does not name are left exactly as they were.
+// That is what lets one unit's file be uploaded on its own as it arrives —
+// forty rows must not be read as "the other eleven hundred are finished" —
+// and it is why the whole cooperative no longer has to be assembled into one
+// file before anything can be reconciled.
+//
+// A round built the old way, from the results alone, keeps the old behaviour
+// exactly, described below.
 //
 // Re-uploading replaces the list rather than merging into it: the sheet is
 // regenerated locally whenever the หักไม่ได้ analysis is re-run, and a merge
@@ -58,6 +73,55 @@ export async function POST(
 
   const sheet = parseMaiDaiSheet(rows);
   const parsed = sheet.rows;
+
+  // Which round this is decides what the sheet means. Read before the
+  // emptiness checks below, because on a seeded round a file of nothing but
+  // "หักได้ครบ" is a perfectly good result to record — it is only on a round
+  // that has to be *built* from this file that it leaves nothing behind.
+  const roster = await prisma.statementMember.findMany({
+    where: { roundId: round.id },
+    select: {
+      memberNumber: true,
+      unitName: true,
+      deductionResult: true,
+      expectedAmount: true,
+    },
+  });
+  const seeded = wasSeeded(roster);
+
+  if (seeded) {
+    if (sheet.all.length === 0) {
+      return NextResponse.json(
+        {
+          error:
+            "ไม่พบรายชื่อสมาชิกในไฟล์นี้ — ตรวจว่าคอลัมน์ A เป็นเลขสมาชิก และ E เป็นยอดหักไม่ได้",
+        },
+        { status: 400 }
+      );
+    }
+
+    const plan = planDeductionUpload(roster, sheet.all);
+    await applyRoundSheet(round.id, plan);
+    const progress = await refreshRoundProgress(round.id);
+    const missingAccountNow = await prisma.statementMember.count({
+      where: { roundId: round.id, accountNumber: null, deductionResult: "uncollected" },
+    });
+
+    return NextResponse.json({
+      applied: true,
+      imported: progress.members,
+      added: plan.create.length,
+      updated: plan.update.length,
+      keptResult: plan.keptResult.length,
+      // How much of the round this file said nothing about — the honest
+      // answer to "did I upload the right file", when one unit's file and
+      // the whole cooperative's look the same from here.
+      untouched: plan.untouched,
+      missingAccount: missingAccountNow,
+      ...progress,
+    });
+  }
+
   if (parsed.length === 0) {
     // A sheet where every unit is still awaiting its result is a real case,
     // and saying "ไม่พบรายชื่อ" for it would send staff hunting for a problem
@@ -85,11 +149,7 @@ export async function POST(
   // take away most of the round. The check reads the round's current list
   // rather than trusting a count sent from the browser, so a stale page
   // cannot wave it through.
-  const existing = await prisma.statementMember.findMany({
-    where: { roundId: round.id },
-    select: { memberNumber: true, unitName: true },
-  });
-  const change = summarizeMemberListChange(existing, parsed);
+  const change = summarizeMemberListChange(roster, parsed);
   const confirmed = form.get("confirm") === "yes";
   if (!confirmed && needsShrinkConfirmation(change)) {
     return NextResponse.json(
