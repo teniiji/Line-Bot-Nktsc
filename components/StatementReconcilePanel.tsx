@@ -326,6 +326,26 @@ export default function StatementReconcilePanel() {
   // Split from the change handler so the same file can be sent again with
   // confirm=yes after the shrink question, without asking staff to pick it a
   // second time — re-picking is where the wrong file gets chosen twice.
+  // Where a filled-in account number came from, said out loud: the directory
+  // is a binding somebody made, an earlier round is the cooperative's own
+  // sheet from a previous month — which used to be invisible here, and is the
+  // reason a member whose account was in August's file read as
+  // "ไม่มีเลขบัญชี" in September. See lib/accountHistory.ts.
+  const describeFills = (body: {
+    filledFromDirectory?: number;
+    filledFromPrevious?: number;
+    ambiguousAccounts?: number;
+  }) =>
+    ((body.filledFromDirectory ?? 0) > 0
+      ? ` — เติมเลขบัญชีจากทะเบียนให้ ${body.filledFromDirectory} คน`
+      : "") +
+    ((body.filledFromPrevious ?? 0) > 0
+      ? ` · เติมจากรอบก่อนหน้าให้อีก ${body.filledFromPrevious} คน`
+      : "") +
+    ((body.ambiguousAccounts ?? 0) > 0
+      ? ` · อีก ${body.ambiguousAccounts} คนรู้จักหลายเลขบัญชี จึงไม่เติมให้ ต้องเลือกเอง`
+      : "");
+
   const sendMembers = async (
     file: File,
     roundId: string,
@@ -377,6 +397,7 @@ export default function StatementReconcilePanel() {
             (body.keptResult > 0
               ? ` · ${body.keptResult} คนในไฟล์ยังไม่มีผล แต่รอบมีผลอยู่แล้ว จึงไม่ทับ`
               : "") +
+            describeFills(body) +
             (body.missingAccount > 0
               ? ` — ⚠️ มี ${body.missingAccount} คนที่หักไม่ได้แต่ไม่มีเลขบัญชี จับคู่กับ Statement ไม่ได้`
               : "")
@@ -394,9 +415,7 @@ export default function StatementReconcilePanel() {
           (body.awaitingMembers > 0
             ? ` (อีก ${body.awaitingMembers} คนใน ${body.awaitingUnits} หน่วยงานยังไม่ส่งผลการหักมา จึงยังไม่นับ)`
             : "") +
-          (body.filledFromDirectory > 0
-            ? ` — เติมเลขบัญชีจากทะเบียนให้ ${body.filledFromDirectory} คน`
-            : "") +
+          describeFills(body) +
           (body.missingAccount > 0
             ? ` — มี ${body.missingAccount} คนไม่มีเลขบัญชีในไฟล์ จับคู่กับ Statement ไม่ได้`
             : "")
@@ -515,7 +534,8 @@ export default function StatementReconcilePanel() {
             : "") +
           (body.skippedRows > 0
             ? ` · ข้าม ${body.skippedRows} แถวที่ไม่มีเลขสมาชิก`
-            : "")
+            : "") +
+          describeFills(body)
       );
       await Promise.all([fetchRound(roundId), fetchRounds()]);
     } finally {
