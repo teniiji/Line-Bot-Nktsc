@@ -24,6 +24,11 @@ import { EXCLUDE_REASONS } from "@/lib/statementSlipHints";
 import { describeDoubleCount } from "@/lib/roundDoubleCount";
 import { sectionOpen } from "@/lib/sections";
 import {
+  UNMATCHED_SORT_OPTIONS,
+  sortUnmatched,
+  type UnmatchedSort,
+} from "@/lib/unmatchedSort";
+import {
   STATEMENT_SECTION_OPEN_BY_DEFAULT,
   STATEMENT_SECTION_SEARCHABLE,
   allStatementSections,
@@ -132,6 +137,10 @@ export default function StatementReconcilePanel() {
   // approval. A flag rather than a copy of the list, so the dialog reads the
   // rows on screen and cannot show one thing while sending another.
   const [confirmRecorded, setConfirmRecorded] = useState(false);
+  // How the unclaimed list is ordered. Its own control rather than the member
+  // table's: the questions asked of this list are different — see
+  // lib/unmatchedSort.ts.
+  const [unmatchedSort, setUnmatchedSort] = useState<UnmatchedSort>("newest");
   const [statements, setStatements] = useState<StatementFileSummary[]>([]);
   const [transfers, setTransfers] = useState<StatementTransferRow[]>([]);
   const [excludedTotal, setExcludedTotal] = useState(0);
@@ -560,6 +569,11 @@ export default function StatementReconcilePanel() {
   const membersOpen = isOpen("members", shown.length);
   const unmatchedOpen = isOpen("unmatched", unmatched.length);
   const outsideRoundOpen = isOpen("outsideRound", outsideRound.length);
+
+  // The unclaimed list in the order the person asked for. Sorted here rather
+  // than in the query because the ordering is a reading of the list, not a
+  // property of it, and the repeats ordering counts the rows on screen.
+  const shownUnmatched = sortUnmatched(unmatched, unmatchedSort);
 
   // The answers the daily page already has for rows still on the list of
   // work: the same "ใช้เลขนี้" each row offers, gathered one per account so a
@@ -1215,6 +1229,25 @@ export default function StatementReconcilePanel() {
                   <span className="num">{recordedBindings.length}</span> บัญชี)
                 </button>
               )}
+              {/* Only while the rows are showing: a folded section is a
+                  heading and a count, and a sort control over nothing is
+                  clutter in the one place the fold was meant to clear. */}
+              {unmatchedOpen && unmatched.length > 1 && (
+                <label className="ml-3 text-xs text-slate-500">
+                  เรียง{" "}
+                  <select
+                    value={unmatchedSort}
+                    onChange={(e) => setUnmatchedSort(e.target.value as UnmatchedSort)}
+                    className="border border-slate-300 rounded px-2 py-1 bg-white text-slate-900"
+                  >
+                    {UNMATCHED_SORT_OPTIONS.map((o) => (
+                      <option key={o.value} value={o.value}>
+                        {o.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              )}
               <p className="text-xs text-slate-500 mt-1">
                 เลขบัญชีที่โอนเข้ามาไม่ตรงกับใครในรายชื่อหักไม่ได้รอบนี้ —
                 กด <strong>"ระบุเจ้าของ"</strong> แล้วใส่เลขสมาชิก ระบบจะจับคู่ให้ทันที
@@ -1234,7 +1267,7 @@ export default function StatementReconcilePanel() {
                     </tr>
                   </thead>
                   <tbody>
-                    {unmatched.map((t) => (
+                    {shownUnmatched.map((t) => (
                       <tr key={t.id} className="border-t border-slate-100 hover:bg-slate-50">
                         <td className="px-2 py-1.5 font-mono text-xs">{t.accountNumber}</td>
                         <td className="px-2 py-1.5 num text-right whitespace-nowrap font-medium">
