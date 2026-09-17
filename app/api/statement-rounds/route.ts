@@ -20,12 +20,27 @@ export async function GET() {
     const rows = grouped.filter((g) => g.roundId === round.id);
     const countFor = (status: string) =>
       rows.find((r) => r.status === status)?._count._all ?? 0;
+    const paid = countFor("paid");
+    const overpaid = countFor("overpaid");
+    const unpaid = countFor("unpaid");
     return {
       ...round,
-      totalMembers: rows.reduce((sum, r) => sum + r._count._all, 0),
-      paidMembers: countFor("paid"),
-      overpaidMembers: countFor("overpaid"),
-      unpaidMembers: countFor("unpaid"),
+      // The round's chase population: the members payroll could not deduct
+      // from. Deliberately not everybody in the round — a round can now start
+      // from the รายการหัก, so it also holds members whose unit has not
+      // reported and members payroll collected in full, and neither is
+      // somebody to chase. Every "x / totalMembers" on the page means this.
+      totalMembers: paid + overpaid + unpaid,
+      paidMembers: paid,
+      overpaidMembers: overpaid,
+      unpaidMembers: unpaid,
+      // The two states a round seeded from the รายการหัก has and an old one
+      // never did: no result from the unit yet, and deducted in full.
+      awaitingResult: countFor("awaiting"),
+      collectedMembers: countFor("collected"),
+      // Everyone the round knows about, which is what says whether it has
+      // been started at all.
+      populationMembers: rows.reduce((sum, r) => sum + r._count._all, 0),
     };
   });
 

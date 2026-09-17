@@ -181,12 +181,19 @@ export interface StatementRoundSummary {
   paidMembers: number;
   overpaidMembers: number;
   unpaidMembers: number;
-  // Units in the uploaded sheet that had not reported a deduction result yet.
-  // Their members are not on the round's list — nobody knows whether they
-  // paid — so the round only covers part of the month until they come in.
+  // Units that have not reported a deduction result yet. On a round seeded
+  // from the รายการหัก their members ARE on the round's list, marked รอผล; on
+  // an older round they were only a count read off the sheet. Either way the
+  // round only covers part of the month until they come in.
   awaitingUnits: number;
   awaitingMembers: number;
   awaitingAmount: number;
+  // Members on the รายการหัก whose unit has not reported, and members payroll
+  // deducted in full. Both are zero on a round built from results alone.
+  awaitingResult: number;
+  collectedMembers: number;
+  // Everyone the round knows about, whatever their result.
+  populationMembers: number;
 }
 
 export interface StatementMemberRow {
@@ -197,6 +204,11 @@ export interface StatementMemberRow {
   hCode: string | null;
   note: string | null;
   accountNumber: string | null;
+  // What payroll was asked to deduct, from the รายการหัก. Null on rounds
+  // built from the results alone, which never saw that figure.
+  expectedAmount: number | null;
+  // awaiting / collected / uncollected — see prisma/schema.prisma.
+  deductionResult: string;
   amountDue: number;
   amountPaid: number;
   paidAt: string | null;

@@ -13,7 +13,7 @@ export async function recomputeRoundPayments(roundId: string): Promise<void> {
   const [members, transfers] = await Promise.all([
     prisma.statementMember.findMany({
       where: { roundId },
-      select: { id: true, memberNumber: true, amountDue: true },
+      select: { id: true, memberNumber: true, amountDue: true, deductionResult: true },
     }),
     // Transfers staff have marked as being for something else (ซื้อหุ้น,
     // ชำระหนี้ …) are money that arrived but not money that settles a
@@ -55,7 +55,21 @@ export async function recomputeRoundPayments(roundId: string): Promise<void> {
           // Someone who paid into both accounts gets both named rather than
           // an arbitrary one of the two.
           paidBranch: paid ? Array.from(paid.branches).sort().join(" + ") : null,
-          status: calcPaymentStatus(amountPaid, member.amountDue).status,
+          // Nobody has said yet whether payroll could deduct from this
+          // member, so they are not short of anything — and calling a row
+          // with nothing due "✅ ชำระครบ" would put a whole unit that has not
+          // even replied among the people who have settled.
+          //
+          // A member payroll did deduct from is "collected" for the same
+          // reason: they owe this round nothing, and counting them among
+          // ✅ ชำระครบ would read as a thousand people having transferred
+          // money they were never asked for.
+          status:
+            member.deductionResult === "awaiting"
+              ? "awaiting"
+              : member.deductionResult === "collected"
+                ? "collected"
+                : calcPaymentStatus(amountPaid, member.amountDue).status,
         },
       });
     })

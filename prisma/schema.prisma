@@ -716,6 +716,18 @@ model StatementMember {
   // it supplied — without this the two are indistinguishable and a deleted
   // binding would leave its account number behind, still matching.
   accountSource String?
+  // What payroll was asked to deduct (คอลัมน์ C ยอดแจ้งหัก). Known from the
+  // moment the รายการหัก goes in — months before anyone knows whether it
+  // could be collected. Null on rounds built the old way, from results alone.
+  expectedAmount Float?
+  // Whether this member's unit has reported back, and what it said:
+  //   awaiting    — on the รายการหัก, no result from the unit yet
+  //   collected   — payroll deducted in full; nothing owing in this round
+  //   uncollected — payroll could not deduct; amountDue is what is owed
+  // Defaults to uncollected because that is what every row written before
+  // this field existed was: the round used to be built from the หักไม่ได้
+  // sheet, so being in it *meant* uncollected.
+  deductionResult String  @default("uncollected")
   amountDue     Float
   amountPaid    Float     @default(0)
   paidAt        DateTime?
@@ -723,12 +735,14 @@ model StatementMember {
   // paid     — amountPaid == amountDue (✅ ชำระครบ)
   // overpaid — amountPaid > amountDue  (⚠️ ชำระเกิน)
   // unpaid   — amountPaid < amountDue, including no payment at all (❌ ยังค้าง)
+  // awaiting — no result yet, so there is nothing to be short of
   status        String    @default("unpaid")
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
 
   @@unique([roundId, memberNumber])
   @@index([roundId])
+  @@index([roundId, deductionResult])
 }
 
 // Every "TR fr <account>" line read out of an uploaded statement, matched

@@ -109,6 +109,33 @@ describe("parseMaiDaiSheet", () => {
     expect(parsed.map((r) => r.memberNumber)).toEqual(["12346", "12347"]);
   });
 
+  it("classifies every member the sheet names, not only the ones who owe", () => {
+    // What a round seeded from the รายการหัก needs: the ones payroll took in
+    // full, the ones it could not, and the ones nobody has answered for —
+    // three different facts, where the old read kept only the middle one.
+    const { all } = parseMaiDaiSheet(rows);
+    expect(all.map((r) => [r.memberNumber, r.result])).toEqual([
+      ["12345", "collected"],
+      ["12346", "uncollected"],
+      ["12347", "uncollected"],
+    ]);
+  });
+
+  it("carries the ยอดแจ้งหัก, which is all a row awaiting its result has", () => {
+    const awaiting: unknown[][] = [
+      ["12348", "รอผล ยังไม่ส่ง", 5500, null, null, "สพป.นค เขต 2", null, null, "0431234569", "8"],
+    ];
+    const { all, rows: owing } = parseMaiDaiSheet(awaiting);
+    expect(owing).toHaveLength(0);
+    expect(all[0]).toMatchObject({
+      memberNumber: "12348",
+      result: "awaiting",
+      expectedAmount: 5500,
+      // Nobody owes anything until their unit has said so.
+      amountDue: 0,
+    });
+  });
+
   it("reads the fields matching is built on", () => {
     const [first, second] = parseMaiDaiSheet(rows).rows;
     expect(first).toMatchObject({
