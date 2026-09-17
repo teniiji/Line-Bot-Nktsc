@@ -6,6 +6,13 @@ interface ConfirmDialogProps {
   description?: string;
   confirmLabel?: string;
   cancelLabel?: string;
+  // What is about to happen, item by item, for a question that cannot be
+  // asked in a sentence: "ผูก 37 บัญชีนี้ไหม" is only answerable by somebody
+  // who can see the 37.
+  children?: React.ReactNode;
+  // Red is for the ones that destroy something. A batch of the same save
+  // staff make by hand all day should not be dressed as a demolition.
+  tone?: "danger" | "neutral";
   onConfirm: () => void;
   onCancel: () => void;
 }
@@ -16,6 +23,8 @@ export default function ConfirmDialog({
   description,
   confirmLabel = "ยืนยัน",
   cancelLabel = "ยกเลิก",
+  children,
+  tone = "danger",
   onConfirm,
   onCancel,
 }: ConfirmDialogProps) {
@@ -34,6 +43,7 @@ export default function ConfirmDialog({
         {description && (
           <p className="text-sm text-slate-600 whitespace-pre-line">{description}</p>
         )}
+        {children}
         <div className="flex justify-end gap-2 pt-2">
           <button
             type="button"
@@ -45,7 +55,9 @@ export default function ConfirmDialog({
           <button
             type="button"
             onClick={onConfirm}
-            className="bg-red-600 text-white rounded px-4 py-2 text-sm font-medium"
+            className={`rounded px-4 py-2 text-sm font-medium text-white ${
+              tone === "danger" ? "bg-red-600" : "bg-slate-900"
+            }`}
           >
             {confirmLabel}
           </button>

@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { matchSlipHints } from "@/lib/statementSlipHints";
 import { countedElsewhere } from "@/lib/roundDoubleCount";
-import { ownersFromRecordings } from "@/lib/recordedOwners";
+import { recordedOwnersForAccounts } from "@/lib/roundRecordings";
 import { splitByBinding } from "@/lib/boundTransfers";
 
 export const dynamic = "force-dynamic";
@@ -36,37 +36,7 @@ export async function GET(
   // round and record the payment there; the round has no way to hear about it
   // and goes on listing the account as unknown — see lib/recordedOwners.ts.
   const unknownAccounts = [...new Set(unmatchedRows.map((t) => t.accountNumber))];
-  const payerLines = unknownAccounts.length
-    ? await prisma.statementLine.findMany({
-        where: { senderAccount: { in: unknownAccounts } },
-        select: { id: true, senderAccount: true },
-      })
-    : [];
-  const recordings = payerLines.length
-    ? await prisma.expense.findMany({
-        where: {
-          statementLineId: { in: payerLines.map((line) => line.id) },
-          memberNumber: { not: null },
-        },
-        select: {
-          statementLineId: true,
-          memberNumber: true,
-          memberFullName: true,
-          category: true,
-          createdAt: true,
-        },
-      })
-    : [];
-  const accountOfLine = new Map(payerLines.map((line) => [line.id, line.senderAccount]));
-  const recordedOwners = ownersFromRecordings(
-    recordings.map((row) => ({
-      accountNumber: accountOfLine.get(row.statementLineId ?? "") ?? "",
-      memberNumber: row.memberNumber as string,
-      memberName: row.memberFullName,
-      category: row.category,
-      recordedAt: row.createdAt,
-    }))
-  );
+  const recordedOwners = await recordedOwnersForAccounts(unknownAccounts);
 
   // Which of these accounts staff have already bound to a member. A binding
   // to somebody on this round's list would have matched the transfer, so
