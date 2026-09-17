@@ -13,6 +13,8 @@ import {
 } from "@/lib/memberListChange";
 import { planDeductionUpload, wasSeeded } from "@/lib/deductionUpload";
 import { applyRoundSheet, refreshRoundProgress } from "@/lib/roundMembers";
+import { readMappedSheet } from "@/lib/mappedSheet";
+import { parseConfirmedUpload } from "@/lib/uploadMapping";
 import {
   applyDirectoryAccounts,
   recomputeRoundPayments,
@@ -71,8 +73,43 @@ export async function POST(
     return NextResponse.json({ error: describeReadError(err) }, { status: 400 });
   }
 
+  // A mapping confirmed in the preview reads the file; without one the old
+  // fixed-position contract still applies, which is what a round built before
+  // any of this was uploaded with.
+  const columns = parseConfirmedUpload(form.get("mapping"), form.get("firstDataRow"));
+  const mapped = columns
+    ? readMappedSheet(rows, columns.firstDataRow, columns.mapping)
+    : null;
+
   const sheet = parseMaiDaiSheet(rows);
-  const parsed = sheet.rows;
+  const parsed = mapped ? mapped.rows.filter((row) => row.result === "uncollected") : sheet.rows;
+  const allRows = mapped ? mapped.rows : sheet.all;
+
+  // Who this file has no result for, counted from whichever reading produced
+  // the rows above — taking these from the fixed-position parse while the
+  // rows came from a confirmed mapping would put one file's numbers beside
+  // another file's list.
+  const awaitingFromSheet = mapped
+    ? {
+        members: mapped.awaiting,
+        amount:
+          Math.round(
+            mapped.rows
+              .filter((row) => row.result === "awaiting")
+              .reduce((sum, row) => sum + (row.expectedAmount ?? 0), 0) * 100
+          ) / 100,
+        units: new Set(
+          mapped.rows
+            .filter((row) => row.result === "awaiting")
+            .map((row) => row.hCode ?? row.unitName)
+            .filter((unit): unit is string => Boolean(unit))
+        ).size,
+      }
+    : {
+        members: sheet.awaitingMembers,
+        amount: sheet.awaitingAmount,
+        units: sheet.awaitingUnits.length,
+      };
 
   // Which round this is decides what the sheet means. Read before the
   // emptiness checks below, because on a seeded round a file of nothing but
@@ -90,7 +127,7 @@ export async function POST(
   const seeded = wasSeeded(roster);
 
   if (seeded) {
-    if (sheet.all.length === 0) {
+    if (allRows.length === 0) {
       return NextResponse.json(
         {
           error:
@@ -100,7 +137,7 @@ export async function POST(
       );
     }
 
-    const plan = planDeductionUpload(roster, sheet.all);
+    const plan = planDeductionUpload(roster, allRows);
     await applyRoundSheet(round.id, plan);
     const progress = await refreshRoundProgress(round.id);
     const missingAccountNow = await prisma.statementMember.count({
@@ -117,6 +154,7 @@ export async function POST(
       // answer to "did I upload the right file", when one unit's file and
       // the whole cooperative's look the same from here.
       untouched: plan.untouched,
+      skippedRows: mapped?.skipped ?? 0,
       missingAccount: missingAccountNow,
       ...progress,
     });
@@ -181,9 +219,9 @@ export async function POST(
   await prisma.statementRound.update({
     where: { id: round.id },
     data: {
-      awaitingUnits: sheet.awaitingUnits.length,
-      awaitingMembers: sheet.awaitingMembers,
-      awaitingAmount: sheet.awaitingAmount,
+      awaitingUnits: awaitingFromSheet.units,
+      awaitingMembers: awaitingFromSheet.members,
+      awaitingAmount: awaitingFromSheet.amount,
     },
   });
 
@@ -214,8 +252,8 @@ export async function POST(
     // staff need to know up front rather than wondering why they stay ❌.
     missingAccount,
     filledFromDirectory,
-    awaitingUnits: sheet.awaitingUnits.length,
-    awaitingMembers: sheet.awaitingMembers,
-    awaitingAmount: sheet.awaitingAmount,
+    awaitingUnits: awaitingFromSheet.units,
+    awaitingMembers: awaitingFromSheet.members,
+    awaitingAmount: awaitingFromSheet.amount,
   });
 }

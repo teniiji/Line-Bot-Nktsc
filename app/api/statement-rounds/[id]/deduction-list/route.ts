@@ -5,7 +5,9 @@ import {
   describeReadError,
   readFirstSheetRows,
 } from "@/lib/excelUpload";
-import { parseMaiDaiSheet } from "@/lib/statementReconcile";
+import { detectSheetColumns } from "@/lib/sheetColumns";
+import { readMappedSheet } from "@/lib/mappedSheet";
+import { parseConfirmedUpload } from "@/lib/uploadMapping";
 import { planDeductionUpload } from "@/lib/deductionUpload";
 import { applyRoundSheet, refreshRoundProgress } from "@/lib/roundMembers";
 
@@ -48,12 +50,18 @@ export async function POST(
     return NextResponse.json({ error: describeReadError(err) }, { status: 400 });
   }
 
-  const sheet = parseMaiDaiSheet(rows);
-  if (sheet.all.length === 0) {
+  // The mapping the person confirmed in the preview. Without one — an older
+  // page, or a call from somewhere else — the sheet is read again the same
+  // way the preview read it.
+  const confirmed = parseConfirmedUpload(form.get("mapping"), form.get("firstDataRow"));
+  const reading = confirmed ?? detectSheetColumns(rows);
+  const sheet = readMappedSheet(rows, reading.firstDataRow, reading.mapping);
+
+  if (sheet.rows.length === 0) {
     return NextResponse.json(
       {
         error:
-          "ไม่พบรายชื่อสมาชิกในไฟล์นี้ — ตรวจว่าคอลัมน์ A เป็นเลขสมาชิก และ C เป็นยอดแจ้งหัก",
+          "ไม่พบรายชื่อสมาชิกในไฟล์นี้ — ตรวจว่าเลือกคอลัมน์เลขสมาชิกถูกต้อง แล้วลองใหม่",
       },
       { status: 400 }
     );
@@ -63,13 +71,17 @@ export async function POST(
     where: { roundId: round.id },
     select: { memberNumber: true, deductionResult: true },
   });
-  const plan = planDeductionUpload(existing, sheet.all);
+  const plan = planDeductionUpload(existing, sheet.rows);
   await applyRoundSheet(round.id, plan);
   const progress = await refreshRoundProgress(round.id);
 
   return NextResponse.json({
     added: plan.create.length,
     updated: plan.update.length,
+    // Rows in the file with no member number in the mapped column: blank
+    // lines, a total at the foot of a unit's sheet. Said out loud, because a
+    // mapping pointed at the wrong column reads as a file half imported.
+    skippedRows: sheet.skipped,
     // Rows this file left as they were because the round already had an
     // answer for them — re-uploading a รายการหัก must not un-answer a unit
     // that has since replied.

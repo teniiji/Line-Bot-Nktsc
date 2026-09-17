@@ -36,11 +36,16 @@ export async function applyRoundSheet(roundId: string, plan: UploadPlan): Promis
     await prisma.statementMember.update({
       where: { roundId_memberNumber: { roundId, memberNumber: row.memberNumber } },
       data: {
-        name: row.name,
-        unitName: row.unitName,
-        hCode: row.hCode,
-        note: row.note,
-        expectedAmount: row.expectedAmount,
+        // Only what this sheet actually carries. A column the file does not
+        // have — or one left unmapped on purpose, which is how a unit's file
+        // avoids overwriting the round's own หน่วยคุม coding with its
+        // internal one — says nothing, and nothing is not an instruction to
+        // erase what another file already established.
+        ...(row.name ? { name: row.name } : {}),
+        ...(row.unitName ? { unitName: row.unitName } : {}),
+        ...(row.hCode ? { hCode: row.hCode } : {}),
+        ...(row.note ? { note: row.note } : {}),
+        ...(row.expectedAmount !== null ? { expectedAmount: row.expectedAmount } : {}),
         deductionResult: row.result,
         amountDue: row.amountDue,
         // A sheet that carries an account number is the round's own statement
