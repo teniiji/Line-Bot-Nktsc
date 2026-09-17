@@ -17,6 +17,8 @@ import {
 } from "@/lib/types";
 
 import ConfirmDialog from "@/components/ConfirmDialog";
+import SheetMappingDialog, { type SheetPreview } from "@/components/SheetMappingDialog";
+import type { SheetMapping } from "@/lib/sheetColumns";
 import PanelHelp from "@/components/PanelHelp";
 import { describeDeductionPeriod } from "@/lib/deductionPeriod";
 import { downloadStatementMembersCsv } from "@/lib/csv";
@@ -148,6 +150,15 @@ export default function StatementReconcilePanel() {
   // table's: the questions asked of this list are different — see
   // lib/unmatchedSort.ts.
   const [unmatchedSort, setUnmatchedSort] = useState<UnmatchedSort>("newest");
+  // An uploaded sheet waiting to be confirmed: the file, what it is for, and
+  // how its columns were read. Nothing is written until somebody agrees with
+  // the reading — see components/SheetMappingDialog.tsx.
+  const [pendingSheet, setPendingSheet] = useState<{
+    file: File;
+    kind: "list" | "results";
+    preview: SheetPreview;
+    mapping: SheetMapping;
+  } | null>(null);
   const [statements, setStatements] = useState<StatementFileSummary[]>([]);
   const [transfers, setTransfers] = useState<StatementTransferRow[]>([]);
   const [excludedTotal, setExcludedTotal] = useState(0);
@@ -315,7 +326,13 @@ export default function StatementReconcilePanel() {
   // Split from the change handler so the same file can be sent again with
   // confirm=yes after the shrink question, without asking staff to pick it a
   // second time — re-picking is where the wrong file gets chosen twice.
-  const sendMembers = async (file: File, roundId: string, confirm: boolean) => {
+  const sendMembers = async (
+    file: File,
+    roundId: string,
+    confirm: boolean,
+    mapping?: SheetMapping,
+    firstDataRow?: number
+  ) => {
     setBusy(true);
     setError(null);
     setNotice(null);
@@ -323,6 +340,10 @@ export default function StatementReconcilePanel() {
       const form = new FormData();
       form.append("file", file);
       if (confirm) form.append("confirm", "yes");
+      if (mapping) {
+        form.append("mapping", JSON.stringify(mapping));
+        form.append("firstDataRow", String(firstDataRow ?? 0));
+      }
       const res = await fetch(`/api/statement-rounds/${roundId}/members`, {
         method: "POST",
         body: form,
@@ -386,11 +407,67 @@ export default function StatementReconcilePanel() {
     }
   };
 
+  // Both uploads go through the same door: read the file, show what the
+  // system made of its columns, and save only what a person confirmed. Every
+  // เขต builds its own file — see lib/sheetColumns.ts for the two real shapes
+  // that made this necessary.
+  const openSheet = async (file: File, kind: "list" | "results") => {
+    if (!selectedId) return;
+    setBusy(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const form = new FormData();
+      form.append("file", file);
+      const res = await fetch(`/api/statement-rounds/${selectedId}/sheet-preview`, {
+        method: "POST",
+        body: form,
+      });
+      const body = await res.json();
+      if (!res.ok) {
+        setError(body.error || "อ่านไฟล์ไม่สำเร็จ");
+        return;
+      }
+      setPendingSheet({ file, kind, preview: body, mapping: body.mapping });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const changeMapping = async (mapping: SheetMapping) => {
+    if (!pendingSheet || !selectedId) return;
+    setPendingSheet({ ...pendingSheet, mapping });
+    const form = new FormData();
+    form.append("file", pendingSheet.file);
+    form.append("mapping", JSON.stringify(mapping));
+    form.append("firstDataRow", String(pendingSheet.preview.firstDataRow));
+    const res = await fetch(`/api/statement-rounds/${selectedId}/sheet-preview`, {
+      method: "POST",
+      body: form,
+    });
+    if (!res.ok) return;
+    const body = await res.json();
+    // Only the reading changes; the columns and the file stay as they were.
+    setPendingSheet((prev) =>
+      prev && prev.file === pendingSheet.file
+        ? { ...prev, preview: { ...body, mapping }, mapping }
+        : prev
+    );
+  };
+
+  const confirmSheet = async () => {
+    if (!pendingSheet || !selectedId) return;
+    const { file, kind, mapping, preview } = pendingSheet;
+    setPendingSheet(null);
+    if (kind === "list") await sendDeductionList(file, selectedId, mapping, preview.firstDataRow);
+    else await sendMembers(file, selectedId, false, mapping, preview.firstDataRow);
+  };
+
   const uploadMembers = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     e.target.value = "";
-    if (!file || !selectedId) return;
-    await sendMembers(file, selectedId, false);
+    if (!file) return;
+    await openSheet(file, "results");
   };
 
   // The รายการหัก that starts the round. Merges, so the whole cooperative can
@@ -399,15 +476,25 @@ export default function StatementReconcilePanel() {
   const uploadDeductionList = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     e.target.value = "";
-    if (!file || !selectedId) return;
+    if (!file) return;
+    await openSheet(file, "list");
+  };
 
+  const sendDeductionList = async (
+    file: File,
+    roundId: string,
+    mapping: SheetMapping,
+    firstDataRow: number
+  ) => {
     setBusy(true);
     setError(null);
     setNotice(null);
     try {
       const form = new FormData();
       form.append("file", file);
-      const res = await fetch(`/api/statement-rounds/${selectedId}/deduction-list`, {
+      form.append("mapping", JSON.stringify(mapping));
+      form.append("firstDataRow", String(firstDataRow));
+      const res = await fetch(`/api/statement-rounds/${roundId}/deduction-list`, {
         method: "POST",
         body: form,
       });
@@ -425,9 +512,12 @@ export default function StatementReconcilePanel() {
             : "") +
           (body.keptResult > 0
             ? ` · ${body.keptResult} คนมีผลการหักอยู่แล้ว จึงไม่ทับด้วย "รอผล"`
+            : "") +
+          (body.skippedRows > 0
+            ? ` · ข้าม ${body.skippedRows} แถวที่ไม่มีเลขสมาชิก`
             : "")
       );
-      await Promise.all([fetchRound(selectedId), fetchRounds()]);
+      await Promise.all([fetchRound(roundId), fetchRounds()]);
     } finally {
       setBusy(false);
     }
@@ -1783,6 +1873,20 @@ export default function StatementReconcilePanel() {
         confirmLabel="ล้างรายการ"
         onConfirm={confirmClearAccount}
         onCancel={() => setPendingClear(null)}
+      />
+
+      <SheetMappingDialog
+        open={pendingSheet !== null}
+        fileName={pendingSheet?.file.name ?? ""}
+        preview={pendingSheet?.preview ?? null}
+        mapping={pendingSheet?.mapping ?? {}}
+        onChange={changeMapping}
+        onConfirm={confirmSheet}
+        onCancel={() => setPendingSheet(null)}
+        busy={busy}
+        confirmLabel={
+          pendingSheet?.kind === "list" ? "นำเข้ารายการหัก" : "บันทึกผลการหัก"
+        }
       />
 
       {/* The list, before it is written. "ผูก 37 บัญชี" is not a question
