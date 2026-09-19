@@ -209,6 +209,11 @@ export interface StatementMemberRow {
   expectedAmount: number | null;
   // awaiting / collected / uncollected — see prisma/schema.prisma.
   deductionResult: string;
+  // Accounts the directory holds for this member, sent only when their own
+  // column is blank. Two of them is why it is blank: the fill will not choose
+  // between a member's accounts, and a row that says "ไม่มีเลขบัญชี" when the
+  // cooperative holds two of them is telling the opposite of the truth.
+  knownAccounts?: string[];
   amountDue: number;
   amountPaid: number;
   paidAt: string | null;

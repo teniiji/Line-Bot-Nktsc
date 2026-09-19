@@ -97,7 +97,18 @@ function matchesStatus(m: StatementMemberRow, status: string): boolean {
   // Asked of the people this round is chasing, since a member whose unit has
   // not reported is not somebody with a missing account — they are somebody
   // who may turn out to owe nothing at all.
-  if (status === "no_account") return !m.accountNumber && m.deductionResult === "uncollected";
+  // Genuinely nobody's: a member the directory holds accounts for is not
+  // unmatchable, they are ambiguous — their money still finds them through
+  // the directory, and putting them in this bucket sends staff hunting for
+  // an account number the cooperative already has.
+  if (status === "no_account") {
+    return (
+      !m.accountNumber &&
+      (m.knownAccounts?.length ?? 0) === 0 &&
+      m.deductionResult === "uncollected"
+    );
+  }
+  if (status === "many_accounts") return !m.accountNumber && (m.knownAccounts?.length ?? 0) > 1;
   // The round's chase population as one bucket: everyone payroll could not
   // deduct from, whether or not they have since transferred the money.
   if (status === "uncollected") return m.deductionResult === "uncollected";
