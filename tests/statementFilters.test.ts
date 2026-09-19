@@ -250,3 +250,51 @@ describe("hCodesOf", () => {
     expect(codes).toEqual(["1", "2", "9", "10", "25"]);
   });
 });
+
+describe("members the cooperative holds several accounts for", () => {
+  // Reported from the round's table: member 27019 showing "ไม่มีเลขบัญชี"
+  // while the directory held 2173433169 and 4321090407 for them. The fill
+  // refuses to choose between a member's own accounts, so the column stays
+  // blank — but blank meant two different things, and only one of them is
+  // somebody staff have to find an account number for.
+  const ambiguous = member({
+    memberNumber: "27019",
+    accountNumber: null,
+    knownAccounts: ["2173433169", "4321090407"],
+    deductionResult: "uncollected",
+  });
+  const unknown = member({
+    memberNumber: "31679",
+    accountNumber: null,
+    knownAccounts: [],
+    deductionResult: "uncollected",
+  });
+
+  it("keeps a member with accounts on file out of ⛔ ไม่มีเลขบัญชี", () => {
+    const shown = filterStatementMembers([ambiguous, unknown], {
+      search: "",
+      unitName: "",
+      hCode: "",
+      status: "no_account",
+    });
+    expect(shown.map((m) => m.memberNumber)).toEqual(["31679"]);
+  });
+
+  it("gathers them under their own bucket instead", () => {
+    const shown = filterStatementMembers([ambiguous, unknown], {
+      search: "",
+      unitName: "",
+      hCode: "",
+      status: "many_accounts",
+    });
+    expect(shown.map((m) => m.memberNumber)).toEqual(["27019"]);
+  });
+
+  it("leaves a member whose account is filled in out of both", () => {
+    const filled = member({ accountNumber: "4131234567", knownAccounts: [] });
+    const asked = (status: string) =>
+      filterStatementMembers([filled], { search: "", unitName: "", hCode: "", status });
+    expect(asked("no_account")).toHaveLength(0);
+    expect(asked("many_accounts")).toHaveLength(0);
+  });
+});

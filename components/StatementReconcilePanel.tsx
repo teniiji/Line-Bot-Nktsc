@@ -721,7 +721,15 @@ export default function StatementReconcilePanel() {
   const shownTotals = summarizeStatementMembers(shown);
   const filtered =
     statusFilter !== "all" || unitFilter !== "" || hCodeFilter !== "" || search !== "";
-  const missingAccountCount = members.filter((m) => !m.accountNumber).length;
+  // Two different things that both used to read as "ไม่มีเลขบัญชี": nobody
+  // has ever recorded an account for this member, and the cooperative holds
+  // several and the fill would not pick one. Only the first is unmatchable.
+  const missingAccountCount = members.filter(
+    (m) => !m.accountNumber && (m.knownAccounts?.length ?? 0) === 0
+  ).length;
+  const manyAccountsCount = members.filter(
+    (m) => !m.accountNumber && (m.knownAccounts?.length ?? 0) > 1
+  ).length;
 
   const transfersOf = (memberNumber: string) =>
     transfers.filter((t) => t.memberNumber === memberNumber);
@@ -1091,6 +1099,18 @@ export default function StatementReconcilePanel() {
                   count={selected.unpaidMembers}
                   countClass="text-red-600"
                 />
+                {manyAccountsCount > 0 && (
+                  <FilterChip
+                    active={statusFilter === "many_accounts"}
+                    onClick={() =>
+                      setStatusFilter(statusFilter === "many_accounts" ? "all" : "many_accounts")
+                    }
+                    label="มีหลายเลขบัญชี"
+                    count={manyAccountsCount}
+                    countClass="text-slate-600"
+                    title="ทะเบียนมีมากกว่าหนึ่งเลขบัญชีของสมาชิกคนนี้ ระบบจึงไม่เลือกให้ — เงินที่โอนมาจากบัญชีไหนก็ยังจับคู่ได้ตามปกติ"
+                  />
+                )}
                 {missingAccountCount > 0 && (
                   <FilterChip
                     active={statusFilter === "no_account"}
@@ -1100,7 +1120,7 @@ export default function StatementReconcilePanel() {
                     label="⛔ ไม่มีเลขบัญชี"
                     count={missingAccountCount}
                     countClass="text-amber-700"
-                    title="ไม่มีเลขบัญชีในไฟล์รายชื่อ จับคู่กับ Statement ไม่ได้เลย ต้องหาเลขบัญชีมาเติมก่อน"
+                    title="ไม่มีเลขบัญชีทั้งในไฟล์รายชื่อ ทะเบียน และรอบก่อนหน้า — จับคู่กับ Statement ไม่ได้เลย ต้องหาเลขบัญชีมาเติมก่อน"
                   />
                 )}
               </div>
@@ -1327,9 +1347,26 @@ export default function StatementReconcilePanel() {
                             </td>
                             <td className="px-4 py-2.5">{m.unitName ?? "—"}</td>
                             <td className="px-4 py-2.5 font-mono text-xs">
-                              {m.accountNumber ?? (
-                                <span className="font-sans text-amber-700">ไม่มีเลขบัญชี</span>
-                              )}
+                              {m.accountNumber ??
+                                // Blank because the cooperative holds more
+                                // than one account for this member and the
+                                // fill will not choose between them. Saying
+                                // "ไม่มีเลขบัญชี" here sent staff looking for
+                                // a number that was on file twice over — and
+                                // money from either account still finds them
+                                // through the directory.
+                                ((m.knownAccounts?.length ?? 0) > 1 ? (
+                                  <span className="font-sans text-slate-500">
+                                    มี{" "}
+                                    <strong className="num">{m.knownAccounts!.length}</strong>{" "}
+                                    เลขบัญชี
+                                    <span className="block font-mono text-[11px] text-slate-400">
+                                      {m.knownAccounts!.join(" · ")}
+                                    </span>
+                                  </span>
+                                ) : (
+                                  <span className="font-sans text-amber-700">ไม่มีเลขบัญชี</span>
+                                ))}
                             </td>
                             <td className="px-4 py-2.5 num text-right whitespace-nowrap">
                               {m.deductionResult === "uncollected" ? (
