@@ -105,20 +105,70 @@ export async function readFirstSheetRows(file: File, sheetIndex = 0): Promise<un
     // ExcelJS row.values is 1-based with a leading hole; re-index to 0-based
     // so parsers can use the same column numbers as the source sheets.
     for (let col = 1; col <= sheet.columnCount; col += 1) {
-      const cell = row.getCell(col);
-      const value = cell.value;
-      if (value && typeof value === "object" && "result" in value) {
-        values.push((value as { result: unknown }).result);
-      } else if (value && typeof value === "object" && "text" in value) {
-        values.push((value as { text: unknown }).text);
-      } else {
-        values.push(value);
-      }
+      values.push(readCellValue(sheet, row.getCell(col)));
     }
     rows.push(values);
   });
 
   return rows;
+}
+
+// One cell's value, with formulas resolved.
+//
+// The unit sheets compute their own ยอดหักไม่ได้ — "=F5-G5", filled down the
+// column as a shared formula — and a cell like that arrives as
+// { formula: "F5-G5" } or { sharedFormula: "H5" } with no value attached at
+// all. Read as "nothing", a row whose shortfall the file worked out itself
+// became a member who owed nothing: money quietly leaving the round.
+//
+// So the number is taken from the cell's own result where the file cached
+// one, and otherwise worked out from the cells the formula names. Only a
+// single subtraction or addition of two cells is evaluated — that is what
+// these sheets contain, and a spreadsheet engine is not what this needs to
+// become.
+const SIMPLE_ARITHMETIC = /^\s*([A-Z]+[0-9]+)\s*([-+])\s*([A-Z]+[0-9]+)\s*$/;
+
+function plainValue(value: unknown): unknown {
+  if (value && typeof value === "object") {
+    if ("result" in value) return (value as { result: unknown }).result;
+    if ("text" in value) return (value as { text: unknown }).text;
+    if (Array.isArray((value as { richText?: unknown[] }).richText)) {
+      return (value as { richText: { text: string }[] }).richText
+        .map((part) => part.text)
+        .join("");
+    }
+  }
+  return value;
+}
+
+function numberAt(sheet: ExcelJS.Worksheet, address: string): number | null {
+  const plain = plainValue(sheet.getCell(address).value);
+  if (typeof plain === "number") return Number.isFinite(plain) ? plain : null;
+  if (typeof plain === "string" && plain.trim()) {
+    const num = Number(plain.replace(/,/g, ""));
+    return Number.isFinite(num) ? num : null;
+  }
+  return null;
+}
+
+function readCellValue(sheet: ExcelJS.Worksheet, cell: ExcelJS.Cell): unknown {
+  // Not a formula: whatever is in it, unwrapped.
+  if (cell.formula === undefined) return plainValue(cell.value);
+
+  // Computed from the file's current numbers in preference to a cached
+  // result, which can be left over from before somebody edited the cells it
+  // was computed from. ExcelJS translates a shared formula to the row it is
+  // used on, so "=F5-G5" filled down reads as "F6-G6" here.
+  const match = SIMPLE_ARITHMETIC.exec(cell.formula);
+  if (match) {
+    const left = numberAt(sheet, match[1]);
+    const right = numberAt(sheet, match[3]);
+    if (left !== null && right !== null) {
+      return match[2] === "-" ? left - right : left + right;
+    }
+  }
+
+  return cell.result ?? null;
 }
 
 export const UNREADABLE_FILE_ERROR =

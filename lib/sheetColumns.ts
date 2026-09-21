@@ -50,22 +50,37 @@ export type SheetMapping = Partial<Record<SheetField, number>>;
 // Header spellings seen in the files staff actually send. Matched on a
 // squeezed form (spaces and punctuation removed) because "ชื่อ  สกุล",
 // "ชื่อ-สกุล" and "ชื่อสกุล" are all the same heading.
-const HEADER_WORDS: { field: SheetField; words: string[] }[] = [
+const HEADER_WORDS: { field: SheetField; words: string[]; weak?: boolean }[] = [
   { field: "memberNumber", words: ["เลขที่", "เลขสมาชิก", "รหัสสมาชิก", "เลขทะเบียน"] },
   { field: "name", words: ["ชื่อสกุล", "ชื่อนามสกุล", "ชื่อ"] },
   { field: "uncollected", words: ["หักไม่ได้", "ยอดหักไม่ได้", "เก็บไม่ได้", "คงค้าง"] },
   { field: "collected", words: ["หักได้", "ยอดหักได้", "เก็บได้"] },
-  { field: "expected", words: ["แจ้งหัก", "ยอดแจ้งหัก", "ยอดเรียกเก็บ", "จำนวนเงิน", "ยอดหัก"] },
+  // "สหกรณ์" is a heading in the เขต files, where the amount is split into
+  // the cooperative's own share and the สสค. one beside it. It names the
+  // share this round is about, so it wins over the combined total.
+  { field: "expected", words: ["สหกรณ์", "แจ้งหัก", "ยอดแจ้งหัก", "ยอดเรียกเก็บ", "ยอดหัก"] },
   { field: "accountNumber", words: ["เลขบัญชี", "เลขที่บัญชี", "บัญชีธนาคาร"] },
   { field: "hCode", words: ["รหัสหน่วย", "หน่วยคุม", "รหัสหน่วยคุม", "รหัสหน่วยงาน"] },
   { field: "unitName", words: ["สังกัด", "หน่วยงาน", "โรงเรียน", "ชื่อหน่วย"] },
+  // Only where nothing better was found: "รวม" is สหกรณ์ + สสค. together, and
+  // "จำนวนเงิน" could be any of the columns in a sheet that has several.
+  { field: "expected", words: ["รวม", "จำนวนเงิน"], weak: true },
 ];
 
 // Columns that must never be mapped onto a field, however they look. The
 // national ID is 13 digits of exactly the shape an account number detector
 // would like, and it is the one column this system deliberately does not
 // store — see parseMaiDaiSheet.
-const EXCLUDED_WORDS = ["เลขประชาชน", "บัตรประชาชน", "เลขบัตรประชาชน", "เลขประจำตัวประชาชน"];
+const EXCLUDED_WORDS = [
+  "เลขประชาชน",
+  "บัตรประชาชน",
+  "เลขบัตรประชาชน",
+  "เลขประจำตัวประชาชน",
+  // Another organisation's money, collected on the same payroll line. It is
+  // never this round's figure, and it sits in a column of amounts that a
+  // detector would happily mistake for one.
+  "สสค",
+];
 
 const squeeze = (value: string) => value.replace(/[\s\-_.()]/g, "");
 
@@ -109,19 +124,35 @@ export function findHeaderRow(rows: unknown[][], within = 10): number | null {
 
 function mapFromHeader(header: unknown[]): SheetMapping {
   const mapping: SheetMapping = {};
-  header.forEach((cell, index) => {
-    const value = squeeze(text(cell));
-    if (!value || EXCLUDED_WORDS.some((word) => value.includes(word))) return;
-    // Longest match wins so "ยอดหักไม่ได้" is not taken by "หักได้", which is
-    // a substring of it. Exact equality is tried first for the same reason.
-    const exact = HEADER_WORDS.find((entry) => entry.words.some((word) => value === word));
-    const loose =
-      exact ??
-      HEADER_WORDS.slice()
-        .sort((a, b) => Math.max(...b.words.map((w) => w.length)) - Math.max(...a.words.map((w) => w.length)))
-        .find((entry) => entry.words.some((word) => value.includes(word)));
-    if (loose && mapping[loose.field] === undefined) mapping[loose.field] = index;
-  });
+
+  // The fallback words are held back to a second pass, so a sheet carrying
+  // both "สหกรณ์" and "รวม" maps the cooperative's own column whichever order
+  // they appear in.
+  const pass = (entries: typeof HEADER_WORDS) => {
+    header.forEach((cell, index) => {
+      const value = squeeze(text(cell));
+      if (!value || EXCLUDED_WORDS.some((word) => value.includes(word))) return;
+      if (Object.values(mapping).includes(index)) return;
+      // Longest match wins so "ยอดหักไม่ได้" is not taken by "หักได้", which
+      // is a substring of it. Exact equality is tried first for the same
+      // reason.
+      const exact = entries.find((entry) => entry.words.some((word) => value === word));
+      const loose =
+        exact ??
+        entries
+          .slice()
+          .sort(
+            (a, b) =>
+              Math.max(...b.words.map((w) => w.length)) -
+              Math.max(...a.words.map((w) => w.length))
+          )
+          .find((entry) => entry.words.some((word) => value.includes(word)));
+      if (loose && mapping[loose.field] === undefined) mapping[loose.field] = index;
+    });
+  };
+
+  pass(HEADER_WORDS.filter((entry) => !entry.weak));
+  pass(HEADER_WORDS.filter((entry) => entry.weak));
   return mapping;
 }
 
