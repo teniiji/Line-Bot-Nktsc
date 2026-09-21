@@ -4,8 +4,9 @@ import {
   sortStatementMembers,
   summarizeStatementMembers,
   outstandingOf,
-  unitNamesOf,
-  hCodesOf,
+  unitChoicesOf,
+  encodeUnitChoice,
+  parseUnitChoice,
 } from "../lib/statementFilters";
 import { StatementMemberRow } from "../lib/types";
 
@@ -222,32 +223,75 @@ describe("summarizeStatementMembers", () => {
   });
 });
 
-describe("unitNamesOf", () => {
-  // Thai collation, not codepoint order: a leading vowel sorts by the
-  // consonant after it, so โนนสวรรค์ (น) comes before หนองบัว (ห) even though
-  // โ sits after ห in Unicode.
-  it("lists each unit once in Thai alphabetical order, ignoring members with none", () => {
-    expect(unitNamesOf([...rows, member({ unitName: null })])).toEqual([
-      "โรงเรียนบ้านโนนสวรรค์",
-      "โรงเรียนบ้านหนองบัว",
+describe("unitChoicesOf", () => {
+  it("lists each หน่วยคุม once with the สังกัด lines inside it", () => {
+    expect(unitChoicesOf(rows)).toEqual([
+      { hCode: "1", units: ["โรงเรียนบ้านโนนสวรรค์", "โรงเรียนบ้านหนองบัว"] },
+      { hCode: "10", units: ["โรงเรียนบ้านโนนสวรรค์"] },
     ]);
   });
-});
 
-describe("hCodesOf", () => {
-  it("lists each หน่วยคุม once, ignoring members with none", () => {
-    expect(hCodesOf([...rows, member({ hCode: null })])).toEqual(["1", "10"]);
-  });
-
-  it("orders them as numbers, not as text", () => {
-    const codes = hCodesOf([
+  it("orders หน่วยคุม as numbers, not as text", () => {
+    const codes = unitChoicesOf([
       member({ hCode: "10" }),
       member({ hCode: "2" }),
       member({ hCode: "1" }),
       member({ hCode: "25" }),
       member({ hCode: "9" }),
-    ]);
+    ]).map((group) => group.hCode);
     expect(codes).toEqual(["1", "2", "9", "10", "25"]);
+  });
+
+  it("orders สังกัด by Thai collation, not codepoint", () => {
+    // A leading vowel sorts by the consonant after it, so โนนสวรรค์ (น) comes
+    // before หนองบัว (ห) even though โ sits after ห in Unicode.
+    expect(unitChoicesOf(rows)[0].units).toEqual([
+      "โรงเรียนบ้านโนนสวรรค์",
+      "โรงเรียนบ้านหนองบัว",
+    ]);
+  });
+
+  it("keeps members with no หน่วยคุม pickable, in a group of their own at the end", () => {
+    const groups = unitChoicesOf([
+      member({ hCode: "1" }),
+      member({ hCode: null, unitName: "บำนาญ บึงกาฬ" }),
+    ]);
+    expect(groups[groups.length - 1]).toEqual({ hCode: null, units: ["บำนาญ บึงกาฬ"] });
+  });
+
+  it("lists a หน่วยคุม whose members have no สังกัด name at all", () => {
+    // It still has to be selectable: those members are somebody's to chase.
+    expect(unitChoicesOf([member({ hCode: "7", unitName: null })])).toEqual([
+      { hCode: "7", units: [] },
+    ]);
+  });
+});
+
+describe("the one หน่วยคุม dropdown", () => {
+  // หน่วยคุม and สังกัด were two dropdowns, and a code from one with a name
+  // from the other could be chosen together and match nobody. One value
+  // means one choice.
+  it("carries a whole หน่วยคุม or a single สังกัด, never a pairing of both", () => {
+    expect(parseUnitChoice("h:75")).toEqual({ hCode: "75", unitName: "" });
+    expect(parseUnitChoice("u:ตจว.1 หักผ่านธนาคารกรุงไทย")).toEqual({
+      hCode: "",
+      unitName: "ตจว.1 หักผ่านธนาคารกรุงไทย",
+    });
+    expect(parseUnitChoice("")).toEqual({ hCode: "", unitName: "" });
+  });
+
+  it("survives a สังกัด name containing the separator", () => {
+    const name = "ตจว.1 หักผ่านธนาคารกรุงไทย: h:75";
+    expect(parseUnitChoice(encodeUnitChoice({ hCode: "", unitName: name }))).toEqual({
+      hCode: "",
+      unitName: name,
+    });
+  });
+
+  it("shows the selected filter back, whichever grain it was picked at", () => {
+    expect(encodeUnitChoice({ hCode: "75", unitName: "" })).toBe("h:75");
+    expect(encodeUnitChoice({ hCode: "", unitName: "ตจว 1" })).toBe("u:ตจว 1");
+    expect(encodeUnitChoice({ hCode: "", unitName: "" })).toBe("");
   });
 });
 

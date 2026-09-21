@@ -40,8 +40,12 @@ export const SHEET_FIELDS: { field: SheetField; label: string; required: boolean
   { field: "expected", label: "ยอดแจ้งหัก", required: false },
   { field: "collected", label: "ยอดหักได้", required: false },
   { field: "uncollected", label: "ยอดหักไม่ได้", required: false },
-  { field: "unitName", label: "สังกัด", required: false },
-  { field: "hCode", label: "รหัสหน่วย", required: false },
+  // One thing written twice: the คอลัมน์ G name staff read
+  // ("ตจว.1 หักผ่านธนาคารกรุงไทย") and the code their own สรุปหน่วยคุม counts
+  // by (75). Labelled as the pair they are, because asked for a "สังกัด" and
+  // a "รหัสหน่วย" separately they read as two levels to fill in.
+  { field: "unitName", label: "หน่วยคุม (ชื่อ)", required: false },
+  { field: "hCode", label: "หน่วยคุม (รหัส)", required: false },
   { field: "accountNumber", label: "เลขบัญชี", required: false },
 ];
 
@@ -260,6 +264,26 @@ function mapFromContent(rows: unknown[][], columns: number): SheetMapping {
     .sort((a, b) => a.distinct - b.distinct);
   take("unitName", units[0]?.index);
 
+  // หน่วยคุม: the code the cooperative groups by, which in the ไฟล์รวม is a
+  // small number repeated across hundreds of members (64 of them over 7,000
+  // rows). Told apart from รหัสหน่วย — finer, hundreds of values — by taking
+  // the coarsest column, and only on a file long enough for "repeats a lot"
+  // to mean anything. On a short sheet a column of identical amounts would
+  // look the same, so nothing is claimed there.
+  if (rows.length >= 20) {
+    const codes = dense
+      .filter(
+        (s) =>
+          !s.sequential &&
+          !s.hasDecimals &&
+          s.smallInts / Math.max(1, s.filled) > 0.9 &&
+          s.distinct >= 2 &&
+          s.distinct <= s.filled / 10
+      )
+      .sort((a, b) => a.distinct - b.distinct);
+    take("hCode", codes[0]?.index);
+  }
+
   // Ten-ish digits and not the national ID's thirteen.
   const accounts = dense
     .filter((s) => s.digits13 === 0 && s.digits9to12 / Math.max(1, s.filled) > 0.6)
@@ -267,6 +291,26 @@ function mapFromContent(rows: unknown[][], columns: number): SheetMapping {
   take("accountNumber", accounts[0]?.index);
 
   return mapping;
+}
+
+// "หน่วยคุม" as a heading sits over a code in one file and over the name in
+// another, because to the people writing them it is one column either way.
+// A heading is not worth arguing with, but a column of Thai text is not a
+// code: it is the name, and it goes where the names go.
+function nameUnderCodeHeading(
+  mapping: SheetMapping,
+  body: unknown[][],
+  columns: number
+): SheetMapping {
+  const index = mapping.hCode;
+  if (index === undefined || mapping.unitName !== undefined) return mapping;
+
+  const stats = columnStats(body, columns)[index];
+  if (!stats || stats.filled === 0 || stats.thai / stats.filled < 0.7) return mapping;
+
+  const moved = { ...mapping, unitName: index };
+  delete moved.hCode;
+  return moved;
 }
 
 export interface SheetReading {
@@ -285,7 +329,13 @@ export function detectSheetColumns(rows: unknown[][]): SheetReading {
   if (headerRow !== null) {
     const mapping = mapFromHeader(rows[headerRow] ?? []);
     if (mapping.memberNumber !== undefined) {
-      return { headerRow, firstDataRow: headerRow + 1, mapping, fromHeader: true };
+      const body = rows.slice(headerRow + 1, headerRow + 201);
+      return {
+        headerRow,
+        firstDataRow: headerRow + 1,
+        mapping: nameUnderCodeHeading(mapping, body, columns),
+        fromHeader: true,
+      };
     }
   }
 
