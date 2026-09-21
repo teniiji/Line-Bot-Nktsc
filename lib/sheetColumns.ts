@@ -172,6 +172,10 @@ interface ColumnStats {
   digits13: number;
   digits9to12: number;
   smallInts: number;
+  // Numbers of five or six digits. The cooperative's หน่วยคุม run from 1 to
+  // 1200 — four digits at most, all 64 of them — so a code this long is a
+  // รหัสสังกัด, whatever the heading above it says.
+  longCodes: number;
   sequential: boolean;
   hasDecimals: boolean;
 }
@@ -186,6 +190,7 @@ export function columnStats(rows: unknown[][], columns: number): ColumnStats[] {
     let digits13 = 0;
     let digits9to12 = 0;
     let smallInts = 0;
+    let longCodes = 0;
     let hasDecimals = false;
     const numbers: number[] = [];
 
@@ -206,6 +211,7 @@ export function columnStats(rows: unknown[][], columns: number): ColumnStats[] {
       if (digits === 13) digits13 += 1;
       else if (digits >= 9 && digits <= 12) digits9to12 += 1;
       if (Number.isInteger(num) && num > 0 && digits <= 6) smallInts += 1;
+      if (Number.isInteger(num) && num > 0 && digits >= 5 && digits <= 6) longCodes += 1;
     }
 
     // A ลำดับ column counts up by one down the page; a member number does not.
@@ -224,6 +230,7 @@ export function columnStats(rows: unknown[][], columns: number): ColumnStats[] {
       digits13,
       digits9to12,
       smallInts,
+      longCodes,
       sequential: numbers.length >= 5 && steps / (numbers.length - 1) > 0.8,
       hasDecimals,
     });
@@ -292,13 +299,23 @@ function mapFromContent(rows: unknown[][], columns: number): SheetMapping {
       )
       .sort((a, b) => a.distinct - b.distinct);
 
-    // The หน่วยคุม has to repeat hard to be claimed at all; a column that
-    // merely repeats is not evidence enough to label a grouping by.
-    const unit = codes[0] && codes[0].distinct <= codes[0].filled / 10 ? codes[0] : undefined;
+    // Five- and six-digit numbers are longer than any หน่วยคุม the
+    // cooperative has, so however hard they repeat they are สังกัด codes —
+    // see ColumnStats.longCodes.
+    const isUnitCode = (s: ColumnStats) => s.longCodes / Math.max(1, s.filled) >= 0.7;
+    // The หน่วยคุม also has to repeat hard to be claimed at all; a column
+    // that merely repeats is not evidence enough to label a grouping by.
+    const unit = codes.find((s) => !isUnitCode(s) && s.distinct <= s.filled / 10);
     take("hCode", unit?.index);
-    if (unit && codes[1] && codes[1].distinct >= unit.distinct * 2) {
-      take("unitCode", codes[1].index);
-    }
+
+    // Its สังกัด: a code column that is either plainly one by its length, or
+    // is clearly finer than the หน่วยคุม. The second test matters because a
+    // file that writes the หน่วยคุม twice (0869 carries it in both F and J)
+    // would otherwise have the duplicate read as a สังกัด it never named.
+    const sub = codes.find(
+      (s) => s.index !== unit?.index && (isUnitCode(s) || (unit && s.distinct >= unit.distinct * 2))
+    );
+    take("unitCode", sub?.index);
   }
 
   // Ten-ish digits and not the national ID's thirteen.
@@ -310,24 +327,37 @@ function mapFromContent(rows: unknown[][], columns: number): SheetMapping {
   return mapping;
 }
 
-// "หน่วยคุม" as a heading sits over a code in one file and over the name in
-// another, because to the people writing them it is one column either way.
-// A heading is not worth arguing with, but a column of Thai text is not a
-// code: it is the name, and it goes where the names go.
-function nameUnderCodeHeading(
+// A heading names a column; what is in it decides what the column is.
+//
+// "หน่วยคุม" and "รหัสหน่วย" sit over three different things in the files
+// staff send: the หน่วยคุม itself, the name of the สังกัด, and — in the unit
+// files — the สังกัด's own code (520001, 13003). Only the first is a
+// หน่วยคุม, and a round that takes the other two for one offers hundreds of
+// หน่วยคุม that the cooperative does not have.
+function placeCodeColumn(
   mapping: SheetMapping,
   body: unknown[][],
   columns: number
 ): SheetMapping {
   const index = mapping.hCode;
-  if (index === undefined || mapping.unitName !== undefined) return mapping;
+  if (index === undefined) return mapping;
 
   const stats = columnStats(body, columns)[index];
-  if (!stats || stats.filled === 0 || stats.thai / stats.filled < 0.7) return mapping;
+  if (!stats || stats.filled === 0) return mapping;
 
-  const moved = { ...mapping, unitName: index };
-  delete moved.hCode;
-  return moved;
+  const move = (field: "unitName" | "unitCode") => {
+    if (mapping[field] !== undefined) return mapping;
+    const moved = { ...mapping, [field]: index };
+    delete moved.hCode;
+    return moved;
+  };
+
+  // Thai text under a code heading is the สังกัด's name.
+  if (stats.thai / stats.filled >= 0.7) return move("unitName");
+  // Five or six digits is longer than any หน่วยคุม the cooperative has, so
+  // it is the รหัสสังกัด — see ColumnStats.longCodes.
+  if (stats.longCodes / stats.filled >= 0.7) return move("unitCode");
+  return mapping;
 }
 
 export interface SheetReading {
@@ -350,7 +380,7 @@ export function detectSheetColumns(rows: unknown[][]): SheetReading {
       return {
         headerRow,
         firstDataRow: headerRow + 1,
-        mapping: nameUnderCodeHeading(mapping, body, columns),
+        mapping: placeCodeColumn(mapping, body, columns),
         fromHeader: true,
       };
     }
