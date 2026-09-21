@@ -64,9 +64,12 @@ describe("detectSheetColumns", () => {
       expected: 3,
       collected: 4,
       uncollected: 5,
-      hCode: 6,
+      // Headed "รหัสหน่วย", but 520001 is six digits and no หน่วยคุม the
+      // cooperative has runs past 1200 — so it is the สังกัด's code.
+      unitCode: 6,
       unitName: 7,
     });
+    expect(reading.mapping.hCode).toBeUndefined();
   });
 
   it("does not let หักได้ take the ยอดหักไม่ได้ column", () => {
@@ -207,6 +210,22 @@ describe("detectSheetColumns, หน่วยคุม และสังกั�
     expect(reading.mapping.hCode).toBeUndefined();
   });
 
+  it("reads a five- or six-digit 'หน่วยคุม' as the สังกัด's code", () => {
+    // The cooperative has 64 หน่วยคุม, 1 to 1200 — four digits at most, by
+    // its own สรุปหน่วยคุม. A longer number under that heading is the
+    // สังกัด's code, and reading it as a หน่วยคุม filled the dropdown with
+    // hundreds of units that do not exist.
+    const rows: unknown[][] = [
+      ["เลขที่", "ชื่อ - สกุล", "หน่วยคุม", "หักไม่ได้"],
+      [28590, "เสกสิน ศรีปากดี", 520001, 7250],
+      [30231, "ชนิสรา อุทโท", 520001, 0],
+      [29222, "ธีรภัทร ภูนาเพชร", 520009, 6130],
+    ];
+    const reading = detectSheetColumns(rows);
+    expect(reading.mapping.unitCode).toBe(2);
+    expect(reading.mapping.hCode).toBeUndefined();
+  });
+
   it("leaves a 'หน่วยคุม' heading over numbers as the code", () => {
     const rows: unknown[][] = [
       ["เลขที่", "ชื่อ - สกุล", "หน่วยคุม", "หักไม่ได้"],
@@ -243,7 +262,10 @@ describe("readMappedSheet", () => {
       name: "กัลยาณี สมภักดี",
       expectedAmount: 22200,
       unitName: "บำนาญ บึงกาฬ อ.ปากคาด",
-      hCode: "520009",
+      unitCode: "520009",
+      // This file names no หน่วยคุม at all, which is the ordinary case for a
+      // unit's own sheet: its rows already know which unit they came from.
+      hCode: null,
     });
   });
 
