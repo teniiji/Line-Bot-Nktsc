@@ -368,7 +368,10 @@ export default function StatementReconcilePanel() {
     confirm: boolean,
     mapping?: SheetMapping,
     firstDataRow?: number,
-    sheet?: number
+    sheet?: number,
+    // Add this unit's people to the round instead of making the file the
+    // whole round — see the "mode=append" branch in the members route.
+    append?: boolean
   ) => {
     setBusy(true);
     setError(null);
@@ -377,6 +380,7 @@ export default function StatementReconcilePanel() {
       const form = new FormData();
       form.append("file", file);
       if (confirm) form.append("confirm", "yes");
+      if (append) form.append("mode", "append");
       if (mapping) {
         form.append("mapping", JSON.stringify(mapping));
         form.append("firstDataRow", String(firstDataRow ?? 0));
@@ -403,7 +407,8 @@ export default function StatementReconcilePanel() {
       // only way to tell one unit's file from the whole cooperative's.
       if (body.applied) {
         setNotice(
-          `บันทึกผลการหักแล้ว: อัปเดต ${body.updated} คน` +
+          (body.appended ? "เพิ่มเข้ารอบแล้ว: " : "บันทึกผลการหักแล้ว: ") +
+            `อัปเดต ${body.updated} คน` +
             (body.added > 0 ? `, เพิ่มใหม่ ${body.added} คน` : "") +
             ` — ตอนนี้หักไม่ได้ ${body.uncollected} คน, หักได้ครบ ${body.collected} คน` +
             (body.awaiting > 0
@@ -2091,12 +2096,32 @@ export default function StatementReconcilePanel() {
         </div>
       </ConfirmDialog>
 
+      {/* Three answers, because the question has three. Units send their
+          หักไม่ได้ one at a time, and the only two offered before were
+          "this file is the whole round" and "do nothing" — neither of which
+          is "add this unit's people to what is already here". */}
       <ConfirmDialog
         open={pendingShrink !== null}
-        title="ไฟล์นี้จะเอารายชื่อส่วนใหญ่ออกจากรอบ — แน่ใจไหม?"
+        title="ไฟล์นี้ไม่มีคนส่วนใหญ่ที่อยู่ในรอบ — จะเอาแบบไหน?"
         description={pendingShrink?.description}
-        confirmLabel="ใช่ แทนที่รายชื่อทั้งรอบ"
-        cancelLabel="ยกเลิก (ไม่แตะรายชื่อเดิม)"
+        alternateLabel="เพิ่มเข้าไปในรอบ (ไม่ลบใคร)"
+        onAlternate={() => {
+          const pending = pendingShrink;
+          setPendingShrink(null);
+          if (pending) {
+            sendMembers(
+              pending.file,
+              pending.roundId,
+              false,
+              pending.mapping,
+              pending.firstDataRow,
+              pending.sheet,
+              true
+            );
+          }
+        }}
+        confirmLabel="แทนที่รายชื่อทั้งรอบ"
+        cancelLabel="ยกเลิก"
         onConfirm={() => {
           const pending = pendingShrink;
           setPendingShrink(null);
