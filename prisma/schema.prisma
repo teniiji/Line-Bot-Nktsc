@@ -702,9 +702,17 @@ model StatementMember {
   roundId       String
   memberNumber  String
   name          String
-  // สังกัด/รหัสองค์กร and H-code as they appear in the source sheet — kept
-  // as plain strings for the same reason as everywhere else in this schema.
+  // Where the member sits, as the source sheet writes it, in the three
+  // columns the ไฟล์รวม keeps apart:
+  //   hCode    — หน่วยคุม, the payroll unit the cooperative's own
+  //              สรุปหน่วยคุม counts by (คอลัมน์ G, 64 of them)
+  //   unitCode — รหัสหน่วยสังกัด (คอลัมน์ D, hundreds of them)
+  //   unitName — ชื่อสังกัด (คอลัมน์ E)
+  // A หน่วยคุม holds many สังกัด: หน่วยคุม 100 covers both วิทยาลัยเทคนิค
+  // หนองคาย and บำนาญ วิทยาลัยเทคนิคหนองคาย. Plain strings, for the same
+  // reason as everywhere else in this schema.
   unitName      String?
+  unitCode      String?
   hCode         String?
   note          String?
   // The matching key. Nullable because the source sheet does leave it blank,

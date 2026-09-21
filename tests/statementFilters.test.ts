@@ -4,6 +4,7 @@ import {
   sortStatementMembers,
   summarizeStatementMembers,
   outstandingOf,
+  matchesStatus,
   unitChoicesOf,
   encodeUnitChoice,
   parseUnitChoice,
@@ -15,6 +16,7 @@ const member = (over: Partial<StatementMemberRow>): StatementMemberRow => ({
   memberNumber: "001234",
   name: "สมชาย ใจดี",
   unitName: "โรงเรียนบ้านโนนสวรรค์",
+  unitCode: null,
   hCode: "1",
   note: null,
   accountNumber: "4131234567",
@@ -220,6 +222,31 @@ describe("summarizeStatementMembers", () => {
       paid: 2000,
       outstanding: 3300,
     });
+  });
+});
+
+describe("the ไม่มีเลขบัญชี chip", () => {
+  // A round seeded from the ไฟล์รวม, which carries no account numbers at
+  // all: 6,267 members without one, none of them owing anything yet. The
+  // chip counted all of them and then showed an empty table when clicked,
+  // because the filter behind it asks only about people who owe.
+  const seeded = [
+    member({ memberNumber: "1", accountNumber: null, deductionResult: "awaiting" }),
+    member({ memberNumber: "2", accountNumber: null, deductionResult: "awaiting" }),
+    member({ memberNumber: "3", accountNumber: null, deductionResult: "uncollected" }),
+  ];
+
+  it("counts only the members its own filter would show", () => {
+    const counted = seeded.filter((m) => matchesStatus(m, "no_account"));
+    expect(counted.map((m) => m.memberNumber)).toEqual(["3"]);
+    expect(counted).toEqual(
+      filterStatementMembers(seeded, {
+        search: "",
+        unitName: "",
+        hCode: "",
+        status: "no_account",
+      })
+    );
   });
 });
 

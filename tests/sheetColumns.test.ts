@@ -143,36 +143,54 @@ describe("detectSheetColumns, where a sheet carries another body's money", () =>
   });
 });
 
-describe("detectSheetColumns, หน่วยคุม", () => {
-  // The ไฟล์รวม's own shape: no header, the สังกัด line in G repeating over
-  // hundreds of members, and the หน่วยคุม code beside it. 64 codes over
-  // 7,000 rows in the real file.
+describe("detectSheetColumns, หน่วยคุม และสังกัด", () => {
+  // The ไฟล์รวม's own shape: no header row at all, and three columns for
+  // where a member sits — D รหัสสังกัด, E ชื่อสังกัด, G หน่วยคุม. The
+  // หน่วยคุม is the coarse one the cooperative's สรุปหน่วยคุม counts by (64
+  // over 7,000 rows, against 656 สังกัด).
   const masterRows = (): unknown[][] => {
-    const units = [
-      ["ตจว.1 หักผ่านธนาคารกรุงไทย", 75],
-      ["สมาชิกปกติย้ายไปต่างจังหวัด เขต 1 อ.เมือง", 75],
-      ["วิทยาลัยเทคนิคหนองคาย", 100],
-      ["บำนาญ วิทยาลัยเทคนิคหนองคาย", 100],
+    const units: [string, number, number][] = [
+      ["ตจว.1 หักผ่านธนาคารกรุงไทย", 7501, 75],
+      ["สมาชิกปกติย้ายไปต่างจังหวัด เขต 1 อ.เมือง", 7502, 75],
+      ["สมาชิกปกติย้ายไปต่างจังหวัด เขต 1 อ.ท่าบ่อ", 7503, 75],
+      ["วิทยาลัยเทคนิคหนองคาย", 100, 100],
+      ["บำนาญ วิทยาลัยเทคนิคหนองคาย", 108, 100],
     ];
-    return Array.from({ length: 40 }, (_, i) => {
-      const [unit, code] = units[i % units.length];
+    return Array.from({ length: 60 }, (_, i) => {
+      const [unit, unitCode, hCode] = units[i % units.length];
       // Member numbers have gaps — a column that counts up by one is the
       // ลำดับ, which the detector rules out on purpose.
-      return [20000 + i * 17, `นายสมาชิก ที่ ${i}`, 1000 + i * 13, unit, code];
+      return [20000 + i * 17, `นายสมาชิก ที่ ${i}`, 1000 + i * 13, unitCode, unit, hCode];
     });
   };
 
-  it("takes the column that repeats most as the หน่วยคุม code", () => {
+  it("reads the three of them apart, coarsest as the หน่วยคุม", () => {
     const reading = detectSheetColumns(masterRows());
     expect(reading.fromHeader).toBe(false);
-    expect(reading.mapping).toMatchObject({ memberNumber: 0, name: 1, unitName: 3, hCode: 4 });
+    expect(reading.mapping).toMatchObject({
+      memberNumber: 0,
+      name: 1,
+      unitCode: 3,
+      unitName: 4,
+      hCode: 5,
+    });
   });
 
-  it("claims no หน่วยคุม code on a sheet too short for repetition to mean anything", () => {
+  it("claims no สังกัด code where the file writes the หน่วยคุม twice", () => {
+    // 0869 carries it in both F and J. A duplicate is not a finer grouping,
+    // and reading it as one would invent a สังกัด the file never named.
+    const twice = masterRows().map((row) => [...row.slice(0, 3), row[5], row[4], row[5]]);
+    const reading = detectSheetColumns(twice);
+    expect(reading.mapping.hCode).toBe(3);
+    expect(reading.mapping.unitCode).toBeUndefined();
+  });
+
+  it("claims no codes at all on a sheet too short for repetition to mean anything", () => {
     // A unit's own file of six members has columns of identical amounts that
     // look exactly like a code that repeats.
-    const short = masterRows().slice(0, 6).map((row) => [...row.slice(0, 3), 420, row[3]]);
+    const short = masterRows().slice(0, 6).map((row) => [...row.slice(0, 3), 420, row[4]]);
     expect(detectSheetColumns(short).mapping.hCode).toBeUndefined();
+    expect(detectSheetColumns(short).mapping.unitCode).toBeUndefined();
   });
 
   it("reads a 'หน่วยคุม' heading over names as the name, not the code", () => {
@@ -196,6 +214,18 @@ describe("detectSheetColumns, หน่วยคุม", () => {
       [30231, "ชนิสรา อุทโท", 75, 0],
     ];
     expect(detectSheetColumns(rows).mapping).toMatchObject({ hCode: 2 });
+  });
+
+  it("keeps a headed รหัสสังกัด out of the หน่วยคุม", () => {
+    const rows: unknown[][] = [
+      ["เลขที่", "ชื่อ - สกุล", "หน่วยสังกัด", "สังกัด", "หน่วยคุม", "หักไม่ได้"],
+      [28590, "เสกสิน ศรีปากดี", 7501, "ตจว.1 หักผ่านธนาคารกรุงไทย", 75, 7250],
+    ];
+    expect(detectSheetColumns(rows).mapping).toMatchObject({
+      unitCode: 2,
+      unitName: 3,
+      hCode: 4,
+    });
   });
 });
 
