@@ -38,27 +38,32 @@ import {
 } from "@/lib/statementSections";
 import {
   StatementSort,
-  encodeUnitChoice,
   filterStatementMembers,
+  hCodesOf,
   matchesStatus,
-  parseUnitChoice,
+  parseSubUnit,
   sortStatementMembers,
+  subUnitsOf,
   summarizeStatementMembers,
-  unitChoicesOf,
 } from "@/lib/statementFilters";
 
 const SEARCH_DEBOUNCE_MS = 300;
 
+// Orderings that can be stacked, applied in the order they were chosen:
+// หน่วยคุม then ยอดค้าง is "work through the units, biggest debt first in
+// each", which no single ordering can ask for.
 const SORT_OPTIONS: { value: StatementSort; label: string }[] = [
-  { value: "default", label: "ยังค้างขึ้นก่อน (ค่าเริ่มต้น)" },
-  { value: "outstanding", label: "ยอดค้างมาก → น้อย" },
-  // One entry, because หน่วยคุม and สังกัด are one thing: this sorts by the
-  // code and then by the สังกัด line inside it.
   { value: "hCode", label: "หน่วยคุม" },
+  { value: "unitName", label: "หน่วยคุมย่อย" },
+  { value: "outstanding", label: "ยอดค้างมาก → น้อย" },
   { value: "paidAt", label: "วันที่โอน (ล่าสุดก่อน)" },
   { value: "name", label: "ชื่อ ก-ฮ" },
   { value: "memberNumber", label: "เลขสมาชิก" },
 ];
+
+// หน่วยคุม, because that is how the work is divided: whoever is chasing a
+// unit wants that unit's people together before anything else.
+const DEFAULT_SORT: StatementSort[] = ["hCode"];
 
 const STATUS_LABEL: Record<string, string> = {
   paid: "✅ ชำระครบ",
@@ -193,8 +198,10 @@ export default function StatementReconcilePanel() {
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [searchInput, setSearchInput] = useState("");
   const [search, setSearch] = useState("");
-  const [unitFilter, setUnitFilter] = useState("");
+  // The หน่วยคุม, and the หน่วยคุมย่อย inside it as one encoded value —
+  // see encodeSubUnit, which keys on the รหัสสังกัด where the round has one.
   const [hCodeFilter, setHCodeFilter] = useState("");
+  const [subUnitFilter, setSubUnitFilter] = useState("");
   const [assigningAccount, setAssigningAccount] = useState<string | null>(null);
   const [assignMemberNumber, setAssignMemberNumber] = useState("");
   // What happened to the last attempt on this account, shown at its own row.
@@ -204,7 +211,7 @@ export default function StatementReconcilePanel() {
   const [assignNote, setAssignNote] = useState<
     { account: string; text: string; bad: boolean } | null
   >(null);
-  const [sort, setSort] = useState<StatementSort>("default");
+  const [sort, setSort] = useState<StatementSort[]>(DEFAULT_SORT);
   // What this person has clicked open or shut. Empty until they touch a
   // heading, which is what leaves the defaults and the search free to decide
   // — see lib/statementSections.ts.
@@ -302,7 +309,7 @@ export default function StatementReconcilePanel() {
     setStatusFilter("all");
     setSearchInput("");
     setSearch("");
-    setUnitFilter("");
+    setSubUnitFilter("");
     setHCodeFilter("");
     setClicked({});
   }, [selectedId, fetchRound]);
@@ -756,24 +763,21 @@ export default function StatementReconcilePanel() {
   };
 
   const selected = rounds.find((r) => r.id === selectedId) ?? null;
-  // หน่วยคุม and สังกัด in one list — see unitChoicesOf.
-  const unitChoices = unitChoicesOf(members);
-  const unitChoiceCount = unitChoices.reduce(
-    (count, group) => count + (group.hCode ? 1 : 0) + group.units.length,
-    0
-  );
+  const hCodes = hCodesOf(members);
+  // The หน่วยคุมย่อย on offer narrow to whatever หน่วยคุม is chosen.
+  const subUnits = subUnitsOf(members, hCodeFilter);
   const shown = sortStatementMembers(
     filterStatementMembers(members, {
       search,
-      unitName: unitFilter,
       hCode: hCodeFilter,
+      ...parseSubUnit(subUnitFilter),
       status: statusFilter,
     }),
     sort
   );
   const shownTotals = summarizeStatementMembers(shown);
   const filtered =
-    statusFilter !== "all" || unitFilter !== "" || hCodeFilter !== "" || search !== "";
+    statusFilter !== "all" || subUnitFilter !== "" || hCodeFilter !== "" || search !== "";
   // Two different things that both used to read as "ไม่มีเลขบัญชี": nobody
   // has ever recorded an account for this member, and the cooperative holds
   // several and the fill would not pick one. Only the first is unmatchable.
@@ -844,17 +848,25 @@ export default function StatementReconcilePanel() {
 
   const clearFilters = () => {
     setStatusFilter("all");
-    setUnitFilter("");
+    setSubUnitFilter("");
     setHCodeFilter("");
     setSearchInput("");
     setSearch("");
   };
 
-  const changeUnitChoice = (value: string) => {
-    const choice = parseUnitChoice(value);
-    setHCodeFilter(choice.hCode);
-    setUnitFilter(choice.unitName);
+  // Choosing a หน่วยคุม the selected หน่วยคุมย่อย does not belong to would
+  // leave a stale pairing behind and an empty table with no obvious cause.
+  const changeHCode = (next: string) => {
+    setHCodeFilter(next);
+    if (subUnitFilter && next && !subUnitsOf(members, next).some((u) => u.value === subUnitFilter)) {
+      setSubUnitFilter("");
+    }
   };
+
+  // The orderings, in the order they were chosen. Picking one already in the
+  // list removes it, so the same control both adds and takes away.
+  const toggleSort = (key: StatementSort) =>
+    setSort((prev) => (prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key]));
 
   return (
     <div className="bg-white rounded-lg shadow">
@@ -1186,47 +1198,76 @@ export default function StatementReconcilePanel() {
                   placeholder="ค้นหาชื่อ, เลขสมาชิก, เลขบัญชี"
                   className="border border-slate-300 rounded-md px-3 py-1.5 w-64 focus:outline-none focus:ring-2 focus:ring-slate-900/10 focus:border-slate-400"
                 />
-                {/* One list: each หน่วยคุม, then the สังกัด lines inside it
-                    (คอลัมน์ G ของไฟล์รวม). */}
-                <select
-                  value={encodeUnitChoice({ hCode: hCodeFilter, unitName: unitFilter })}
-                  onChange={(e) => changeUnitChoice(e.target.value)}
-                  className="border border-slate-300 rounded-md px-2 py-1.5 bg-white max-w-[18rem]"
-                  title="หน่วยคุม — เลือกทั้งหน่วยคุม หรือเลือกสังกัดใดสังกัดหนึ่งในหน่วยคุมนั้น"
-                >
-                  <option value="">ทุกหน่วยคุม ({unitChoiceCount})</option>
-                  {unitChoices.map((group) => (
-                    <optgroup
-                      key={group.hCode ?? "none"}
-                      label={group.hCode ? `หน่วยคุม ${group.hCode}` : "ไม่ระบุหน่วยคุม"}
-                    >
-                      {group.hCode && (
-                        <option value={`h:${group.hCode}`}>
-                          ทั้งหน่วยคุม {group.hCode} ({group.units.length} สังกัด)
-                        </option>
-                      )}
-                      {group.units.map((unit) => (
-                        <option key={unit} value={`u:${unit}`}>
-                          {unit}
-                        </option>
-                      ))}
-                    </optgroup>
-                  ))}
-                </select>
-                <label className="flex items-center gap-2 text-slate-500">
-                  เรียง
+                {/* The two levels, filtered separately: the หน่วยคุม the
+                    chasing up is divided by (คอลัมน์ G ของไฟล์รวม), and the
+                    school or office inside it (D และ E). */}
+                {hCodes.length > 0 && (
                   <select
-                    value={sort}
-                    onChange={(e) => setSort(e.target.value as StatementSort)}
-                    className="border border-slate-300 rounded-md px-2 py-1.5 bg-white text-slate-900"
+                    value={hCodeFilter}
+                    onChange={(e) => changeHCode(e.target.value)}
+                    className="border border-slate-300 rounded-md px-2 py-1.5 bg-white"
+                    title="หน่วยคุม — หน่วยที่สรุปหน่วยคุมของสหกรณ์นับตาม (คอลัมน์ G ของไฟล์รวม)"
                   >
-                    {SORT_OPTIONS.map((o) => (
-                      <option key={o.value} value={o.value}>
-                        {o.label}
+                    <option value="">ทุกหน่วยคุม ({hCodes.length})</option>
+                    {hCodes.map((h) => (
+                      <option key={h} value={h}>
+                        หน่วยคุม {h}
                       </option>
                     ))}
                   </select>
-                </label>
+                )}
+                <select
+                  value={subUnitFilter}
+                  onChange={(e) => setSubUnitFilter(e.target.value)}
+                  className="border border-slate-300 rounded-md px-2 py-1.5 bg-white max-w-[18rem]"
+                  title="หน่วยคุมย่อย — รหัสและชื่อสังกัด (คอลัมน์ D และ E ของไฟล์รวม)"
+                >
+                  <option value="">
+                    ทุกหน่วยคุมย่อย ({subUnits.length})
+                    {hCodeFilter && ` ในหน่วยคุม ${hCodeFilter}`}
+                  </option>
+                  {subUnits.map((unit) => (
+                    <option key={unit.value} value={unit.value}>
+                      {unit.label}
+                    </option>
+                  ))}
+                </select>
+                {/* Several orderings, applied in the order they were chosen,
+                    because "หน่วยคุม แล้วยอดค้างมากก่อน" is one question and
+                    a single ordering could not ask it. */}
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <span className="text-slate-500">เรียง</span>
+                  {sort.map((key, index) => (
+                    <button
+                      key={key}
+                      type="button"
+                      onClick={() => toggleSort(key)}
+                      title="เอาการเรียงนี้ออก"
+                      className="inline-flex items-center gap-1 rounded-full border border-slate-300 bg-slate-50 pl-2 pr-1.5 py-0.5 text-xs hover:bg-slate-100"
+                    >
+                      <span className="num text-slate-400">{index + 1}</span>
+                      {SORT_OPTIONS.find((o) => o.value === key)?.label ?? key}
+                      <span className="text-slate-400">✕</span>
+                    </button>
+                  ))}
+                  {sort.length < SORT_OPTIONS.length && (
+                    <select
+                      value=""
+                      onChange={(e) => toggleSort(e.target.value as StatementSort)}
+                      className="border border-slate-300 rounded-md px-2 py-1 bg-white text-xs"
+                    >
+                      <option value="">+ เพิ่มการเรียง</option>
+                      {SORT_OPTIONS.filter((o) => !sort.includes(o.value)).map((o) => (
+                        <option key={o.value} value={o.value}>
+                          {o.label}
+                        </option>
+                      ))}
+                    </select>
+                  )}
+                  {sort.length === 0 && (
+                    <span className="text-xs text-slate-400">ตามลำดับของระบบ (ยังค้างขึ้นก่อน)</span>
+                  )}
+                </div>
                 {filtered && (
                   <button onClick={clearFilters} className="text-slate-500 hover:underline">
                     ล้างตัวกรอง

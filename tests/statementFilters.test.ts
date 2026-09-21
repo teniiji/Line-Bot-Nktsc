@@ -5,9 +5,10 @@ import {
   summarizeStatementMembers,
   outstandingOf,
   matchesStatus,
-  unitChoicesOf,
-  encodeUnitChoice,
-  parseUnitChoice,
+  hCodesOf,
+  subUnitsOf,
+  encodeSubUnit,
+  parseSubUnit,
 } from "../lib/statementFilters";
 import { StatementMemberRow } from "../lib/types";
 
@@ -60,7 +61,7 @@ const rows: StatementMemberRow[] = [
 ];
 
 describe("filterStatementMembers", () => {
-  const base = { search: "", unitName: "", hCode: "", status: "all" };
+  const base = { search: "", unitName: "", unitCode: "", hCode: "", status: "all" };
 
   it("returns everything with no filters applied", () => {
     expect(filterStatementMembers(rows, base)).toHaveLength(4);
@@ -111,6 +112,7 @@ describe("filterStatementMembers", () => {
 
   it("combines filters rather than replacing them", () => {
     const found = filterStatementMembers(rows, {
+      ...base,
       search: "สมหญิง",
       unitName: "โรงเรียนบ้านหนองบัว",
       hCode: "1",
@@ -192,6 +194,41 @@ describe("sortStatementMembers", () => {
     ]);
   });
 
+  it("applies several orderings in the order they were chosen", () => {
+    // "หน่วยคุม แล้วยอดค้างมากก่อน" — work through the units, biggest debt
+    // first inside each. Neither ordering on its own can ask for that.
+    const mixed = [
+      member({ memberNumber: "small-1", hCode: "1", amountDue: 100, amountPaid: 0 }),
+      member({ memberNumber: "big-2", hCode: "2", amountDue: 9000, amountPaid: 0 }),
+      member({ memberNumber: "big-1", hCode: "1", amountDue: 5000, amountPaid: 0 }),
+      member({ memberNumber: "small-2", hCode: "2", amountDue: 200, amountPaid: 0 }),
+    ];
+    expect(
+      sortStatementMembers(mixed, ["hCode", "outstanding"]).map((m) => m.memberNumber)
+    ).toEqual(["big-1", "small-1", "big-2", "small-2"]);
+    // The same two the other way round is a different question, and gives a
+    // different answer: the biggest debts in the cooperative, unit immaterial.
+    expect(
+      sortStatementMembers(mixed, ["outstanding", "hCode"]).map((m) => m.memberNumber)
+    ).toEqual(["big-2", "big-1", "small-2", "small-1"]);
+  });
+
+  it("falls back to เลขสมาชิก when the chosen orderings cannot separate two rows", () => {
+    const tied = [
+      member({ memberNumber: "222", amountDue: 100, amountPaid: 0 }),
+      member({ memberNumber: "111", amountDue: 100, amountPaid: 0 }),
+    ];
+    expect(sortStatementMembers(tied, ["outstanding"]).map((m) => m.memberNumber)).toEqual([
+      "111",
+      "222",
+    ]);
+  });
+
+  it("leaves the API's order alone when every ordering has been taken away", () => {
+    expect(sortStatementMembers(rows, [])).toBe(rows);
+    expect(sortStatementMembers(rows, ["default"])).toBe(rows);
+  });
+
   it("sorts by วันที่โอน newest first, with people who never paid last", () => {
     const mixed = [
       member({ memberNumber: "old", paidAt: "2026-06-05T00:00:00.000Z" }),
@@ -213,6 +250,7 @@ describe("summarizeStatementMembers", () => {
     const unpaidOnly = filterStatementMembers(rows, {
       search: "",
       unitName: "",
+      unitCode: "",
       hCode: "",
       status: "unpaid",
     });
@@ -243,6 +281,7 @@ describe("the ไม่มีเลขบัญชี chip", () => {
       filterStatementMembers(seeded, {
         search: "",
         unitName: "",
+        unitCode: "",
         hCode: "",
         status: "no_account",
       })
@@ -250,75 +289,73 @@ describe("the ไม่มีเลขบัญชี chip", () => {
   });
 });
 
-describe("unitChoicesOf", () => {
-  it("lists each หน่วยคุม once with the สังกัด lines inside it", () => {
-    expect(unitChoicesOf(rows)).toEqual([
-      { hCode: "1", units: ["โรงเรียนบ้านโนนสวรรค์", "โรงเรียนบ้านหนองบัว"] },
-      { hCode: "10", units: ["โรงเรียนบ้านโนนสวรรค์"] },
-    ]);
+describe("hCodesOf", () => {
+  it("lists each หน่วยคุม once, ignoring members with none", () => {
+    expect(hCodesOf([...rows, member({ hCode: null })])).toEqual(["1", "10"]);
   });
 
-  it("orders หน่วยคุม as numbers, not as text", () => {
-    const codes = unitChoicesOf([
+  it("orders them as numbers, not as text", () => {
+    const codes = hCodesOf([
       member({ hCode: "10" }),
       member({ hCode: "2" }),
       member({ hCode: "1" }),
       member({ hCode: "25" }),
       member({ hCode: "9" }),
-    ]).map((group) => group.hCode);
+    ]);
     expect(codes).toEqual(["1", "2", "9", "10", "25"]);
-  });
-
-  it("orders สังกัด by Thai collation, not codepoint", () => {
-    // A leading vowel sorts by the consonant after it, so โนนสวรรค์ (น) comes
-    // before หนองบัว (ห) even though โ sits after ห in Unicode.
-    expect(unitChoicesOf(rows)[0].units).toEqual([
-      "โรงเรียนบ้านโนนสวรรค์",
-      "โรงเรียนบ้านหนองบัว",
-    ]);
-  });
-
-  it("keeps members with no หน่วยคุม pickable, in a group of their own at the end", () => {
-    const groups = unitChoicesOf([
-      member({ hCode: "1" }),
-      member({ hCode: null, unitName: "บำนาญ บึงกาฬ" }),
-    ]);
-    expect(groups[groups.length - 1]).toEqual({ hCode: null, units: ["บำนาญ บึงกาฬ"] });
-  });
-
-  it("lists a หน่วยคุม whose members have no สังกัด name at all", () => {
-    // It still has to be selectable: those members are somebody's to chase.
-    expect(unitChoicesOf([member({ hCode: "7", unitName: null })])).toEqual([
-      { hCode: "7", units: [] },
-    ]);
   });
 });
 
-describe("the one หน่วยคุม dropdown", () => {
-  // หน่วยคุม and สังกัด were two dropdowns, and a code from one with a name
-  // from the other could be chosen together and match nobody. One value
-  // means one choice.
-  it("carries a whole หน่วยคุม or a single สังกัด, never a pairing of both", () => {
-    expect(parseUnitChoice("h:75")).toEqual({ hCode: "75", unitName: "" });
-    expect(parseUnitChoice("u:ตจว.1 หักผ่านธนาคารกรุงไทย")).toEqual({
-      hCode: "",
-      unitName: "ตจว.1 หักผ่านธนาคารกรุงไทย",
+describe("subUnitsOf", () => {
+  const school = (code: string | null, name: string | null, hCode = "1") =>
+    member({ unitCode: code, unitName: name, hCode });
+
+  it("shows the รหัสสังกัด in front of the name, as the cooperative's lists do", () => {
+    expect(subUnitsOf([school("13003", "ร.ร.อนุบาลอรุณรังษี")])[0]).toMatchObject({
+      code: "13003",
+      name: "ร.ร.อนุบาลอรุณรังษี",
+      label: "13003 ร.ร.อนุบาลอรุณรังษี",
     });
-    expect(parseUnitChoice("")).toEqual({ hCode: "", unitName: "" });
   });
 
-  it("survives a สังกัด name containing the separator", () => {
-    const name = "ตจว.1 หักผ่านธนาคารกรุงไทย: h:75";
-    expect(parseUnitChoice(encodeUnitChoice({ hCode: "", unitName: name }))).toEqual({
-      hCode: "",
+  it("narrows to the chosen หน่วยคุม", () => {
+    const all = [
+      school("13003", "ร.ร.อนุบาลอรุณรังษี", "1"),
+      school("23003", "ร.ร.บ้านน้ำสวย", "2"),
+    ];
+    expect(subUnitsOf(all, "2").map((u) => u.code)).toEqual(["23003"]);
+    expect(subUnitsOf(all).map((u) => u.code)).toEqual(["13003", "23003"]);
+  });
+
+  it("keeps two สังกัด that share a name apart", () => {
+    // 656 codes against 646 names in the ไฟล์รวม: picking one must not
+    // quietly bring the other along.
+    const shared = [school("13003", "ร.ร.บ้านโนนสว่าง"), school("43010", "ร.ร.บ้านโนนสว่าง")];
+    const found = subUnitsOf(shared);
+    expect(found).toHaveLength(2);
+    expect(new Set(found.map((u) => u.value)).size).toBe(2);
+  });
+
+  it("is still pickable on a round imported before รหัสสังกัด was read", () => {
+    const found = subUnitsOf([school(null, "บำนาญ บึงกาฬ")]);
+    expect(found[0]).toMatchObject({ code: null, label: "บำนาญ บึงกาฬ", value: "u:บำนาญ บึงกาฬ" });
+  });
+
+  it("leaves out members with neither code nor name rather than offering a blank", () => {
+    expect(subUnitsOf([school(null, null)])).toEqual([]);
+  });
+
+  it("round-trips a name containing the separator", () => {
+    const name = "ร.ร.บ้านโนนสว่าง c:13003";
+    expect(parseSubUnit(encodeSubUnit({ unitCode: null, unitName: name }))).toEqual({
+      unitCode: "",
       unitName: name,
     });
   });
 
-  it("shows the selected filter back, whichever grain it was picked at", () => {
-    expect(encodeUnitChoice({ hCode: "75", unitName: "" })).toBe("h:75");
-    expect(encodeUnitChoice({ hCode: "", unitName: "ตจว 1" })).toBe("u:ตจว 1");
-    expect(encodeUnitChoice({ hCode: "", unitName: "" })).toBe("");
+  it("filters by the code where there is one, not by the name", () => {
+    expect(parseSubUnit("c:13003")).toEqual({ unitCode: "13003", unitName: "" });
+    expect(parseSubUnit("")).toEqual({ unitCode: "", unitName: "" });
   });
 });
 
@@ -345,6 +382,7 @@ describe("members the cooperative holds several accounts for", () => {
     const shown = filterStatementMembers([ambiguous, unknown], {
       search: "",
       unitName: "",
+      unitCode: "",
       hCode: "",
       status: "no_account",
     });
@@ -355,6 +393,7 @@ describe("members the cooperative holds several accounts for", () => {
     const shown = filterStatementMembers([ambiguous, unknown], {
       search: "",
       unitName: "",
+      unitCode: "",
       hCode: "",
       status: "many_accounts",
     });
@@ -364,8 +403,29 @@ describe("members the cooperative holds several accounts for", () => {
   it("leaves a member whose account is filled in out of both", () => {
     const filled = member({ accountNumber: "4131234567", knownAccounts: [] });
     const asked = (status: string) =>
-      filterStatementMembers([filled], { search: "", unitName: "", hCode: "", status });
+      filterStatementMembers([filled], {
+        search: "",
+        unitName: "",
+        unitCode: "",
+        hCode: "",
+        status,
+      });
     expect(asked("no_account")).toHaveLength(0);
     expect(asked("many_accounts")).toHaveLength(0);
+  });
+});
+
+describe("ordering by รหัสสังกัด", () => {
+  // The codes are five and six digits mixed, so text ordering puts 103003
+  // between 100 and 13003 — the dropdown and the table both read as if the
+  // list had been shuffled.
+  it("orders them as numbers, not as text", () => {
+    const codes = subUnitsOf([
+      member({ unitCode: "13003", unitName: "ก" }),
+      member({ unitCode: "103003", unitName: "ข" }),
+      member({ unitCode: "100", unitName: "ค" }),
+      member({ unitCode: "23003", unitName: "ง" }),
+    ]).map((u) => u.code);
+    expect(codes).toEqual(["100", "13003", "23003", "103003"]);
   });
 });
