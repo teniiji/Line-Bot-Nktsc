@@ -30,6 +30,19 @@ const masterFile: unknown[][] = [
   [23693, "นางพิสมัย วีย์รยาพร", 35860, 100, "วิทยาลัยเทคนิคหนองคาย", 3410700053302, 100, null],
 ];
 
+// A เขต that collects for more than one organisation on the same line: its
+// own column, the สสค.'s, and a รวม of the two. Payroll deducts the สสค.
+// first, so a shortfall in the รวม is the cooperative's to chase — but the
+// ยอดแจ้งหัก is the สหกรณ์ column alone, never the รวม.
+const sharedCollectionFile: unknown[][] = [
+  ["สหกรณ์ออมทรัพย์ครูหนองคาย-บึงกาฬ จำกัด"],
+  ["รายการหัก สพป.กาฬสินธุ์ เขต 3 เดือน กันยายน 2569"],
+  ["ลำดับที่", "เลขที่", "ชื่อ - สกุล", "สหกรณ์", "สสค.", "รวม", "หักได้", "หักไม่ได้"],
+  [1, 28590, "เสกสิน ศรีปากดี", 31600, 420, 32020, 24770, 7250],
+  [2, 30231, "ชนิสรา อุทโท", 5100, 0, 5100, 5100, 0],
+  [3, 29222, "ธีรภัทร ภูนาเพชร", 27000, 420, 27420, 21290, 6130],
+];
+
 describe("findHeaderRow", () => {
   it("steps over banner rows to the row that names the columns", () => {
     expect(findHeaderRow(unitFile)).toBe(2);
@@ -86,6 +99,47 @@ describe("detectSheetColumns", () => {
     expect(reading.mapping.expected).toBeUndefined();
     expect(reading.mapping.collected).toBeUndefined();
     expect(reading.mapping.uncollected).toBeUndefined();
+  });
+});
+
+describe("detectSheetColumns, where a sheet carries another body's money", () => {
+  it("takes the สหกรณ์ column as ยอดแจ้งหัก, not the รวม", () => {
+    const reading = detectSheetColumns(sharedCollectionFile);
+    expect(reading.mapping.expected).toBe(3);
+  });
+
+  it("never maps the สสค. column to anything", () => {
+    // Another organisation's money on the same line. Imported as a สหกรณ์
+    // figure it would overstate every member's debt by their สสค. premium.
+    const reading = detectSheetColumns(sharedCollectionFile);
+    expect(Object.values(reading.mapping)).not.toContain(4);
+  });
+
+  it("still reads a รวม when it is the only total on the sheet", () => {
+    const [banner, title, header, ...rows] = sharedCollectionFile;
+    const noOwnColumn = [
+      banner,
+      title,
+      header.filter((_, index) => index !== 3 && index !== 4),
+      ...rows.map((row) => row.filter((_, index) => index !== 3 && index !== 4)),
+    ];
+    const reading = detectSheetColumns(noOwnColumn);
+    expect(reading.mapping.expected).toBe(3);
+    expect(header[5]).toBe("รวม");
+  });
+
+  it("keeps the whole shortfall, without subtracting the other body's share", () => {
+    // Payroll takes the สสค. premium first, so what is missing from the รวม
+    // is missing from the สหกรณ์'s share — ฿7,250 of a ฿31,600 deduction, not
+    // ฿7,250 less ฿420. Confirmed with the cooperative before it was written.
+    const reading = detectSheetColumns(sharedCollectionFile);
+    const read = readMappedSheet(sharedCollectionFile, reading.firstDataRow, reading.mapping);
+    expect(read.rows.map((r) => [r.memberNumber, r.result, r.amountDue, r.expectedAmount])).toEqual([
+      ["28590", "uncollected", 7250, 31600],
+      ["30231", "collected", 0, 5100],
+      ["29222", "uncollected", 6130, 27000],
+    ]);
+    expect(read.uncollected).toBe(2);
   });
 });
 
