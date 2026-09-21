@@ -7,11 +7,13 @@ import { StatementMemberRow } from "./types";
 
 export interface StatementFilter {
   search: string;
-  unitName: string; // "" = ทุกสังกัด
-  // รหัสหน่วยคุม — the H-code from column J of the หักไม่ได้ sheet. "" = ทุกหน่วยคุม.
-  // A coarser grouping than สังกัด, and the one the cooperative's own summaries
-  // ("สรุปหน่วยคุม") are organised by, so it is how staff divide the chasing up.
+  // The two levels a member sits at, filtered separately because they are
+  // separate: หน่วยคุม is what the cooperative's own สรุปหน่วยคุม counts by
+  // and how the chasing up is divided (64 of them), and the หน่วยคุมย่อย
+  // beneath it is the school or office itself (656). "" = all.
   hCode: string;
+  unitCode: string;
+  unitName: string;
   status: string; // "all" | "paid" | "overpaid" | "unpaid" | "no_account"
 }
 
@@ -26,10 +28,10 @@ export type StatementSort =
 
 const digitsOnly = (value: string) => value.replace(/\D/g, "");
 
-// H-codes are 1-2 digit numbers, so they compare as numbers — as text,
-// หน่วยคุม 10 would sort between 1 and 2. Members carrying no code at all sort
-// last: they are a gap in the sheet, not หน่วยคุม zero.
-function compareHCode(a: string | null, b: string | null): number {
+// Codes compare as numbers — as text, หน่วยคุม 10 would sort between 1 and
+// 2, and สังกัด 103003 between 100 and 13003. Members carrying no code at
+// all sort last: that is a gap in the sheet, not code zero.
+function compareCode(a: string | null, b: string | null): number {
   if (a === b) return 0;
   if (!a) return 1;
   if (!b) return -1;
@@ -134,40 +136,52 @@ export function filterStatementMembers(
     (m) =>
       matchesStatus(m, filter.status) &&
       (!filter.hCode || m.hCode === filter.hCode) &&
+      (!filter.unitCode || m.unitCode === filter.unitCode) &&
       (!filter.unitName || m.unitName === filter.unitName) &&
       matchesSearch(m, filter.search)
   );
 }
 
+type Comparator = (a: StatementMemberRow, b: StatementMemberRow) => number;
+
+const COMPARATORS: Record<Exclude<StatementSort, "default">, Comparator> = {
+  outstanding: (a, b) => outstandingOf(b) - outstandingOf(a),
+  name: (a, b) => a.name.localeCompare(b.name, "th"),
+  memberNumber: byMemberNumber,
+  // The หน่วยคุม carries its own second key: inside a unit, the rows belong
+  // grouped by the สังกัด they came from rather than interleaved.
+  hCode: (a, b) =>
+    compareCode(a.hCode, b.hCode) ||
+    compareCode(a.unitCode, b.unitCode) ||
+    compareUnitName(a.unitName, b.unitName),
+  unitName: (a, b) =>
+    compareCode(a.unitCode, b.unitCode) || compareUnitName(a.unitName, b.unitName),
+  paidAt: (a, b) => comparePaidAt(a.paidAt, b.paidAt),
+};
+
+// Several orderings at once, applied in the order they were chosen: หน่วยคุม
+// first and ยอดค้างมาก→น้อย after it is "work through the units, biggest
+// debt first in each" — one question, which a single ordering could not ask.
 export function sortStatementMembers(
   rows: StatementMemberRow[],
-  sort: StatementSort
+  sort: StatementSort | StatementSort[]
 ): StatementMemberRow[] {
-  // "default" is the order the API already returned (still-owing first, then
-  // by สังกัด/เลขสมาชิก) — re-sorting it here would only undo that.
-  if (sort === "default") return rows;
+  const keys = (Array.isArray(sort) ? sort : [sort]).filter(
+    (key): key is Exclude<StatementSort, "default"> => key !== "default"
+  );
+  // Nothing chosen leaves the order the API already returned (still-owing
+  // first, then by สังกัด/เลขสมาชิก) — re-sorting it here would only undo it.
+  if (keys.length === 0) return rows;
 
   const copy = [...rows];
-  if (sort === "outstanding") {
-    copy.sort((a, b) => outstandingOf(b) - outstandingOf(a));
-  } else if (sort === "name") {
-    copy.sort((a, b) => a.name.localeCompare(b.name, "th"));
-  } else if (sort === "memberNumber") {
-    copy.sort(byMemberNumber);
-  } else if (sort === "hCode") {
-    // Grouping sorts get a second and third key so the rows inside a group
-    // are in a readable order rather than whatever order they arrived in.
-    copy.sort(
-      (a, b) =>
-        compareHCode(a.hCode, b.hCode) ||
-        compareUnitName(a.unitName, b.unitName) ||
-        byMemberNumber(a, b)
-    );
-  } else if (sort === "unitName") {
-    copy.sort((a, b) => compareUnitName(a.unitName, b.unitName) || byMemberNumber(a, b));
-  } else if (sort === "paidAt") {
-    copy.sort((a, b) => comparePaidAt(a.paidAt, b.paidAt) || byMemberNumber(a, b));
-  }
+  copy.sort((a, b) => {
+    for (const key of keys) {
+      const result = COMPARATORS[key](a, b);
+      if (result !== 0) return result;
+    }
+    // Rows the chosen orderings cannot separate still need a stable place.
+    return byMemberNumber(a, b);
+  });
   return copy;
 }
 
@@ -185,47 +199,58 @@ export function summarizeStatementMembers(rows: StatementMemberRow[]) {
   };
 }
 
-// หน่วยคุม and สังกัด are one thing written at two grains, not two things:
-// the H-code is what the cooperative's own สรุปหน่วยคุม counts by (75), and
-// the name is the line the file writes under it ("ตจว.1 หักผ่านธนาคารกรุงไทย",
-// column G of the ไฟล์รวม). Offered as two dropdowns they read as a
-// hierarchy to navigate, and a code and a name that belong to different
-// members could be chosen together and match nobody.
-//
-// So they are offered as one list: each หน่วยคุม, then the สังกัด lines
-// inside it. Picking is one act, and every choice on it has rows behind it.
-export interface UnitChoice {
-  hCode: string | null;
-  units: string[];
+// The หน่วยคุม on offer, in the numeric order the table sorts by, so the
+// dropdown and the sorted table agree on what comes after what.
+export function hCodesOf(rows: StatementMemberRow[]): string[] {
+  const codes = new Set<string>();
+  for (const m of rows) if (m.hCode) codes.add(m.hCode);
+  return [...codes].sort(compareCode);
 }
 
-export function unitChoicesOf(rows: StatementMemberRow[]): UnitChoice[] {
-  const groups = new Map<string | null, Set<string>>();
+// One school or office: the รหัสสังกัด and the name, as they are written
+// together on the cooperative's own lists ("13003 ร.ร.อนุบาลอรุณรังษี").
+// A round imported before รหัสสังกัด was read has the name alone, which is
+// still something to pick by.
+export interface SubUnit {
+  code: string | null;
+  name: string | null;
+  label: string;
+  value: string;
+}
+
+// Narrowed to one หน่วยคุม when one is chosen: 656 สังกัด in a dropdown is
+// not a list anybody reads, and a สังกัด from outside the chosen หน่วยคุม
+// would only ever produce an empty table.
+export function subUnitsOf(rows: StatementMemberRow[], hCode = ""): SubUnit[] {
+  const found = new Map<string, SubUnit>();
   for (const m of rows) {
-    const key = m.hCode || null;
-    if (!groups.has(key)) groups.set(key, new Set());
-    if (m.unitName) groups.get(key)!.add(m.unitName);
+    if (hCode && m.hCode !== hCode) continue;
+    if (!m.unitCode && !m.unitName) continue;
+    const value = encodeSubUnit(m);
+    if (found.has(value)) continue;
+    found.set(value, {
+      code: m.unitCode,
+      name: m.unitName,
+      label: [m.unitCode, m.unitName].filter(Boolean).join(" "),
+      value,
+    });
   }
-  return [...groups.entries()]
-    .sort(([a], [b]) => compareHCode(a, b))
-    .map(([hCode, units]) => ({
-      hCode,
-      units: [...units].sort((a, b) => a.localeCompare(b, "th")),
-    }));
+  return [...found.values()].sort(
+    (a, b) => compareCode(a.code, b.code) || compareUnitName(a.name, b.name)
+  );
 }
 
-// The one dropdown's value. A member with no หน่วยคุม still has a สังกัด to
-// be picked by, so a name is selectable on its own rather than only beneath
-// a code.
-export function encodeUnitChoice(filter: { hCode: string; unitName: string }): string {
-  if (filter.unitName) return `u:${filter.unitName}`;
-  if (filter.hCode) return `h:${filter.hCode}`;
-  return "";
+// Keyed on the code where the round has one, because two สังกัด can share a
+// name (656 codes against 646 names in the ไฟล์รวม) and picking one of them
+// should not quietly bring the other along.
+export function encodeSubUnit(unit: { unitCode: string | null; unitName: string | null }): string {
+  if (unit.unitCode) return `c:${unit.unitCode}`;
+  return unit.unitName ? `u:${unit.unitName}` : "";
 }
 
-export function parseUnitChoice(value: string): { hCode: string; unitName: string } {
-  if (value.startsWith("h:")) return { hCode: value.slice(2), unitName: "" };
-  if (value.startsWith("u:")) return { hCode: "", unitName: value.slice(2) };
-  return { hCode: "", unitName: "" };
+export function parseSubUnit(value: string): { unitCode: string; unitName: string } {
+  if (value.startsWith("c:")) return { unitCode: value.slice(2), unitName: "" };
+  if (value.startsWith("u:")) return { unitCode: "", unitName: value.slice(2) };
+  return { unitCode: "", unitName: "" };
 }
 
