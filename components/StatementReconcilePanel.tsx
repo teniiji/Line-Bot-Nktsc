@@ -21,6 +21,7 @@ import SheetMappingDialog, { type SheetPreview } from "@/components/SheetMapping
 import type { SheetMapping } from "@/lib/sheetColumns";
 import MultiSelect from "@/components/MultiSelect";
 import PanelHelp from "@/components/PanelHelp";
+import { controlUnitLabel } from "@/lib/controlUnits";
 import { describeDeductionPeriod } from "@/lib/deductionPeriod";
 import { downloadStatementMembersCsv } from "@/lib/csv";
 import { EXCLUDE_REASONS } from "@/lib/statementSlipHints";
@@ -1223,7 +1224,7 @@ export default function StatementReconcilePanel() {
                     school or office inside it (D และ E). */}
                 {hCodes.length > 0 && (
                   <MultiSelect
-                    options={hCodes.map((h) => ({ value: h, label: `หน่วยคุม ${h}` }))}
+                    options={hCodes.map((h) => ({ value: h, label: controlUnitLabel(h) }))}
                     selected={hCodeFilter}
                     onChange={changeHCode}
                     allLabel="ทุกหน่วยคุม"
@@ -1454,7 +1455,12 @@ export default function StatementReconcilePanel() {
                                 never worth the width of two columns. */}
                             <td className="px-4 py-2.5">
                               {m.hCode && (
-                                <span className="num text-slate-400 mr-1.5">{m.hCode}</span>
+                                <span
+                                  className="num text-slate-400 mr-1.5"
+                                  title={controlUnitLabel(m.hCode)}
+                                >
+                                  {m.hCode}
+                                </span>
                               )}
                               {m.unitName ?? (m.hCode ? "" : "—")}
                               {m.unitCode && (

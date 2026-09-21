@@ -1,3 +1,4 @@
+import { controlUnitName } from "./controlUnits";
 import { Expense, MemberBankAccountEntry, MemberRosterEntry, StatementMemberRow } from "./types";
 // The day the file was exported, in Thailand — a download at one in the
 // morning carried yesterday's date in its name.
@@ -81,6 +82,9 @@ export function downloadStatementMembersCsv(
     "\u0E40\u0E25\u0E02\u0E2A\u0E21\u0E32\u0E0A\u0E34\u0E01",
     "\u0E0A\u0E37\u0E48\u0E2D-\u0E2A\u0E01\u0E38\u0E25",
     "\u0E2B\u0E19\u0E48\u0E27\u0E22\u0E04\u0E38\u0E21",
+    // The unit's name, so an export can be read and totalled without the
+    // cooperative's code list open beside it.
+    "\u0E0A\u0E37\u0E48\u0E2D\u0E2B\u0E19\u0E48\u0E27\u0E22\u0E04\u0E38\u0E21",
     // \u0E23\u0E2B\u0E31\u0E2A\u0E2A\u0E31\u0E07\u0E01\u0E31\u0E14 beside its name, because the cooperative's own lists key on
     // the code and a name alone cannot be looked up against them.
     "\u0E23\u0E2B\u0E31\u0E2A\u0E2A\u0E31\u0E07\u0E01\u0E31\u0E14",
@@ -98,6 +102,7 @@ export function downloadStatementMembersCsv(
     m.memberNumber,
     m.name,
     m.hCode ?? "",
+    (m.hCode && controlUnitName(m.hCode)) || "",
     m.unitCode ?? "",
     m.unitName ?? "",
     m.accountNumber ?? "",
