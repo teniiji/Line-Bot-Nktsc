@@ -72,9 +72,14 @@ export async function POST(
 
   const existing = await prisma.statementMember.findMany({
     where: { roundId: round.id },
-    select: { memberNumber: true, deductionResult: true },
+    select: { memberNumber: true, deductionResult: true, hCode: true },
   });
-  const plan = planDeductionUpload(existing, sheet.rows);
+  // Only a sheet that keeps the หน่วยคุม and the รหัสสังกัด in separate
+  // columns knows the difference between them — see UploadOptions.
+  const plan = planDeductionUpload(existing, sheet.rows, {
+    unitsAreAuthoritative:
+      reading.mapping.hCode !== undefined && reading.mapping.unitCode !== undefined,
+  });
   const filled = await applyRoundSheet(round.id, plan);
   const progress = await refreshRoundProgress(round.id);
 
@@ -89,6 +94,9 @@ export async function POST(
     // answer for them — re-uploading a รายการหัก must not un-answer a unit
     // that has since replied.
     keptResult: plan.keptResult.length,
+    // Rows whose หน่วยคุม this file was not entitled to change, because it
+    // does not tell a หน่วยคุม from a รหัสสังกัด.
+    keptUnit: plan.keptUnit,
     untouched: plan.untouched,
     filledFromDirectory: filled.fromDirectory,
     filledFromPrevious: filled.fromPrevious,

@@ -415,6 +415,12 @@ export default function StatementReconcilePanel() {
             (body.keptResult > 0
               ? ` · ${body.keptResult} คนในไฟล์ยังไม่มีผล แต่รอบมีผลอยู่แล้ว จึงไม่ทับ`
               : "") +
+            // The unit's own "รหัสหน่วย" is its internal สังกัด code, not one
+            // of the cooperative's 64 หน่วยคุม — said out loud so nobody
+            // wonders why the column did not change.
+            (body.keptUnit > 0
+              ? ` · คงหน่วยคุมเดิมของรอบไว้ ${body.keptUnit} คน (ไฟล์หน่วยใช้รหัสของตัวเอง)`
+              : "") +
             describeFills(body) +
             (body.missingAccount > 0
               ? ` — ⚠️ มี ${body.missingAccount} คนที่หักไม่ได้แต่ไม่มีเลขบัญชี จับคู่กับ Statement ไม่ได้`
@@ -591,6 +597,9 @@ export default function StatementReconcilePanel() {
             : "") +
           (body.keptResult > 0
             ? ` · ${body.keptResult} คนมีผลการหักอยู่แล้ว จึงไม่ทับด้วย "รอผล"`
+            : "") +
+          (body.keptUnit > 0
+            ? ` · คงหน่วยคุมเดิมของรอบไว้ ${body.keptUnit} คน (ไฟล์นี้ใช้รหัสของหน่วยเอง)`
             : "") +
           (body.skippedRows > 0
             ? ` · ข้าม ${body.skippedRows} แถวที่ไม่มีเลขสมาชิก`

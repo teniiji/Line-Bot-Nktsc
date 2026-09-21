@@ -64,6 +64,21 @@ export async function applyRoundSheet(
     });
   }
 
+  // Members whose result this sheet was not allowed to touch, but whose
+  // หน่วยคุม it is still the authority on. Their coding is corrected and
+  // nothing else about them moves — see UploadPlan.recode.
+  for (const row of plan.recode) {
+    if (!row.hCode && !row.unitCode && !row.unitName) continue;
+    await prisma.statementMember.update({
+      where: { roundId_memberNumber: { roundId, memberNumber: row.memberNumber } },
+      data: {
+        ...(row.hCode ? { hCode: row.hCode } : {}),
+        ...(row.unitCode ? { unitCode: row.unitCode } : {}),
+        ...(row.unitName ? { unitName: row.unitName } : {}),
+      },
+    });
+  }
+
   // Members the sheet left without an account number may already be known to
   // the directory from an earlier round, so the work of binding accounts is
   // not repeated every month. Then the transfers already read out of

@@ -123,6 +123,7 @@ export async function POST(
     select: {
       memberNumber: true,
       unitName: true,
+      hCode: true,
       deductionResult: true,
       expectedAmount: true,
     },
@@ -140,7 +141,15 @@ export async function POST(
       );
     }
 
-    const plan = planDeductionUpload(roster, allRows);
+    // A unit's result sheet has one code column, headed "รหัสหน่วย", and
+    // what is in it is that unit's own สังกัด code — never the หน่วยคุม the
+    // round was built with. See UploadOptions.
+    const plan = planDeductionUpload(roster, allRows, {
+      unitsAreAuthoritative:
+        columns !== null &&
+        columns.mapping.hCode !== undefined &&
+        columns.mapping.unitCode !== undefined,
+    });
     const filled = await applyRoundSheet(round.id, plan);
     const progress = await refreshRoundProgress(round.id);
     const missingAccountNow = await prisma.statementMember.count({
@@ -153,6 +162,8 @@ export async function POST(
       added: plan.create.length,
       updated: plan.update.length,
       keptResult: plan.keptResult.length,
+      // Rows whose หน่วยคุม this file was not entitled to change.
+      keptUnit: plan.keptUnit,
       // How much of the round this file said nothing about — the honest
       // answer to "did I upload the right file", when one unit's file and
       // the whole cooperative's look the same from here.
