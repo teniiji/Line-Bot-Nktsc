@@ -25,6 +25,7 @@ export async function applyRoundSheet(
         memberNumber: row.memberNumber,
         name: row.name,
         unitName: row.unitName,
+        unitCode: row.unitCode ?? null,
         hCode: row.hCode,
         note: row.note,
         accountNumber: row.accountNumber,
@@ -47,6 +48,7 @@ export async function applyRoundSheet(
         // erase what another file already established.
         ...(row.name ? { name: row.name } : {}),
         ...(row.unitName ? { unitName: row.unitName } : {}),
+        ...(row.unitCode ? { unitCode: row.unitCode } : {}),
         ...(row.hCode ? { hCode: row.hCode } : {}),
         ...(row.note ? { note: row.note } : {}),
         ...(row.expectedAmount !== null ? { expectedAmount: row.expectedAmount } : {}),

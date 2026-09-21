@@ -29,6 +29,9 @@ export interface DeductionSheetRow extends MaiDaiRow {
   // คอลัมน์ C ยอดแจ้งหัก — what payroll was asked to take.
   expectedAmount: number | null;
   result: DeductionResult;
+  // คอลัมน์ D รหัสหน่วยสังกัด. Optional because the หักไม่ได้ sheets read by
+  // parseMaiDaiSheet never carried it — only a mapped upload can say.
+  unitCode?: string | null;
 }
 
 export interface TransferRow {

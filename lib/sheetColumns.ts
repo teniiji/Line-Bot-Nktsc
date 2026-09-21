@@ -31,6 +31,7 @@ export type SheetField =
   | "collected"
   | "uncollected"
   | "unitName"
+  | "unitCode"
   | "hCode"
   | "accountNumber";
 
@@ -40,12 +41,12 @@ export const SHEET_FIELDS: { field: SheetField; label: string; required: boolean
   { field: "expected", label: "ยอดแจ้งหัก", required: false },
   { field: "collected", label: "ยอดหักได้", required: false },
   { field: "uncollected", label: "ยอดหักไม่ได้", required: false },
-  // One thing written twice: the คอลัมน์ G name staff read
-  // ("ตจว.1 หักผ่านธนาคารกรุงไทย") and the code their own สรุปหน่วยคุม counts
-  // by (75). Labelled as the pair they are, because asked for a "สังกัด" and
-  // a "รหัสหน่วย" separately they read as two levels to fill in.
-  { field: "unitName", label: "หน่วยคุม (ชื่อ)", required: false },
-  { field: "hCode", label: "หน่วยคุม (รหัส)", required: false },
+  // Three columns of the ไฟล์รวม, three different things: the หน่วยคุม the
+  // cooperative counts by (G), and the สังกัด inside it by code (D) and by
+  // name (E).
+  { field: "hCode", label: "หน่วยคุม", required: false },
+  { field: "unitCode", label: "รหัสสังกัด", required: false },
+  { field: "unitName", label: "ชื่อสังกัด", required: false },
   { field: "accountNumber", label: "เลขบัญชี", required: false },
 ];
 
@@ -65,6 +66,7 @@ const HEADER_WORDS: { field: SheetField; words: string[]; weak?: boolean }[] = [
   { field: "expected", words: ["สหกรณ์", "แจ้งหัก", "ยอดแจ้งหัก", "ยอดเรียกเก็บ", "ยอดหัก"] },
   { field: "accountNumber", words: ["เลขบัญชี", "เลขที่บัญชี", "บัญชีธนาคาร"] },
   { field: "hCode", words: ["รหัสหน่วย", "หน่วยคุม", "รหัสหน่วยคุม", "รหัสหน่วยงาน"] },
+  { field: "unitCode", words: ["รหัสสังกัด", "หน่วยสังกัด", "รหัสโรงเรียน"] },
   { field: "unitName", words: ["สังกัด", "หน่วยงาน", "โรงเรียน", "ชื่อหน่วย"] },
   // Only where nothing better was found: "รวม" is สหกรณ์ + สสค. together, and
   // "จำนวนเงิน" could be any of the columns in a sheet that has several.
@@ -264,12 +266,17 @@ function mapFromContent(rows: unknown[][], columns: number): SheetMapping {
     .sort((a, b) => a.distinct - b.distinct);
   take("unitName", units[0]?.index);
 
-  // หน่วยคุม: the code the cooperative groups by, which in the ไฟล์รวม is a
-  // small number repeated across hundreds of members (64 of them over 7,000
-  // rows). Told apart from รหัสหน่วย — finer, hundreds of values — by taking
-  // the coarsest column, and only on a file long enough for "repeats a lot"
-  // to mean anything. On a short sheet a column of identical amounts would
-  // look the same, so nothing is claimed there.
+  // The two codes a member carries, told apart by how coarse they are. In
+  // the ไฟล์รวม the หน่วยคุม repeats hardest — 64 values over 7,000 rows —
+  // and the รหัสสังกัด beneath it has hundreds, so the coarsest column is the
+  // หน่วยคุม and the next one down is its สังกัด.
+  //
+  // Only on a file long enough for "repeats a lot" to mean anything: on a
+  // unit's sheet of six members a column of identical amounts looks exactly
+  // the same, so nothing is claimed there. And the สังกัด is only claimed
+  // when it is clearly finer, because a file that writes the หน่วยคุม twice
+  // (0869 carries it in both F and J) would otherwise have the duplicate
+  // read as a สังกัด it never named.
   if (rows.length >= 20) {
     const codes = dense
       .filter(
@@ -278,10 +285,20 @@ function mapFromContent(rows: unknown[][], columns: number): SheetMapping {
           !s.hasDecimals &&
           s.smallInts / Math.max(1, s.filled) > 0.9 &&
           s.distinct >= 2 &&
-          s.distinct <= s.filled / 10
+          // Repeats at least three times over on average. Looser than the
+          // หน่วยคุม below, because the สังกัด code is much finer — 656
+          // values in the ไฟล์รวม against the หน่วยคุม's 64.
+          s.distinct <= s.filled / 3
       )
       .sort((a, b) => a.distinct - b.distinct);
-    take("hCode", codes[0]?.index);
+
+    // The หน่วยคุม has to repeat hard to be claimed at all; a column that
+    // merely repeats is not evidence enough to label a grouping by.
+    const unit = codes[0] && codes[0].distinct <= codes[0].filled / 10 ? codes[0] : undefined;
+    take("hCode", unit?.index);
+    if (unit && codes[1] && codes[1].distinct >= unit.distinct * 2) {
+      take("unitCode", codes[1].index);
+    }
   }
 
   // Ten-ish digits and not the national ID's thirteen.
@@ -342,7 +359,11 @@ export function detectSheetColumns(rows: unknown[][]): SheetReading {
   // No usable header: skip any banner rows before judging the content, so a
   // title spanning eight columns does not count as data.
   const firstDataRow = headerRow === null ? firstFilledRow(rows) : headerRow + 1;
-  const body = rows.slice(firstDataRow, firstDataRow + 200);
+  // A wide sample, because these files are written unit by unit: the first
+  // 200 rows of the ไฟล์รวม are nearly all one สังกัด, where the รหัสสังกัด
+  // and the หน่วยคุม above it are equally repetitive and indistinguishable.
+  // Over 2,000 rows they separate — 288 สังกัด against 19 หน่วยคุม.
+  const body = rows.slice(firstDataRow, firstDataRow + 2000);
   return {
     headerRow,
     firstDataRow,

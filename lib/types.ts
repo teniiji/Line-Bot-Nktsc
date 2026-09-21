@@ -201,6 +201,9 @@ export interface StatementMemberRow {
   memberNumber: string;
   name: string;
   unitName: string | null;
+  // รหัสหน่วยสังกัด (คอลัมน์ D) — the สังกัด's own code, finer than hCode,
+  // which is the หน่วยคุม above it.
+  unitCode: string | null;
   hCode: string | null;
   note: string | null;
   accountNumber: string | null;

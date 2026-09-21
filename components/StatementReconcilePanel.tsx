@@ -40,6 +40,7 @@ import {
   StatementSort,
   encodeUnitChoice,
   filterStatementMembers,
+  matchesStatus,
   parseUnitChoice,
   sortStatementMembers,
   summarizeStatementMembers,
@@ -776,12 +777,15 @@ export default function StatementReconcilePanel() {
   // Two different things that both used to read as "ไม่มีเลขบัญชี": nobody
   // has ever recorded an account for this member, and the cooperative holds
   // several and the fill would not pick one. Only the first is unmatchable.
-  const missingAccountCount = members.filter(
-    (m) => !m.accountNumber && (m.knownAccounts?.length ?? 0) === 0
-  ).length;
-  const manyAccountsCount = members.filter(
-    (m) => !m.accountNumber && (m.knownAccounts?.length ?? 0) > 1
-  ).length;
+  //
+  // Counted through the same rule the chips filter by, or the two disagree:
+  // a round just seeded from the ไฟล์รวม, which carries no account numbers
+  // at all, read "⛔ ไม่มีเลขบัญชี 6,267" and then showed an empty table when
+  // the chip was clicked — because nobody in it is owed anything yet.
+  const countMatching = (status: string) =>
+    members.filter((m) => matchesStatus(m, status)).length;
+  const missingAccountCount = countMatching("no_account");
+  const manyAccountsCount = countMatching("many_accounts");
 
   const transfersOf = (memberNumber: string) =>
     transfers.filter((t) => t.memberNumber === memberNumber);
@@ -1368,7 +1372,7 @@ export default function StatementReconcilePanel() {
                       <tr>
                         <th className="px-4 py-2.5 font-semibold">เลขสมาชิก</th>
                         <th className="px-4 py-2.5 font-semibold min-w-[13rem]">ชื่อ-สกุล</th>
-                        <th className="px-4 py-2.5 font-semibold min-w-[12rem]">หน่วยคุม</th>
+                        <th className="px-4 py-2.5 font-semibold min-w-[12rem]">หน่วยคุม · สังกัด</th>
                         <th className="px-4 py-2.5 font-semibold">เลขบัญชี</th>
                         <th className="px-4 py-2.5 font-semibold text-right">ยอดหักไม่ได้</th>
                         <th className="px-4 py-2.5 font-semibold text-right">โอนมาแล้ว</th>
@@ -1390,14 +1394,18 @@ export default function StatementReconcilePanel() {
                                 <span className="text-xs text-slate-400"> · {m.note}</span>
                               )}
                             </td>
-                            {/* The code and the name are one column because
-                                they are one thing — the code alone says
-                                nothing to anybody reading the table. */}
+                            {/* The หน่วยคุม and the สังกัด under it, in one
+                                column: a code on its own says nothing to
+                                anybody reading the table, and the two were
+                                never worth the width of two columns. */}
                             <td className="px-4 py-2.5">
                               {m.hCode && (
                                 <span className="num text-slate-400 mr-1.5">{m.hCode}</span>
                               )}
                               {m.unitName ?? (m.hCode ? "" : "—")}
+                              {m.unitCode && (
+                                <span className="num text-xs text-slate-400"> · {m.unitCode}</span>
+                              )}
                             </td>
                             <td className="px-4 py-2.5 font-mono text-xs">
                               {m.accountNumber ??

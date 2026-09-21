@@ -79,6 +79,7 @@ export function readMappedSheet(
       memberNumber,
       name: readCell(at(row, "name")),
       unitName: readCell(at(row, "unitName")) || null,
+      unitCode: readCell(at(row, "unitCode")) || null,
       hCode: readCell(at(row, "hCode")) || null,
       note: null,
       accountNumber: normalizeAccountNumber(readCell(at(row, "accountNumber"))),

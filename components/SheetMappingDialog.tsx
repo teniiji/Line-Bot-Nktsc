@@ -28,6 +28,7 @@ export interface SheetPreview {
     memberNumber: string;
     name: string;
     unitName: string | null;
+    unitCode?: string | null;
     hCode: string | null;
     expectedAmount: number | null;
     amountDue: number;
@@ -183,7 +184,7 @@ export default function SheetMappingDialog({
                 <tr>
                   <th className="px-2 py-1.5 font-medium">เลขสมาชิก</th>
                   <th className="px-2 py-1.5 font-medium">ชื่อ-สกุล</th>
-                  <th className="px-2 py-1.5 font-medium">สังกัด</th>
+                  <th className="px-2 py-1.5 font-medium">หน่วยคุม · สังกัด</th>
                   <th className="px-2 py-1.5 font-medium text-right">แจ้งหัก</th>
                   <th className="px-2 py-1.5 font-medium text-right">หักไม่ได้</th>
                   <th className="px-2 py-1.5 font-medium">จะบันทึกเป็น</th>
@@ -195,8 +196,11 @@ export default function SheetMappingDialog({
                     <td className="px-2 py-1.5 num">{row.memberNumber}</td>
                     <td className="px-2 py-1.5">{row.name || "—"}</td>
                     <td className="px-2 py-1.5 text-slate-500">
+                      {row.hCode && <span className="num text-xs text-slate-400">{row.hCode} </span>}
                       {row.unitName ?? "—"}
-                      {row.hCode && <span className="text-xs text-slate-400"> · {row.hCode}</span>}
+                      {row.unitCode && (
+                        <span className="num text-xs text-slate-400"> · {row.unitCode}</span>
+                      )}
                     </td>
                     <td className="px-2 py-1.5 num text-right text-slate-500">
                       {row.expectedAmount != null ? formatAmount(row.expectedAmount) : "—"}

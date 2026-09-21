@@ -74,7 +74,15 @@ function matchesSearch(m: StatementMemberRow, search: string): boolean {
   const needle = search.trim().toLowerCase();
   if (!needle) return true;
 
-  const haystack = [m.name, m.memberNumber, m.accountNumber ?? "", m.unitName ?? ""]
+  const haystack = [
+    m.name,
+    m.memberNumber,
+    m.accountNumber ?? "",
+    m.unitName ?? "",
+    // The สังกัด's own code, which is how the cooperative's own lists name a
+    // school: typed into the search box it should find that school's members.
+    m.unitCode ?? "",
+  ]
     .join(" ")
     .toLowerCase();
   if (haystack.includes(needle)) return true;
@@ -89,7 +97,10 @@ function matchesSearch(m: StatementMemberRow, search: string): boolean {
   );
 }
 
-function matchesStatus(m: StatementMemberRow, status: string): boolean {
+// Exported so the chips above the table can be counted by the very rule
+// they filter by. Counting one way and filtering another is how a chip comes
+// to promise rows that are not there.
+export function matchesStatus(m: StatementMemberRow, status: string): boolean {
   if (status === "all") return true;
   // Not a status the reconciliation produces, but the bucket staff most need
   // to act on: without an account number the transfer can never match, so
