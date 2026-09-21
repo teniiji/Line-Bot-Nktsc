@@ -202,6 +202,7 @@ export default function StatementReconcilePanel() {
   const [search, setSearch] = useState("");
   // The หน่วยคุม, and the หน่วยคุมย่อย inside it as one encoded value —
   // see encodeSubUnit, which keys on the รหัสสังกัด where the round has one.
+  const [unitNames, setUnitNames] = useState<Record<string, string>>({});
   const [hCodeFilter, setHCodeFilter] = useState<string[]>([]);
   const [subUnitFilter, setSubUnitFilter] = useState<string[]>([]);
   const [assigningAccount, setAssigningAccount] = useState<string | null>(null);
@@ -279,6 +280,23 @@ export default function StatementReconcilePanel() {
       if (data && data.length > 0) setSelectedId((prev) => prev ?? data[0].id);
     });
   }, [fetchRounds]);
+
+  // The หน่วยคุม names staff maintain in ตั้งค่าระบบ. Fetched rather than
+  // compiled in, so a unit renamed there shows its new name here without a
+  // deploy; controlUnitLabel still answers for anything this has not got.
+  useEffect(() => {
+    fetch("/api/control-units")
+      .then((res) => (res.ok ? res.json() : null))
+      .then((body) => {
+        if (!body?.data) return;
+        setUnitNames(
+          Object.fromEntries(
+            (body.data as { code: string; name: string }[]).map((u) => [u.code, u.name])
+          )
+        );
+      })
+      .catch(() => {});
+  }, []);
 
   // Debounced so typing in the search box doesn't re-filter on every keystroke
   // — same 300ms the other panels' search boxes use.
@@ -780,6 +798,8 @@ export default function StatementReconcilePanel() {
 
   const selected = rounds.find((r) => r.id === selectedId) ?? null;
   const hCodes = hCodesOf(members);
+  const unitLabel = (code: string) =>
+    unitNames[code] ? `${code} ${unitNames[code]}` : controlUnitLabel(code);
   // The หน่วยคุมย่อย on offer narrow to whatever หน่วยคุม is chosen.
   const subUnits = subUnitsOf(members, hCodeFilter);
   const shown = sortStatementMembers(
@@ -1224,7 +1244,7 @@ export default function StatementReconcilePanel() {
                     school or office inside it (D และ E). */}
                 {hCodes.length > 0 && (
                   <MultiSelect
-                    options={hCodes.map((h) => ({ value: h, label: controlUnitLabel(h) }))}
+                    options={hCodes.map((h) => ({ value: h, label: unitLabel(h) }))}
                     selected={hCodeFilter}
                     onChange={changeHCode}
                     allLabel="ทุกหน่วยคุม"
@@ -1288,7 +1308,7 @@ export default function StatementReconcilePanel() {
                   </button>
                 )}
                 <button
-                  onClick={() => downloadStatementMembersCsv(shown, selected.label)}
+                  onClick={() => downloadStatementMembersCsv(shown, selected.label, unitNames)}
                   disabled={shown.length === 0}
                   className="ml-auto px-3 py-1.5 border border-slate-300 rounded-md bg-white hover:bg-slate-50 disabled:opacity-40"
                 >
@@ -1457,7 +1477,7 @@ export default function StatementReconcilePanel() {
                               {m.hCode && (
                                 <span
                                   className="num text-slate-400 mr-1.5"
-                                  title={controlUnitLabel(m.hCode)}
+                                  title={unitLabel(m.hCode)}
                                 >
                                   {m.hCode}
                                 </span>

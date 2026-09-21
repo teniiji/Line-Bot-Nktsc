@@ -10,6 +10,7 @@ import { cooperativeToday } from "@/lib/cooperativeClock";
 import ExpenseList from "@/components/ExpenseList";
 import LineUsersPanel from "@/components/LineUsersPanel";
 import MemberContactPanel from "@/components/MemberContactPanel";
+import ControlUnitsPanel from "@/components/ControlUnitsPanel";
 import FeatureFlagsPanel from "@/components/FeatureFlagsPanel";
 import ServiceRequestsPanel from "@/components/ServiceRequestsPanel";
 import KnowledgePanel from "@/components/KnowledgePanel";
@@ -351,7 +352,12 @@ export default function Dashboard() {
           {
             id: "settings",
             label: "ตั้งค่าระบบ",
-            content: <FeatureFlagsPanel />,
+            content: (
+              <div className="space-y-6">
+                <FeatureFlagsPanel />
+                <ControlUnitsPanel />
+              </div>
+            ),
           },
           {
             id: "knowledge",
