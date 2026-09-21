@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import {
   checkUploadedFile,
   describeReadError,
+  listSheets,
   readFirstSheetRows,
 } from "@/lib/excelUpload";
 import { columnSamples, detectSheetColumns } from "@/lib/sheetColumns";
@@ -31,14 +32,31 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: checked.error }, { status: 400 });
   }
 
+  // Which page of the workbook to read. A unit's file carries "หน่วย" beside
+  // "สรุป", and the results are not always on the first one.
+  const sheetRaw = Number(form.get("sheet"));
+  const sheetIndex = Number.isInteger(sheetRaw) && sheetRaw >= 0 ? sheetRaw : 0;
+
+  let sheets;
   let rows: unknown[][];
   try {
-    rows = await readFirstSheetRows(checked.file);
+    sheets = await listSheets(checked.file);
+    rows = await readFirstSheetRows(checked.file, sheetIndex);
   } catch (err) {
     return NextResponse.json({ error: describeReadError(err) }, { status: 400 });
   }
   if (rows.length === 0) {
-    return NextResponse.json({ error: "ไฟล์นี้ไม่มีข้อมูลในชีตแรก" }, { status: 400 });
+    return NextResponse.json(
+      {
+        error:
+          sheets.length > 1
+            ? `ชีต "${sheets[sheetIndex]?.name ?? sheetIndex + 1}" ไม่มีข้อมูล — ลองเลือกชีตอื่นในไฟล์นี้`
+            : "ไฟล์นี้ไม่มีข้อมูลในชีตแรก",
+        sheets,
+        sheetIndex,
+      },
+      { status: 400 }
+    );
   }
 
   // Asked again with a corrected mapping while the dialog is open, so the
@@ -53,6 +71,8 @@ export async function POST(request: NextRequest) {
   const read = readMappedSheet(rows, reading.firstDataRow, reading.mapping);
 
   return NextResponse.json({
+    sheets,
+    sheetIndex,
     headerRow: reading.headerRow,
     firstDataRow: reading.firstDataRow,
     mapping: reading.mapping,

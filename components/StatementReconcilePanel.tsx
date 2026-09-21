@@ -158,6 +158,7 @@ export default function StatementReconcilePanel() {
     kind: "list" | "results";
     preview: SheetPreview;
     mapping: SheetMapping;
+    sheet: number;
   } | null>(null);
   const [statements, setStatements] = useState<StatementFileSummary[]>([]);
   const [transfers, setTransfers] = useState<StatementTransferRow[]>([]);
@@ -180,6 +181,11 @@ export default function StatementReconcilePanel() {
     file: File;
     roundId: string;
     description: string;
+    // Held with the file so confirming re-sends the same reading, not a
+    // fresh guess at a sheet somebody already corrected.
+    mapping?: SheetMapping;
+    firstDataRow?: number;
+    sheet?: number;
   } | null>(null);
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [searchInput, setSearchInput] = useState("");
@@ -351,7 +357,8 @@ export default function StatementReconcilePanel() {
     roundId: string,
     confirm: boolean,
     mapping?: SheetMapping,
-    firstDataRow?: number
+    firstDataRow?: number,
+    sheet?: number
   ) => {
     setBusy(true);
     setError(null);
@@ -364,6 +371,7 @@ export default function StatementReconcilePanel() {
         form.append("mapping", JSON.stringify(mapping));
         form.append("firstDataRow", String(firstDataRow ?? 0));
       }
+      form.append("sheet", String(sheet ?? 0));
       const res = await fetch(`/api/statement-rounds/${roundId}/members`, {
         method: "POST",
         body: form,
@@ -372,7 +380,7 @@ export default function StatementReconcilePanel() {
       if (res.status === 409 && body.needsConfirm) {
         // Not an error — the upload is legitimate but destructive, so it
         // waits for a person to look at the numbers.
-        setPendingShrink({ file, roundId, description: body.error });
+        setPendingShrink({ file, roundId, description: body.error, mapping, firstDataRow, sheet });
         return;
       }
       if (!res.ok) {
@@ -447,7 +455,13 @@ export default function StatementReconcilePanel() {
         setError(body.error || "อ่านไฟล์ไม่สำเร็จ");
         return;
       }
-      setPendingSheet({ file, kind, preview: body, mapping: body.mapping });
+      setPendingSheet({
+        file,
+        kind,
+        preview: body,
+        mapping: body.mapping,
+        sheet: body.sheetIndex ?? 0,
+      });
     } finally {
       setBusy(false);
     }
@@ -458,6 +472,7 @@ export default function StatementReconcilePanel() {
     setPendingSheet({ ...pendingSheet, mapping });
     const form = new FormData();
     form.append("file", pendingSheet.file);
+    form.append("sheet", String(pendingSheet.sheet));
     form.append("mapping", JSON.stringify(mapping));
     form.append("firstDataRow", String(pendingSheet.preview.firstDataRow));
     const res = await fetch(`/api/statement-rounds/${selectedId}/sheet-preview`, {
@@ -474,12 +489,45 @@ export default function StatementReconcilePanel() {
     );
   };
 
+  // Another page of the same workbook. No mapping is sent with it: the
+  // columns of "สรุป" are not the columns of "หน่วย", and carrying the last
+  // sheet's choices across would map the new sheet to the old one's shape.
+  const pickSheet = async (sheetIndex: number) => {
+    if (!pendingSheet || !selectedId) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const form = new FormData();
+      form.append("file", pendingSheet.file);
+      form.append("sheet", String(sheetIndex));
+      const res = await fetch(`/api/statement-rounds/${selectedId}/sheet-preview`, {
+        method: "POST",
+        body: form,
+      });
+      const body = await res.json();
+      if (!res.ok) {
+        setError(body.error || "อ่านชีตนี้ไม่ได้");
+        return;
+      }
+      setPendingSheet((prev) =>
+        prev
+          ? { ...prev, preview: body, mapping: body.mapping, sheet: body.sheetIndex ?? sheetIndex }
+          : prev
+      );
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const confirmSheet = async () => {
     if (!pendingSheet || !selectedId) return;
-    const { file, kind, mapping, preview } = pendingSheet;
+    const { file, kind, mapping, preview, sheet } = pendingSheet;
     setPendingSheet(null);
-    if (kind === "list") await sendDeductionList(file, selectedId, mapping, preview.firstDataRow);
-    else await sendMembers(file, selectedId, false, mapping, preview.firstDataRow);
+    if (kind === "list") {
+      await sendDeductionList(file, selectedId, mapping, preview.firstDataRow, sheet);
+    } else {
+      await sendMembers(file, selectedId, false, mapping, preview.firstDataRow, sheet);
+    }
   };
 
   const uploadMembers = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -503,7 +551,8 @@ export default function StatementReconcilePanel() {
     file: File,
     roundId: string,
     mapping: SheetMapping,
-    firstDataRow: number
+    firstDataRow: number,
+    sheet: number
   ) => {
     setBusy(true);
     setError(null);
@@ -511,6 +560,7 @@ export default function StatementReconcilePanel() {
     try {
       const form = new FormData();
       form.append("file", file);
+      form.append("sheet", String(sheet));
       form.append("mapping", JSON.stringify(mapping));
       form.append("firstDataRow", String(firstDataRow));
       const res = await fetch(`/api/statement-rounds/${roundId}/deduction-list`, {
@@ -1938,6 +1988,7 @@ export default function StatementReconcilePanel() {
         preview={pendingSheet?.preview ?? null}
         mapping={pendingSheet?.mapping ?? {}}
         onChange={changeMapping}
+        onPickSheet={pickSheet}
         onConfirm={confirmSheet}
         onCancel={() => setPendingSheet(null)}
         busy={busy}
@@ -1988,7 +2039,16 @@ export default function StatementReconcilePanel() {
         onConfirm={() => {
           const pending = pendingShrink;
           setPendingShrink(null);
-          if (pending) sendMembers(pending.file, pending.roundId, true);
+          if (pending) {
+            sendMembers(
+              pending.file,
+              pending.roundId,
+              true,
+              pending.mapping,
+              pending.firstDataRow,
+              pending.sheet
+            );
+          }
         }}
         onCancel={() => setPendingShrink(null)}
       />
