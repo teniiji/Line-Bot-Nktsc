@@ -117,4 +117,21 @@ describe("describeShrink", () => {
     const grew = summarizeMemberListChange(roster(10, "สพป.นค.1"), roster(4, "สพป.นค.1"));
     expect(describeShrink(grew)).not.toContain("หายไปทั้งหน่วย");
   });
+
+  it("names both ways out, because a unit's file is not a wrong file", () => {
+    // Units send their หักไม่ได้ one at a time, so "this file is the round"
+    // and "do nothing" were never the only two answers.
+    const text = describeShrink(change);
+    expect(text).toContain("เพิ่มเข้าไปในรอบ");
+    expect(text).toContain("แทนที่รายชื่อทั้งรอบ");
+  });
+
+  it("counts who is leaving rather than letting the totals imply it", () => {
+    // One unit's 214 replacing another's 101: the round grows while all of
+    // it disappears, and "เหลือ 214 คน" read as reassurance.
+    const grows = summarizeMemberListChange(roster(101, "หน่วย ก"), roster(214, "หน่วย ข", 5000));
+    const text = describeShrink(grows);
+    expect(text).toContain("ไม่มีคน 101 คนจาก 101 คน");
+    expect(text).toContain("ในไฟล์มี 214 คน");
+  });
 });

@@ -13,6 +13,12 @@ interface ConfirmDialogProps {
   // Red is for the ones that destroy something. A batch of the same save
   // staff make by hand all day should not be dressed as a demolition.
   tone?: "danger" | "neutral";
+  // A third way out, for a question whose honest answer is usually neither
+  // "yes" nor "no" — "เพิ่มเข้าไป" beside "แทนที่ทั้งรอบ" and "ยกเลิก". It
+  // leads, because a dialog offering only a demolition and a retreat gets
+  // the demolition pressed by people who wanted neither.
+  alternateLabel?: string;
+  onAlternate?: () => void;
   onConfirm: () => void;
   onCancel: () => void;
 }
@@ -25,6 +31,8 @@ export default function ConfirmDialog({
   cancelLabel = "ยกเลิก",
   children,
   tone = "danger",
+  alternateLabel,
+  onAlternate,
   onConfirm,
   onCancel,
 }: ConfirmDialogProps) {
@@ -52,6 +60,15 @@ export default function ConfirmDialog({
           >
             {cancelLabel}
           </button>
+          {alternateLabel && onAlternate && (
+            <button
+              type="button"
+              onClick={onAlternate}
+              className="rounded px-4 py-2 text-sm font-medium text-white bg-slate-900"
+            >
+              {alternateLabel}
+            </button>
+          )}
           <button
             type="button"
             onClick={onConfirm}

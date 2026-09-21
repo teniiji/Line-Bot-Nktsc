@@ -200,6 +200,39 @@ export async function POST(
     );
   }
 
+  // Adding one more unit's หักไม่ได้ to a round that was not built from a
+  // รายการหัก. The old contract is that such a file *is* the round, which is
+  // right when it is the whole cooperative's list and wrong when the units
+  // are sending theirs in one at a time — the ordinary way this month's work
+  // arrives. Asked for explicitly, because the two are indistinguishable
+  // from the file alone.
+  if (form.get("mode") === "append") {
+    const plan = planDeductionUpload(roster, allRows, {
+      unitsAreAuthoritative:
+        columns !== null &&
+        columns.mapping.hCode !== undefined &&
+        columns.mapping.unitCode !== undefined,
+    });
+    const filled = await applyRoundSheet(round.id, plan);
+    const progress = await refreshRoundProgress(round.id);
+
+    return NextResponse.json({
+      applied: true,
+      appended: true,
+      imported: progress.members,
+      added: plan.create.length,
+      updated: plan.update.length,
+      keptResult: plan.keptResult.length,
+      keptUnit: plan.keptUnit,
+      untouched: plan.untouched,
+      skippedRows: mapped?.skipped ?? 0,
+      filledFromDirectory: filled.fromDirectory,
+      filledFromPrevious: filled.fromPrevious,
+      ambiguousAccounts: filled.ambiguous,
+      ...progress,
+    });
+  }
+
   // Asked before anything is deleted, and only when the replacement would
   // take away most of the round. The check reads the round's current list
   // rather than trusting a count sent from the browser, so a stale page

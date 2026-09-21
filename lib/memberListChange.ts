@@ -77,9 +77,12 @@ export function needsShrinkConfirmation(change: MemberListChange): boolean {
 // Written here rather than in the route because a Next.js route file may only
 // export request handlers, and the same sentence has to be testable.
 export function describeShrink(change: MemberListChange): string {
+  // The count can go up while most of the round goes away — one unit's file
+  // of 214 replacing another unit's 101 — so the sentence says who is leaving
+  // rather than letting the totals imply it.
   const parts = [
-    `ไฟล์นี้จะแทนที่รายชื่อทั้งรอบ: เดิม ${change.existingCount} คน → เหลือ ${change.incomingCount} คน ` +
-      `(หายไป ${change.removedCount} คน)`,
+    `ไฟล์นี้ไม่มีคน ${change.removedCount} คนจาก ${change.existingCount} คนที่อยู่ในรอบตอนนี้ ` +
+      `(ในไฟล์มี ${change.incomingCount} คน)`,
   ];
 
   if (change.removedUnits.length > 0) {
@@ -94,8 +97,10 @@ export function describeShrink(change: MemberListChange): string {
   }
 
   parts.push(
-    "ถ้านี่คือไฟล์รวมที่ประมวลผลใหม่ ให้ยืนยันได้เลย — " +
-      "แต่ถ้าเผลอเลือกไฟล์ของหน่วยงานเดียว รายชื่อที่เหลือจะหายทั้งหมด (เลขบัญชีที่ผูกไว้เองก็หายด้วย)"
+    "• ไฟล์ของหน่วยงานเดียว (เก็บไม่ได้เพิ่มอีกหน่วย) → กด \"เพิ่มเข้าไปในรอบ\" " +
+      "คนเดิมอยู่ครบ ผลที่บันทึกไว้แล้วไม่หาย\n" +
+      "• ไฟล์รวมทั้งสหกรณ์ที่ประมวลผลใหม่ → กด \"แทนที่รายชื่อทั้งรอบ\" — " +
+      `แต่ถ้ากดผิด รายชื่อ ${change.removedCount} คนนั้นหายทั้งหมด เลขบัญชีที่ผูกไว้เองก็หายด้วย`
   );
 
   return parts.join("\n");
