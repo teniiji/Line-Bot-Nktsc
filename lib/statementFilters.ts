@@ -10,10 +10,15 @@ export interface StatementFilter {
   // The two levels a member sits at, filtered separately because they are
   // separate: หน่วยคุม is what the cooperative's own สรุปหน่วยคุม counts by
   // and how the chasing up is divided (64 of them), and the หน่วยคุมย่อย
-  // beneath it is the school or office itself (656). "" = all.
-  hCode: string;
-  unitCode: string;
-  unitName: string;
+  // beneath it is the school or office itself (656).
+  //
+  // Both take several at once — "these three units are mine this week" is
+  // one question, and asked one at a time it takes three passes and three
+  // exports, with the totals under the table never adding up to the three
+  // of them. An empty list is no filter at all.
+  hCodes: string[];
+  // Encoded หน่วยคุมย่อย — see encodeSubUnit.
+  subUnits: string[];
   status: string; // "all" | "paid" | "overpaid" | "unpaid" | "no_account"
 }
 
@@ -135,9 +140,8 @@ export function filterStatementMembers(
   return rows.filter(
     (m) =>
       matchesStatus(m, filter.status) &&
-      (!filter.hCode || m.hCode === filter.hCode) &&
-      (!filter.unitCode || m.unitCode === filter.unitCode) &&
-      (!filter.unitName || m.unitName === filter.unitName) &&
+      (filter.hCodes.length === 0 || (m.hCode !== null && filter.hCodes.includes(m.hCode))) &&
+      (filter.subUnits.length === 0 || filter.subUnits.includes(encodeSubUnit(m))) &&
       matchesSearch(m, filter.search)
   );
 }
@@ -221,10 +225,10 @@ export interface SubUnit {
 // Narrowed to one หน่วยคุม when one is chosen: 656 สังกัด in a dropdown is
 // not a list anybody reads, and a สังกัด from outside the chosen หน่วยคุม
 // would only ever produce an empty table.
-export function subUnitsOf(rows: StatementMemberRow[], hCode = ""): SubUnit[] {
+export function subUnitsOf(rows: StatementMemberRow[], hCodes: string[] = []): SubUnit[] {
   const found = new Map<string, SubUnit>();
   for (const m of rows) {
-    if (hCode && m.hCode !== hCode) continue;
+    if (hCodes.length > 0 && (m.hCode === null || !hCodes.includes(m.hCode))) continue;
     if (!m.unitCode && !m.unitName) continue;
     const value = encodeSubUnit(m);
     if (found.has(value)) continue;

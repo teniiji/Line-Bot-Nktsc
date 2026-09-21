@@ -61,7 +61,7 @@ const rows: StatementMemberRow[] = [
 ];
 
 describe("filterStatementMembers", () => {
-  const base = { search: "", unitName: "", unitCode: "", hCode: "", status: "all" };
+  const base = { search: "", hCodes: [] as string[], subUnits: [] as string[], status: "all" };
 
   it("returns everything with no filters applied", () => {
     expect(filterStatementMembers(rows, base)).toHaveLength(4);
@@ -79,7 +79,10 @@ describe("filterStatementMembers", () => {
   });
 
   it("filters by unit", () => {
-    const found = filterStatementMembers(rows, { ...base, unitName: "โรงเรียนบ้านหนองบัว" });
+    const found = filterStatementMembers(rows, {
+      ...base,
+      subUnits: ["u:โรงเรียนบ้านหนองบัว"],
+    });
     expect(found.map((m) => m.memberNumber)).toEqual(["002", "003"]);
   });
 
@@ -97,16 +100,35 @@ describe("filterStatementMembers", () => {
 
   it("filters by หน่วยคุม (H-code)", () => {
     expect(
-      filterStatementMembers(rows, { ...base, hCode: "1" }).map((m) => m.memberNumber)
+      filterStatementMembers(rows, { ...base, hCodes: ["1"] }).map((m) => m.memberNumber)
     ).toEqual(["001", "002", "003"]);
     expect(
-      filterStatementMembers(rows, { ...base, hCode: "10" }).map((m) => m.memberNumber)
+      filterStatementMembers(rows, { ...base, hCodes: ["10"] }).map((m) => m.memberNumber)
     ).toEqual(["004"]);
+  });
+
+  it("takes several หน่วยคุม at once", () => {
+    // "These are mine this week" is one question, and the totals under the
+    // table have to answer it for the three of them together.
+    const found = filterStatementMembers(rows, { ...base, hCodes: ["1", "10"] });
+    expect(found).toHaveLength(4);
+  });
+
+  it("takes several หน่วยคุมย่อย at once", () => {
+    const found = filterStatementMembers(rows, {
+      ...base,
+      subUnits: ["u:โรงเรียนบ้านหนองบัว", "u:โรงเรียนบ้านโนนสวรรค์"],
+    });
+    expect(found).toHaveLength(4);
+  });
+
+  it("is no filter at all when nothing is ticked", () => {
+    expect(filterStatementMembers(rows, { ...base, hCodes: [], subUnits: [] })).toHaveLength(4);
   });
 
   it("does not confuse หน่วยคุม 1 with หน่วยคุม 10", () => {
     // A prefix match here would quietly fold หน่วยคุม 10 into 1.
-    const found = filterStatementMembers(rows, { ...base, hCode: "1" });
+    const found = filterStatementMembers(rows, { ...base, hCodes: ["1"] });
     expect(found.some((m) => m.hCode === "10")).toBe(false);
   });
 
@@ -114,8 +136,8 @@ describe("filterStatementMembers", () => {
     const found = filterStatementMembers(rows, {
       ...base,
       search: "สมหญิง",
-      unitName: "โรงเรียนบ้านหนองบัว",
-      hCode: "1",
+      subUnits: ["u:โรงเรียนบ้านหนองบัว"],
+      hCodes: ["1"],
       status: "unpaid",
     });
     expect(found.map((m) => m.memberNumber)).toEqual(["002"]);
@@ -124,8 +146,8 @@ describe("filterStatementMembers", () => {
   it("returns nobody when หน่วยคุม and สังกัด disagree", () => {
     const found = filterStatementMembers(rows, {
       ...base,
-      hCode: "10",
-      unitName: "โรงเรียนบ้านหนองบัว",
+      hCodes: ["10"],
+      subUnits: ["u:โรงเรียนบ้านหนองบัว"],
     });
     expect(found).toHaveLength(0);
   });
@@ -249,9 +271,8 @@ describe("summarizeStatementMembers", () => {
   it("totals only the rows it is given", () => {
     const unpaidOnly = filterStatementMembers(rows, {
       search: "",
-      unitName: "",
-      unitCode: "",
-      hCode: "",
+      hCodes: [],
+      subUnits: [],
       status: "unpaid",
     });
     expect(summarizeStatementMembers(unpaidOnly)).toEqual({
@@ -280,9 +301,8 @@ describe("the ไม่มีเลขบัญชี chip", () => {
     expect(counted).toEqual(
       filterStatementMembers(seeded, {
         search: "",
-        unitName: "",
-        unitCode: "",
-        hCode: "",
+        hCodes: [],
+        subUnits: [],
         status: "no_account",
       })
     );
@@ -318,13 +338,15 @@ describe("subUnitsOf", () => {
     });
   });
 
-  it("narrows to the chosen หน่วยคุม", () => {
+  it("narrows to the chosen หน่วยคุม, however many are ticked", () => {
     const all = [
       school("13003", "ร.ร.อนุบาลอรุณรังษี", "1"),
       school("23003", "ร.ร.บ้านน้ำสวย", "2"),
+      school("33003", "ร.ร.อนุบาลจุมพล", "3"),
     ];
-    expect(subUnitsOf(all, "2").map((u) => u.code)).toEqual(["23003"]);
-    expect(subUnitsOf(all).map((u) => u.code)).toEqual(["13003", "23003"]);
+    expect(subUnitsOf(all, ["2"]).map((u) => u.code)).toEqual(["23003"]);
+    expect(subUnitsOf(all, ["1", "3"]).map((u) => u.code)).toEqual(["13003", "33003"]);
+    expect(subUnitsOf(all).map((u) => u.code)).toEqual(["13003", "23003", "33003"]);
   });
 
   it("keeps two สังกัด that share a name apart", () => {
@@ -381,9 +403,8 @@ describe("members the cooperative holds several accounts for", () => {
   it("keeps a member with accounts on file out of ⛔ ไม่มีเลขบัญชี", () => {
     const shown = filterStatementMembers([ambiguous, unknown], {
       search: "",
-      unitName: "",
-      unitCode: "",
-      hCode: "",
+      hCodes: [],
+      subUnits: [],
       status: "no_account",
     });
     expect(shown.map((m) => m.memberNumber)).toEqual(["31679"]);
@@ -392,9 +413,8 @@ describe("members the cooperative holds several accounts for", () => {
   it("gathers them under their own bucket instead", () => {
     const shown = filterStatementMembers([ambiguous, unknown], {
       search: "",
-      unitName: "",
-      unitCode: "",
-      hCode: "",
+      hCodes: [],
+      subUnits: [],
       status: "many_accounts",
     });
     expect(shown.map((m) => m.memberNumber)).toEqual(["27019"]);
@@ -405,9 +425,8 @@ describe("members the cooperative holds several accounts for", () => {
     const asked = (status: string) =>
       filterStatementMembers([filled], {
         search: "",
-        unitName: "",
-        unitCode: "",
-        hCode: "",
+        hCodes: [],
+        subUnits: [],
         status,
       });
     expect(asked("no_account")).toHaveLength(0);

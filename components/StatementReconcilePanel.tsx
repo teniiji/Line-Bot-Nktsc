@@ -19,6 +19,7 @@ import {
 import ConfirmDialog from "@/components/ConfirmDialog";
 import SheetMappingDialog, { type SheetPreview } from "@/components/SheetMappingDialog";
 import type { SheetMapping } from "@/lib/sheetColumns";
+import MultiSelect from "@/components/MultiSelect";
 import PanelHelp from "@/components/PanelHelp";
 import { describeDeductionPeriod } from "@/lib/deductionPeriod";
 import { downloadStatementMembersCsv } from "@/lib/csv";
@@ -200,8 +201,8 @@ export default function StatementReconcilePanel() {
   const [search, setSearch] = useState("");
   // The หน่วยคุม, and the หน่วยคุมย่อย inside it as one encoded value —
   // see encodeSubUnit, which keys on the รหัสสังกัด where the round has one.
-  const [hCodeFilter, setHCodeFilter] = useState("");
-  const [subUnitFilter, setSubUnitFilter] = useState("");
+  const [hCodeFilter, setHCodeFilter] = useState<string[]>([]);
+  const [subUnitFilter, setSubUnitFilter] = useState<string[]>([]);
   const [assigningAccount, setAssigningAccount] = useState<string | null>(null);
   const [assignMemberNumber, setAssignMemberNumber] = useState("");
   // What happened to the last attempt on this account, shown at its own row.
@@ -309,8 +310,8 @@ export default function StatementReconcilePanel() {
     setStatusFilter("all");
     setSearchInput("");
     setSearch("");
-    setSubUnitFilter("");
-    setHCodeFilter("");
+    setSubUnitFilter([]);
+    setHCodeFilter([]);
     setClicked({});
   }, [selectedId, fetchRound]);
 
@@ -783,15 +784,18 @@ export default function StatementReconcilePanel() {
   const shown = sortStatementMembers(
     filterStatementMembers(members, {
       search,
-      hCode: hCodeFilter,
-      ...parseSubUnit(subUnitFilter),
+      hCodes: hCodeFilter,
+      subUnits: subUnitFilter,
       status: statusFilter,
     }),
     sort
   );
   const shownTotals = summarizeStatementMembers(shown);
   const filtered =
-    statusFilter !== "all" || subUnitFilter !== "" || hCodeFilter !== "" || search !== "";
+    statusFilter !== "all" ||
+    subUnitFilter.length > 0 ||
+    hCodeFilter.length > 0 ||
+    search !== "";
   // Two different things that both used to read as "ไม่มีเลขบัญชี": nobody
   // has ever recorded an account for this member, and the cooperative holds
   // several and the fill would not pick one. Only the first is unmatchable.
@@ -862,18 +866,20 @@ export default function StatementReconcilePanel() {
 
   const clearFilters = () => {
     setStatusFilter("all");
-    setSubUnitFilter("");
-    setHCodeFilter("");
+    setSubUnitFilter([]);
+    setHCodeFilter([]);
     setSearchInput("");
     setSearch("");
   };
 
-  // Choosing a หน่วยคุม the selected หน่วยคุมย่อย does not belong to would
-  // leave a stale pairing behind and an empty table with no obvious cause.
-  const changeHCode = (next: string) => {
+  // Ticking a หน่วยคุม that a chosen หน่วยคุมย่อย does not belong to would
+  // leave a stale pairing behind and an empty table with no obvious cause,
+  // so the sub-units drop to the ones still on offer.
+  const changeHCode = (next: string[]) => {
     setHCodeFilter(next);
-    if (subUnitFilter && next && !subUnitsOf(members, next).some((u) => u.value === subUnitFilter)) {
-      setSubUnitFilter("");
+    if (subUnitFilter.length > 0 && next.length > 0) {
+      const offered = new Set(subUnitsOf(members, next).map((u) => u.value));
+      setSubUnitFilter(subUnitFilter.filter((value) => offered.has(value)));
     }
   };
 
@@ -1216,36 +1222,29 @@ export default function StatementReconcilePanel() {
                     chasing up is divided by (คอลัมน์ G ของไฟล์รวม), and the
                     school or office inside it (D และ E). */}
                 {hCodes.length > 0 && (
-                  <select
-                    value={hCodeFilter}
-                    onChange={(e) => changeHCode(e.target.value)}
-                    className="border border-slate-300 rounded-md px-2 py-1.5 bg-white"
-                    title="หน่วยคุม — หน่วยที่สรุปหน่วยคุมของสหกรณ์นับตาม (คอลัมน์ G ของไฟล์รวม)"
-                  >
-                    <option value="">ทุกหน่วยคุม ({hCodes.length})</option>
-                    {hCodes.map((h) => (
-                      <option key={h} value={h}>
-                        หน่วยคุม {h}
-                      </option>
-                    ))}
-                  </select>
+                  <MultiSelect
+                    options={hCodes.map((h) => ({ value: h, label: `หน่วยคุม ${h}` }))}
+                    selected={hCodeFilter}
+                    onChange={changeHCode}
+                    allLabel="ทุกหน่วยคุม"
+                    searchPlaceholder="ค้นหาหน่วยคุม"
+                    title="หน่วยคุม — หน่วยที่สรุปหน่วยคุมของสหกรณ์นับตาม (คอลัมน์ G ของไฟล์รวม) · ติ๊กได้หลายหน่วย"
+                    className="max-w-[14rem]"
+                  />
                 )}
-                <select
-                  value={subUnitFilter}
-                  onChange={(e) => setSubUnitFilter(e.target.value)}
-                  className="border border-slate-300 rounded-md px-2 py-1.5 bg-white max-w-[18rem]"
-                  title="หน่วยคุมย่อย — รหัสและชื่อสังกัด (คอลัมน์ D และ E ของไฟล์รวม)"
-                >
-                  <option value="">
-                    ทุกหน่วยคุมย่อย ({subUnits.length})
-                    {hCodeFilter && ` ในหน่วยคุม ${hCodeFilter}`}
-                  </option>
-                  {subUnits.map((unit) => (
-                    <option key={unit.value} value={unit.value}>
-                      {unit.label}
-                    </option>
-                  ))}
-                </select>
+                <MultiSelect
+                  options={subUnits.map((u) => ({ value: u.value, label: u.label }))}
+                  selected={subUnitFilter}
+                  onChange={setSubUnitFilter}
+                  allLabel={
+                    hCodeFilter.length > 0
+                      ? `ทุกหน่วยคุมย่อยใน ${hCodeFilter.length} หน่วยคุม`
+                      : "ทุกหน่วยคุมย่อย"
+                  }
+                  searchPlaceholder="ค้นหารหัสหรือชื่อสังกัด"
+                  title="หน่วยคุมย่อย — รหัสและชื่อสังกัด (คอลัมน์ D และ E ของไฟล์รวม) · ติ๊กได้หลายสังกัด"
+                  className="max-w-[18rem]"
+                />
                 {/* Several orderings, applied in the order they were chosen,
                     because "หน่วยคุม แล้วยอดค้างมากก่อน" is one question and
                     a single ordering could not ask it. */}
