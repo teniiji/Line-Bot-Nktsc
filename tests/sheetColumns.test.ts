@@ -143,6 +143,62 @@ describe("detectSheetColumns, where a sheet carries another body's money", () =>
   });
 });
 
+describe("detectSheetColumns, หน่วยคุม", () => {
+  // The ไฟล์รวม's own shape: no header, the สังกัด line in G repeating over
+  // hundreds of members, and the หน่วยคุม code beside it. 64 codes over
+  // 7,000 rows in the real file.
+  const masterRows = (): unknown[][] => {
+    const units = [
+      ["ตจว.1 หักผ่านธนาคารกรุงไทย", 75],
+      ["สมาชิกปกติย้ายไปต่างจังหวัด เขต 1 อ.เมือง", 75],
+      ["วิทยาลัยเทคนิคหนองคาย", 100],
+      ["บำนาญ วิทยาลัยเทคนิคหนองคาย", 100],
+    ];
+    return Array.from({ length: 40 }, (_, i) => {
+      const [unit, code] = units[i % units.length];
+      // Member numbers have gaps — a column that counts up by one is the
+      // ลำดับ, which the detector rules out on purpose.
+      return [20000 + i * 17, `นายสมาชิก ที่ ${i}`, 1000 + i * 13, unit, code];
+    });
+  };
+
+  it("takes the column that repeats most as the หน่วยคุม code", () => {
+    const reading = detectSheetColumns(masterRows());
+    expect(reading.fromHeader).toBe(false);
+    expect(reading.mapping).toMatchObject({ memberNumber: 0, name: 1, unitName: 3, hCode: 4 });
+  });
+
+  it("claims no หน่วยคุม code on a sheet too short for repetition to mean anything", () => {
+    // A unit's own file of six members has columns of identical amounts that
+    // look exactly like a code that repeats.
+    const short = masterRows().slice(0, 6).map((row) => [...row.slice(0, 3), 420, row[3]]);
+    expect(detectSheetColumns(short).mapping.hCode).toBeUndefined();
+  });
+
+  it("reads a 'หน่วยคุม' heading over names as the name, not the code", () => {
+    // The same heading sits over a code in one เขต's file and over the name
+    // in another's, because to them it is one column either way.
+    const rows: unknown[][] = [
+      ["เลขที่", "ชื่อ - สกุล", "หน่วยคุม", "หักไม่ได้"],
+      [28590, "เสกสิน ศรีปากดี", "ตจว.1 หักผ่านธนาคารกรุงไทย", 7250],
+      [30231, "ชนิสรา อุทโท", "ตจว.1 หักผ่านธนาคารกรุงไทย", 0],
+      [29222, "ธีรภัทร ภูนาเพชร", "ตจว.2 หักผ่านธนาคารกรุงไทย", 6130],
+    ];
+    const reading = detectSheetColumns(rows);
+    expect(reading.mapping.unitName).toBe(2);
+    expect(reading.mapping.hCode).toBeUndefined();
+  });
+
+  it("leaves a 'หน่วยคุม' heading over numbers as the code", () => {
+    const rows: unknown[][] = [
+      ["เลขที่", "ชื่อ - สกุล", "หน่วยคุม", "หักไม่ได้"],
+      [28590, "เสกสิน ศรีปากดี", 75, 7250],
+      [30231, "ชนิสรา อุทโท", 75, 0],
+    ];
+    expect(detectSheetColumns(rows).mapping).toMatchObject({ hCode: 2 });
+  });
+});
+
 describe("readMappedSheet", () => {
   it("reads the unit file the way its header says", () => {
     const reading = detectSheetColumns(unitFile);

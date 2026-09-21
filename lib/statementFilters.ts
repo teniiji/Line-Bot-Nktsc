@@ -174,16 +174,47 @@ export function summarizeStatementMembers(rows: StatementMemberRow[]) {
   };
 }
 
-export function unitNamesOf(rows: StatementMemberRow[]): string[] {
-  const names = new Set<string>();
-  for (const m of rows) if (m.unitName) names.add(m.unitName);
-  return [...names].sort((a, b) => a.localeCompare(b, "th"));
+// หน่วยคุม and สังกัด are one thing written at two grains, not two things:
+// the H-code is what the cooperative's own สรุปหน่วยคุม counts by (75), and
+// the name is the line the file writes under it ("ตจว.1 หักผ่านธนาคารกรุงไทย",
+// column G of the ไฟล์รวม). Offered as two dropdowns they read as a
+// hierarchy to navigate, and a code and a name that belong to different
+// members could be chosen together and match nobody.
+//
+// So they are offered as one list: each หน่วยคุม, then the สังกัด lines
+// inside it. Picking is one act, and every choice on it has rows behind it.
+export interface UnitChoice {
+  hCode: string | null;
+  units: string[];
 }
 
-// Same numeric ordering the หน่วยคุม sort uses, so the dropdown and the sorted
-// table agree on what comes after what.
-export function hCodesOf(rows: StatementMemberRow[]): string[] {
-  const codes = new Set<string>();
-  for (const m of rows) if (m.hCode) codes.add(m.hCode);
-  return [...codes].sort(compareHCode);
+export function unitChoicesOf(rows: StatementMemberRow[]): UnitChoice[] {
+  const groups = new Map<string | null, Set<string>>();
+  for (const m of rows) {
+    const key = m.hCode || null;
+    if (!groups.has(key)) groups.set(key, new Set());
+    if (m.unitName) groups.get(key)!.add(m.unitName);
+  }
+  return [...groups.entries()]
+    .sort(([a], [b]) => compareHCode(a, b))
+    .map(([hCode, units]) => ({
+      hCode,
+      units: [...units].sort((a, b) => a.localeCompare(b, "th")),
+    }));
 }
+
+// The one dropdown's value. A member with no หน่วยคุม still has a สังกัด to
+// be picked by, so a name is selectable on its own rather than only beneath
+// a code.
+export function encodeUnitChoice(filter: { hCode: string; unitName: string }): string {
+  if (filter.unitName) return `u:${filter.unitName}`;
+  if (filter.hCode) return `h:${filter.hCode}`;
+  return "";
+}
+
+export function parseUnitChoice(value: string): { hCode: string; unitName: string } {
+  if (value.startsWith("h:")) return { hCode: value.slice(2), unitName: "" };
+  if (value.startsWith("u:")) return { hCode: "", unitName: value.slice(2) };
+  return { hCode: "", unitName: "" };
+}
+

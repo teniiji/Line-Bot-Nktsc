@@ -38,11 +38,12 @@ import {
 } from "@/lib/statementSections";
 import {
   StatementSort,
+  encodeUnitChoice,
   filterStatementMembers,
-  hCodesOf,
+  parseUnitChoice,
   sortStatementMembers,
   summarizeStatementMembers,
-  unitNamesOf,
+  unitChoicesOf,
 } from "@/lib/statementFilters";
 
 const SEARCH_DEBOUNCE_MS = 300;
@@ -50,8 +51,9 @@ const SEARCH_DEBOUNCE_MS = 300;
 const SORT_OPTIONS: { value: StatementSort; label: string }[] = [
   { value: "default", label: "ยังค้างขึ้นก่อน (ค่าเริ่มต้น)" },
   { value: "outstanding", label: "ยอดค้างมาก → น้อย" },
+  // One entry, because หน่วยคุม and สังกัด are one thing: this sorts by the
+  // code and then by the สังกัด line inside it.
   { value: "hCode", label: "หน่วยคุม" },
-  { value: "unitName", label: "สังกัด" },
   { value: "paidAt", label: "วันที่โอน (ล่าสุดก่อน)" },
   { value: "name", label: "ชื่อ ก-ฮ" },
   { value: "memberNumber", label: "เลขสมาชิก" },
@@ -753,11 +755,11 @@ export default function StatementReconcilePanel() {
   };
 
   const selected = rounds.find((r) => r.id === selectedId) ?? null;
-  const hCodes = hCodesOf(members);
-  // The สังกัด list narrows to whatever หน่วยคุม is selected, so the two
-  // dropdowns can't be combined into a pairing that matches nobody.
-  const units = unitNamesOf(
-    hCodeFilter ? members.filter((m) => m.hCode === hCodeFilter) : members
+  // หน่วยคุม and สังกัด in one list — see unitChoicesOf.
+  const unitChoices = unitChoicesOf(members);
+  const unitChoiceCount = unitChoices.reduce(
+    (count, group) => count + (group.hCode ? 1 : 0) + group.units.length,
+    0
   );
   const shown = sortStatementMembers(
     filterStatementMembers(members, {
@@ -844,13 +846,10 @@ export default function StatementReconcilePanel() {
     setSearch("");
   };
 
-  // Picking a หน่วยคุม that the current สังกัด doesn't belong to would leave a
-  // stale unit selected and an empty table with no obvious cause.
-  const changeHCode = (next: string) => {
-    setHCodeFilter(next);
-    if (unitFilter && next && !members.some((m) => m.hCode === next && m.unitName === unitFilter)) {
-      setUnitFilter("");
-    }
+  const changeUnitChoice = (value: string) => {
+    const choice = parseUnitChoice(value);
+    setHCodeFilter(choice.hCode);
+    setUnitFilter(choice.unitName);
   };
 
   return (
@@ -1183,31 +1182,31 @@ export default function StatementReconcilePanel() {
                   placeholder="ค้นหาชื่อ, เลขสมาชิก, เลขบัญชี"
                   className="border border-slate-300 rounded-md px-3 py-1.5 w-64 focus:outline-none focus:ring-2 focus:ring-slate-900/10 focus:border-slate-400"
                 />
-                {hCodes.length > 0 && (
-                  <select
-                    value={hCodeFilter}
-                    onChange={(e) => changeHCode(e.target.value)}
-                    className="border border-slate-300 rounded-md px-2 py-1.5 bg-white"
-                    title="รหัสหน่วยคุม (H-code) จากคอลัมน์ J ของไฟล์รายชื่อหักไม่ได้"
-                  >
-                    <option value="">ทุกหน่วยคุม ({hCodes.length})</option>
-                    {hCodes.map((h) => (
-                      <option key={h} value={h}>
-                        หน่วยคุม {h}
-                      </option>
-                    ))}
-                  </select>
-                )}
+                {/* One list: each หน่วยคุม, then the สังกัด lines inside it
+                    (คอลัมน์ G ของไฟล์รวม). */}
                 <select
-                  value={unitFilter}
-                  onChange={(e) => setUnitFilter(e.target.value)}
-                  className="border border-slate-300 rounded-md px-2 py-1.5 bg-white max-w-[16rem]"
+                  value={encodeUnitChoice({ hCode: hCodeFilter, unitName: unitFilter })}
+                  onChange={(e) => changeUnitChoice(e.target.value)}
+                  className="border border-slate-300 rounded-md px-2 py-1.5 bg-white max-w-[18rem]"
+                  title="หน่วยคุม — เลือกทั้งหน่วยคุม หรือเลือกสังกัดใดสังกัดหนึ่งในหน่วยคุมนั้น"
                 >
-                  <option value="">ทุกสังกัด ({units.length})</option>
-                  {units.map((u) => (
-                    <option key={u} value={u}>
-                      {u}
-                    </option>
+                  <option value="">ทุกหน่วยคุม ({unitChoiceCount})</option>
+                  {unitChoices.map((group) => (
+                    <optgroup
+                      key={group.hCode ?? "none"}
+                      label={group.hCode ? `หน่วยคุม ${group.hCode}` : "ไม่ระบุหน่วยคุม"}
+                    >
+                      {group.hCode && (
+                        <option value={`h:${group.hCode}`}>
+                          ทั้งหน่วยคุม {group.hCode} ({group.units.length} สังกัด)
+                        </option>
+                      )}
+                      {group.units.map((unit) => (
+                        <option key={unit} value={`u:${unit}`}>
+                          {unit}
+                        </option>
+                      ))}
+                    </optgroup>
                   ))}
                 </select>
                 <label className="flex items-center gap-2 text-slate-500">
@@ -1369,8 +1368,7 @@ export default function StatementReconcilePanel() {
                       <tr>
                         <th className="px-4 py-2.5 font-semibold">เลขสมาชิก</th>
                         <th className="px-4 py-2.5 font-semibold min-w-[13rem]">ชื่อ-สกุล</th>
-                        <th className="px-4 py-2.5 font-semibold">หน่วยคุม</th>
-                        <th className="px-4 py-2.5 font-semibold min-w-[12rem]">สังกัด</th>
+                        <th className="px-4 py-2.5 font-semibold min-w-[12rem]">หน่วยคุม</th>
                         <th className="px-4 py-2.5 font-semibold">เลขบัญชี</th>
                         <th className="px-4 py-2.5 font-semibold text-right">ยอดหักไม่ได้</th>
                         <th className="px-4 py-2.5 font-semibold text-right">โอนมาแล้ว</th>
@@ -1392,10 +1390,15 @@ export default function StatementReconcilePanel() {
                                 <span className="text-xs text-slate-400"> · {m.note}</span>
                               )}
                             </td>
-                            <td className="px-4 py-2.5 num whitespace-nowrap text-slate-500">
-                              {m.hCode ?? "—"}
+                            {/* The code and the name are one column because
+                                they are one thing — the code alone says
+                                nothing to anybody reading the table. */}
+                            <td className="px-4 py-2.5">
+                              {m.hCode && (
+                                <span className="num text-slate-400 mr-1.5">{m.hCode}</span>
+                              )}
+                              {m.unitName ?? (m.hCode ? "" : "—")}
                             </td>
-                            <td className="px-4 py-2.5">{m.unitName ?? "—"}</td>
                             <td className="px-4 py-2.5 font-mono text-xs">
                               {m.accountNumber ??
                                 // Blank because the cooperative holds more
@@ -1482,7 +1485,7 @@ export default function StatementReconcilePanel() {
 
                           {expandedMember === m.memberNumber && (
                             <tr className="bg-slate-50">
-                              <td colSpan={10} className="px-4 py-2">
+                              <td colSpan={9} className="px-4 py-2">
                                 <p className="text-xs text-slate-500 mb-1">
                                   รายการโอนของ {m.name} — ถ้าก้อนไหน<strong>ไม่ใช่</strong>เงินจ่ายค่าหักไม่ได้
                                   (ซื้อหุ้น / ชำระหนี้ / ฝากเงิน ฯลฯ) เลือกเหตุผลไว้ ระบบจะไม่นับเป็นการชำระ
