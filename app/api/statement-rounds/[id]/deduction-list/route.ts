@@ -43,9 +43,12 @@ export async function POST(
     return NextResponse.json({ error: checked.error }, { status: 400 });
   }
 
+  const sheetRaw = Number(form.get("sheet"));
+  const sheetIndex = Number.isInteger(sheetRaw) && sheetRaw >= 0 ? sheetRaw : 0;
+
   let rows: unknown[][];
   try {
-    rows = await readFirstSheetRows(checked.file);
+    rows = await readFirstSheetRows(checked.file, sheetIndex);
   } catch (err) {
     return NextResponse.json({ error: describeReadError(err) }, { status: 400 });
   }

@@ -4,6 +4,12 @@ import { formatAmount } from "@/lib/format";
 import { SHEET_FIELDS, type SheetField, type SheetMapping } from "@/lib/sheetColumns";
 
 export interface SheetPreview {
+  // Every page in the workbook, and which one this reading came from. A
+  // unit's file carries "หน่วย" beside "สรุป" and sometimes a third with the
+  // results on it — reading page one and finding no amounts looked like a
+  // broken file rather than the wrong page of a good one.
+  sheets: { index: number; name: string; rows: number }[];
+  sheetIndex: number;
   headerRow: number | null;
   firstDataRow: number;
   mapping: SheetMapping;
@@ -53,6 +59,7 @@ export default function SheetMappingDialog({
   preview,
   mapping,
   onChange,
+  onPickSheet,
   onConfirm,
   onCancel,
   busy,
@@ -63,6 +70,7 @@ export default function SheetMappingDialog({
   preview: SheetPreview | null;
   mapping: SheetMapping;
   onChange: (mapping: SheetMapping) => void;
+  onPickSheet: (sheetIndex: number) => void;
   onConfirm: () => void;
   onCancel: () => void;
   busy: boolean;
@@ -91,6 +99,24 @@ export default function SheetMappingDialog({
       >
         <div>
           <h3 className="font-semibold text-lg">ตรวจการอ่านไฟล์ก่อนนำเข้า</h3>
+          {/* Offered whenever the workbook has more than one page, because
+              which page holds the results is not something the file says. */}
+          {preview.sheets.length > 1 && (
+            <label className="text-sm flex items-center gap-2 mt-2">
+              <span className="text-slate-600">ชีตในไฟล์</span>
+              <select
+                value={preview.sheetIndex}
+                onChange={(e) => onPickSheet(Number(e.target.value))}
+                className="border border-slate-300 rounded px-2 py-1 text-sm bg-white"
+              >
+                {preview.sheets.map((sheet) => (
+                  <option key={sheet.index} value={sheet.index}>
+                    {sheet.name} ({sheet.rows} แถว)
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
           <p className="text-sm text-slate-500 mt-1">
             <span className="font-mono text-xs">{fileName}</span> ·{" "}
             {preview.fromHeader ? (

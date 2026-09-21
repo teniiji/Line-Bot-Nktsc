@@ -49,10 +49,39 @@ async function loadWorkbook(buffer: ArrayBuffer): Promise<ExcelJS.Workbook> {
   }
 }
 
-// Reads the first worksheet into plain cell arrays, which is all the
-// statement/มาไม่ได้ parsers need — they address cells by position, not by
-// header name, because neither sheet has a dependable header row.
-export async function readFirstSheetRows(file: File): Promise<unknown[][]> {
+// What a workbook holds, so an upload can be pointed at the right sheet.
+//
+// The first sheet is not always the one with the answers: the unit files
+// carry a "หน่วย" sheet beside a "สรุป", and some carry the ผลการหัก on a
+// third. Reading sheet one and reporting no amounts made that look like a
+// broken file rather than the wrong page of a good one.
+export interface SheetChoice {
+  index: number;
+  name: string;
+  rows: number;
+}
+
+export async function listSheets(file: File): Promise<SheetChoice[]> {
+  const buffer = await file.arrayBuffer();
+  const data = Buffer.from(buffer);
+  // An HTML table pretending to be .xls has exactly one sheet and no name
+  // worth showing.
+  if (looksLikeHtml(data)) {
+    return [{ index: 0, name: "ตารางในไฟล์", rows: parseHtmlTableRows(data.toString("utf8")).length }];
+  }
+
+  const workbook = await loadWorkbook(buffer);
+  return workbook.worksheets.map((sheet, index) => ({
+    index,
+    name: sheet.name,
+    rows: sheet.rowCount,
+  }));
+}
+
+// Reads one worksheet into plain cell arrays. The parsers address cells by
+// position, not by header name, because not every sheet staff upload has a
+// dependable header row.
+export async function readFirstSheetRows(file: File, sheetIndex = 0): Promise<unknown[][]> {
   const buffer = await file.arrayBuffer();
 
   // Checked before handing the bytes to a spreadsheet reader, because the
@@ -67,7 +96,7 @@ export async function readFirstSheetRows(file: File): Promise<unknown[][]> {
 
   const workbook = await loadWorkbook(buffer);
 
-  const sheet = workbook.worksheets[0];
+  const sheet = workbook.worksheets[sheetIndex] ?? workbook.worksheets[0];
   if (!sheet) return [];
 
   const rows: unknown[][] = [];
