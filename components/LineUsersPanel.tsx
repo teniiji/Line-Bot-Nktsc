@@ -24,6 +24,8 @@ export default function LineUsersPanel() {
   const [togglingId, setTogglingId] = useState<string | null>(null);
   const [pendingDelete, setPendingDelete] = useState<LineUser | null>(null);
   const [bulkAction, setBulkAction] = useState<"pause" | "resume" | null>(null);
+  const [confirmingId, setConfirmingId] = useState<string | null>(null);
+  const [confirmError, setConfirmError] = useState<string | null>(null);
 
   // Debounce the search box so every keystroke doesn't fire a request —
   // commits to `search` (which actually triggers the fetch) 300ms after
@@ -122,6 +124,31 @@ export default function LineUsersPanel() {
     }
   };
 
+  // Accepts a suggested match — sends it through the same PUT a staff-typed
+  // member number goes through, so it lands with exactly the same
+  // "ยังไม่ยืนยัน" status and the same taken/roster checks, rather than a
+  // separate write path that could disagree with those rules.
+  const confirmSuggestion = async (user: LineUser) => {
+    if (!user.suggestedMatch) return;
+    setConfirmingId(user.id);
+    setConfirmError(null);
+    try {
+      const res = await fetch(`/api/line-users/${user.id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ memberNumber: user.suggestedMatch.memberNumber }),
+      });
+      const body = await res.json();
+      if (!res.ok) {
+        setConfirmError(`${user.displayName ?? user.id}: ${body.error ?? "บันทึกไม่สำเร็จ"}`);
+        return;
+      }
+      await fetchUsers();
+    } finally {
+      setConfirmingId(null);
+    }
+  };
+
   const handleConfirmDelete = async () => {
     if (!pendingDelete) return;
     const id = pendingDelete.id;
@@ -159,6 +186,11 @@ export default function LineUsersPanel() {
             <p>
               "เลขสมาชิก"/"สังกัด" จะขึ้นก็ต่อเมื่อคนนั้นเคยยืนยันตัวตนตอนบันทึกธุรกรรมแล้วเท่านั้น
             </p>
+            <p>
+              ถ้ายังไม่มีเลขสมาชิก แต่ชื่อที่พิมพ์ไว้ตรงกับคนเดียวในฐานข้อมูลส่งเก็บไม่ได้พอดี
+              จะมีข้อเสนอ "อาจเป็น ..." ขึ้นให้กดยืนยัน — ไม่กรอกให้อัตโนมัติ
+              และถือเป็น "ยังไม่ยืนยัน" เหมือนเจ้าหน้าที่พิมพ์เอง
+            </p>
           </PanelHelp>
         </div>
         <div className="flex flex-col items-end gap-2">
@@ -189,6 +221,10 @@ export default function LineUsersPanel() {
           </div>
         </div>
       </div>
+
+      {confirmError && (
+        <p className="px-4 py-2 text-sm text-red-600 border-b border-slate-100">{confirmError}</p>
+      )}
 
       {loading ? (
         <p className="text-slate-500 text-sm py-8 text-center">กำลังโหลด…</p>
@@ -273,8 +309,27 @@ export default function LineUsersPanel() {
                         placeholder="เลขสมาชิก"
                         className="border border-slate-300 rounded px-2 py-1 text-sm w-28"
                       />
+                    ) : user.memberNumber ? (
+                      user.memberNumber
+                    ) : user.suggestedMatch ? (
+                      <span className="inline-flex items-center gap-1.5">
+                        <span
+                          className="text-xs text-emerald-700"
+                          title={`ชื่อ "${user.fullName}" ตรงกับสมาชิกเลขที่ ${user.suggestedMatch.memberNumber} (${user.suggestedMatch.name}) ในฐานข้อมูลส่งเก็บไม่ได้ — ยังไม่ยืนยัน กดใช่เพื่อกรอกให้`}
+                        >
+                          อาจเป็น {user.suggestedMatch.memberNumber}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => confirmSuggestion(user)}
+                          disabled={confirmingId === user.id}
+                          className="text-xs text-slate-600 border border-slate-300 rounded px-1.5 py-0.5 hover:bg-slate-50 disabled:opacity-50"
+                        >
+                          ใช่
+                        </button>
+                      </span>
                     ) : (
-                      (user.memberNumber ?? "—")
+                      "—"
                     )}
                   </td>
                   {/* Read-only on purpose: สังกัด lives in the roster, keyed by

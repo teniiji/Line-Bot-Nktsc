@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { buildNameIndex, suggestMemberByName } from "@/lib/lineUserNameMatch";
 
 // Unlike some other API routes, this one previously read no request data,
 // so Next.js would otherwise try to statically prerender it at build time
@@ -97,6 +98,23 @@ export async function GET(request: NextRequest) {
   // a dash where their name goes.
   const nameByMemberNumber = new Map(rosterEntries.map((r) => [r.memberNumber, r.memberName]));
 
+  // A suggestion for who this LINE account probably belongs to, for anyone
+  // still missing a member number — matched against the เก็บไม่ได้ rounds'
+  // own ชื่อ-นามสกุล column (StatementMember, the same table line-notify
+  // reads to message these members), since that is a name payroll itself
+  // wrote down rather than one someone typed into a chat. Only computed when
+  // this page actually has a row that needs it — most pages, once staff have
+  // worked through the list, will not.
+  const needsSuggestion = rows.some((r) => !r.memberNumber && r.fullName);
+  const nameIndex = needsSuggestion
+    ? buildNameIndex(
+        await prisma.statementMember.findMany({
+          select: { memberNumber: true, name: true },
+          distinct: ["memberNumber"],
+        })
+      )
+    : null;
+
   const data = rows.map((r) => ({
     ...r,
     unitName: r.memberNumber ? unitByMemberNumber.get(r.memberNumber) ?? null : null,
@@ -107,6 +125,8 @@ export async function GET(request: NextRequest) {
     // typo — and has() is what tells them apart, since a roster row can exist
     // with no unit name of its own.
     inRoster: r.memberNumber ? unitByMemberNumber.has(r.memberNumber) : false,
+    suggestedMatch:
+      !r.memberNumber && nameIndex ? suggestMemberByName(r.fullName, nameIndex) : null,
   }));
 
   return NextResponse.json({ data, total, page, pageSize });

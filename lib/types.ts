@@ -59,6 +59,12 @@ export interface LineUser {
   inRoster: boolean;
   botPaused: boolean;
   createdAt: string;
+  // A member number worth offering, not writing: matched from fullName
+  // against the เก็บไม่ได้ rounds' own name column, and only ever present
+  // when memberNumber is still null. Staff still has to click to accept it —
+  // this is the same one-shot suggestion as any staff-typed number, not a
+  // silent auto-fill.
+  suggestedMatch: { memberNumber: string; name: string } | null;
 }
 
 export interface MemberRosterEntry {
