@@ -16,7 +16,7 @@ import { branchesIn, missingBranches, summariseByAccount } from "@/lib/dailyAcco
 import { dayTally, flowByAccount, flowTotal, inByCategory } from "@/lib/statementTotals";
 import { bankFromDescription } from "@/lib/thaiBanks";
 import { cooperativeToday, shiftDay } from "@/lib/cooperativeClock";
-import { describeDeductionHint } from "@/lib/deductionMatch";
+import { describeDeductionHint, type DeductionHint } from "@/lib/deductionMatch";
 import { overlapsAnotherAccount, type StatementUpload } from "@/lib/statementUploads";
 import { bindMissedRoundNote, recordMissedRoundNote } from "@/lib/roundReach";
 import { DEDUCTION_CATEGORY } from "@/lib/statementSlipHints";
@@ -365,16 +365,24 @@ export default function DailyReconcilePanel() {
   };
 
   // Opening one form closes whatever was open, and starts the fields from
-  // what the row already knows. Everything but the member number is left
-  // blank on purpose — a category defaulted for somebody is a category
-  // nobody chose.
-  const openForm = (target: ActingTarget, memberNumber: string | null = null) => {
+  // what the row already knows. The category is left blank on principle — a
+  // category defaulted for somebody is a category nobody chose — except when
+  // the row itself already told staff what this payment is: the row's own
+  // green or amber "เก็บไม่ได้ ..." text made that call before the click, not
+  // this form making it silently. A weaker hint (short/over — the amount
+  // does not actually match) still leaves it blank, because there the row is
+  // raising a question, not answering one.
+  const openForm = (
+    target: ActingTarget,
+    memberNumber: string | null = null,
+    category: string | null = null
+  ) => {
     setBindOffer(null);
     setRoundNote(null);
     setActing(target);
     setActMemberNumber(memberNumber ?? "");
     setActMemberName("");
-    setActCategory("");
+    setActCategory(category ?? "");
     setActNote("");
   };
 
@@ -1443,6 +1451,17 @@ const Member = ({
   );
 };
 
+// The category to start the บันทึก form with, only where the row already
+// told staff what this payment is for. "settled" is the round's own match —
+// as sure as this view gets. "exact" is an amount landing exactly on what is
+// owed, which the row itself already reads as "น่าจะเป็นการชำระเก็บไม่ได้
+// รายเดือน". "short"/"over" stay unprefilled: there the amount does not
+// actually match, so the row is a question for a person, not an answer.
+const strongDeductionCategory = (deduction: DeductionHint | null): string | null =>
+  deduction && (deduction.match === "settled" || deduction.match === "exact")
+    ? DEDUCTION_CATEGORY
+    : null;
+
 const StatementTable = ({
   rows,
   showDate = false,
@@ -1563,7 +1582,11 @@ const StatementTable = ({
             {actions && canRecordFromLine(row.status) && !row.category && (
               <button
                 onClick={() =>
-                  actions.open({ id: row.id, kind: "record", scope }, row.memberNumber)
+                  actions.open(
+                    { id: row.id, kind: "record", scope },
+                    row.memberNumber,
+                    strongDeductionCategory(row.deduction)
+                  )
                 }
                 className="ml-2 text-xs text-slate-900 hover:underline no-print"
                 title="บันทึกเงินก้อนนี้เป็นรายการของสมาชิก เหมือนที่สลิปทางไลน์ทำ — ยอดและวันที่ใช้ตามธนาคาร"
@@ -1713,8 +1736,10 @@ interface RecordActions {
   // Opens a form, clearing the last one. The member number is prefilled where
   // the row already knows it — on a line whose payer the directory
   // recognised, that number is on screen two columns away, and asking somebody
-  // to retype it is asking them to mistype it.
-  open: (target: ActingTarget, memberNumber?: string | null) => void;
+  // to retype it is asking them to mistype it. The category is prefilled
+  // only where the row itself already said what the payment is for — see
+  // openForm.
+  open: (target: ActingTarget, memberNumber?: string | null, category?: string | null) => void;
   close: () => void;
   memberNumber: string;
   setMemberNumber: (value: string) => void;
