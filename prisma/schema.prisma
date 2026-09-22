@@ -647,6 +647,25 @@ model DeductionUnitFile {
 // lines up with the deduction round it follows, without being coupled to it
 // (a round can be reconciled even if the deduction side was tracked
 // elsewhere that month).
+// หน่วยคุม: the payroll units the cooperative divides its members between,
+// by the list it keeps itself — the code its files and its สรุปหน่วยคุม are
+// keyed on, and the name people use for it.
+//
+// A table rather than a constant in the code because the cooperative adds
+// and renames units, and waiting for a deploy to see a new unit's name is
+// not a thing staff should have to do. lib/controlUnits.ts still carries the
+// list this was seeded from, and is used when the table has no answer — a
+// unit missing from here must never make its members unreachable.
+model ControlUnit {
+  // The code as the files write it: "1", "52", "1300". No leading zeros,
+  // because "01" and "1" would be two units on screen and one in the data.
+  code      String   @id
+  name      String
+  note      String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
 model StatementRound {
   id        String   @id @default(cuid())
   period    String   @unique

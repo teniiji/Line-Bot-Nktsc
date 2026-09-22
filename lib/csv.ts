@@ -71,7 +71,10 @@ export function downloadExpensesCsv(expenses: Expense[]) {
 // the \u0E22\u0E31\u0E07\u0E04\u0E49\u0E32\u0E07 names to whoever sends the LINE reminders), not the whole round.
 export function downloadStatementMembersCsv(
   members: StatementMemberRow[],
-  periodLabel: string
+  periodLabel: string,
+  // The หน่วยคุม names as staff maintain them in ตั้งค่าระบบ. The built-in
+  // list answers for anything they have not named.
+  unitNames: Record<string, string> = {}
 ) {
   const statusLabel: Record<string, string> = {
     paid: "\u0E0A\u0E33\u0E23\u0E30\u0E04\u0E23\u0E1A",
@@ -102,7 +105,7 @@ export function downloadStatementMembersCsv(
     m.memberNumber,
     m.name,
     m.hCode ?? "",
-    (m.hCode && controlUnitName(m.hCode)) || "",
+    (m.hCode && (unitNames[m.hCode] ?? controlUnitName(m.hCode))) || "",
     m.unitCode ?? "",
     m.unitName ?? "",
     m.accountNumber ?? "",
