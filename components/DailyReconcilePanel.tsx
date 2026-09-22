@@ -1512,32 +1512,41 @@ const StatementTable = ({
           </td>
           {/* From the slip this line was paired with — the bank says an
               amount arrived, never what for. Failing that, what the month's
-              หักไม่ได้ round says this member still owes, which is the nearest
-              thing to an answer for a transfer that came with no slip. Marked
-              as a suggestion, because that is what it is: an amount and a
-              name, not a statement from the member. */}
+              หักไม่ได้ round already knows about this line: either its own
+              matching already counted this exact transfer (match === "settled",
+              looked up directly — see the route), or, failing that, what this
+              member still owes, offered as a suggestion to check rather than a
+              statement from the member. The two read differently on purpose:
+              settled is done, exact is a job still to do. */}
           <td className="px-2 py-1.5 whitespace-nowrap text-slate-600">
             {row.category ? (
               row.category
             ) : row.deduction ? (
               <span
                 className={
-                  row.deduction.match === "exact" ? "text-amber-700" : "text-slate-500"
+                  row.deduction.match === "settled"
+                    ? "text-emerald-700"
+                    : row.deduction.match === "exact"
+                      ? "text-amber-700"
+                      : "text-slate-500"
                 }
                 title={
-                  `ค้างเก็บไม่ได้รอบ ${row.deduction.label}: ${formatAmount(
-                    row.deduction.outstanding
-                  )}` +
-                  (row.deduction.match === "exact"
-                    ? " — ยอดที่โอนมาตรงพอดี น่าจะเป็นการชำระเก็บไม่ได้รายเดือน"
-                    : row.deduction.match === "short"
-                      ? " — ยอดที่โอนมาน้อยกว่าที่ค้าง"
-                      : " — ยอดที่โอนมามากกว่าที่ค้าง") +
-                  "\nเป็นข้อสังเกตให้ตรวจสอบ ไม่ใช่การบันทึก"
+                  row.deduction.match === "settled"
+                    ? `รอบเก็บไม่ได้ ${row.deduction.label} นับเงินก้อนนี้เป็นการชำระของสมาชิกแล้ว — ` +
+                      "จับคู่จากเลขบัญชีและยอดใน Statement โดยอัตโนมัติ ไม่ต้องโทรตาม"
+                    : `ค้างเก็บไม่ได้รอบ ${row.deduction.label}: ${formatAmount(
+                        row.deduction.outstanding
+                      )}` +
+                      (row.deduction.match === "exact"
+                        ? " — ยอดที่โอนมาตรงพอดี น่าจะเป็นการชำระเก็บไม่ได้รายเดือน"
+                        : row.deduction.match === "short"
+                          ? " — ยอดที่โอนมาน้อยกว่าที่ค้าง"
+                          : " — ยอดที่โอนมามากกว่าที่ค้าง") +
+                      "\nเป็นข้อสังเกตให้ตรวจสอบ ไม่ใช่การบันทึก"
                 }
               >
                 {describeDeductionHint(row.deduction)}
-                {row.deduction.match !== "exact" && (
+                {row.deduction.match !== "exact" && row.deduction.match !== "settled" && (
                   <span className="text-slate-400">
                     {" "}
                     ({formatAmount(row.deduction.outstanding)})

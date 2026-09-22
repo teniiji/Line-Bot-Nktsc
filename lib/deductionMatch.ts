@@ -28,11 +28,12 @@ export interface OutstandingDeduction {
   amountPaid: number;
 }
 
-export type DeductionMatch = "exact" | "short" | "over";
+export type DeductionMatch = "exact" | "short" | "over" | "settled";
 
 export interface DeductionHint {
   match: DeductionMatch;
-  // What was still owed when the round was last updated.
+  // What was still owed when the round was last updated. Always 0 for
+  // "settled" — there is nothing left to compare.
   outstanding: number;
   // The round it belongs to, so the column can name the month.
   period: string;
@@ -75,6 +76,25 @@ export function deductionHint(
 export function describeDeductionHint(hint: DeductionHint): string {
   const month = hint.label || hint.period;
   if (hint.match === "exact") return `ตรงยอดเก็บไม่ได้ ${month}`;
+  if (hint.match === "settled") return `เก็บไม่ได้ ${month} ชำระแล้ว`;
   if (hint.match === "short") return `เก็บไม่ได้ ${month} ยังไม่ครบ`;
   return `เก็บไม่ได้ ${month} เกินยอด`;
+}
+
+// A stronger signal than deductionHint above, and a different question. That
+// one asks "is anything still owed" and falls silent once the answer is no —
+// correct for it, but it leaves a settled line looking exactly like one
+// nobody has looked at: the account is known, there is no slip, and nothing
+// on screen says why. A member's เทียบ Statement round already knows why,
+// because its own matching (lib/statementRecompute.ts) ran independently of
+// this daily view and needs no slip to work from — it reads the bank
+// statement's account and amount directly.
+//
+// So this is not inferred from a balance; it is looked up. Given directly —
+// "this line's account and amount are an unexcluded transfer the round
+// already counted" — because a coincidence (a member's balance happens to
+// reach zero the same day from some other, unrelated transfer) must not be
+// reported as this line having been the one that paid it.
+export function deductionSettled(round: { period: string; label: string }): DeductionHint {
+  return { match: "settled", outstanding: 0, period: round.period, label: round.label };
 }

@@ -4,7 +4,7 @@ import { DepositLine, SlipRecord, honourLiveLinks, reconcileDay } from "@/lib/da
 import { OTHER_CHANNEL } from "@/lib/statementLines";
 import { statementLineStatus } from "@/lib/statementDayView";
 import { memberNumberKey } from "@/lib/memberNumber";
-import { deductionHint } from "@/lib/deductionMatch";
+import { deductionHint, deductionSettled } from "@/lib/deductionMatch";
 
 export const dynamic = "force-dynamic";
 
@@ -236,6 +236,42 @@ export async function GET(request: NextRequest) {
     select: { id: true, period: true, label: true },
   });
 
+  // Which of today's lines the round's own matching (lib/statementRecompute.ts)
+  // already counted as somebody's payment. That matching runs independently
+  // of this view and needs no slip to work from — it reads the bank
+  // statement's account and amount directly — so a line it already claimed
+  // must not be inferred from a balance (see deductionSettled in
+  // lib/deductionMatch.ts for why the balance alone is not enough: a member's
+  // outstanding figure can reach zero from a transfer that is not this one).
+  const senderAccountsOnPage = [
+    ...new Set(lines.map((line) => line.senderAccount).filter((a): a is string => a !== null)),
+  ];
+  const settledTransfers =
+    latestRound && senderAccountsOnPage.length
+      ? await prisma.statementTransfer.findMany({
+          where: {
+            roundId: latestRound.id,
+            accountNumber: { in: senderAccountsOnPage },
+            memberNumber: { not: null },
+            // Staff can mark a transfer as being for something else (ซื้อหุ้น,
+            // ชำระหนี้ …) — money that arrived but did not settle a
+            // deduction, so it must not be reported here as though it did.
+            excludedReason: null,
+            transferredAt: { gte: start, lt: end },
+          },
+          select: { accountNumber: true, amount: true },
+        })
+      : [];
+  // A Set of account+amount, not individual rows: the hint only has to say
+  // "this looks like the round's own match", not point at which row — two
+  // members' payments sharing an account and amount on the same day is rare
+  // enough that a hint getting it approximately right costs nothing.
+  const settledKeys = new Set(
+    settledTransfers.map((t) => `${t.accountNumber}|${t.amount.toFixed(2)}`)
+  );
+  const isSettledByRound = (accountNumber: string | null, amount: number) =>
+    accountNumber !== null && settledKeys.has(`${accountNumber}|${amount.toFixed(2)}`);
+
   const [rosterRows, loggedNames, owedRows] = numbersOnPage.length
     ? await Promise.all([
         prisma.memberRoster.findMany({
@@ -305,23 +341,32 @@ export async function GET(request: NextRequest) {
       // Only ever from the paired slip: the bank line says an amount arrived,
       // never what for.
       category: slip?.category ?? null,
-      // What the month's หักไม่ได้ round says this member still owes, when
-      // they are on it — the nearest thing to an answer for a transfer that
-      // came with no slip. A hint for a person to check, never a conclusion:
-      // see lib/deductionMatch.ts.
+      // What the month's หักไม่ได้ round already knows about this line, when
+      // it came with no slip. Two different questions, in order:
+      //
+      //   1. Did the round's own matching already count this exact line as
+      //      somebody's payment? If so, say that outright — a line the round
+      //      already claimed is not an open question staff have to work out.
+      //   2. Otherwise, is anything still owed that this amount happens to
+      //      match? A hint for a person to check, never a conclusion.
+      //
+      // See lib/deductionMatch.ts for why these are answered separately
+      // rather than one falling back to the other silently.
       deduction:
         latestRound && !slip
-          ? deductionHint(line.amount, (() => {
-              const owed = owedByNumber.get(key);
-              return owed
-                ? {
-                    period: latestRound.period,
-                    label: latestRound.label,
-                    amountDue: owed.amountDue,
-                    amountPaid: owed.amountPaid,
-                  }
-                : null;
-            })())
+          ? isSettledByRound(line.senderAccount, line.amount)
+            ? deductionSettled(latestRound)
+            : deductionHint(line.amount, (() => {
+                const owed = owedByNumber.get(key);
+                return owed
+                  ? {
+                      period: latestRound.period,
+                      label: latestRound.label,
+                      amountDue: owed.amountDue,
+                      amountPaid: owed.amountPaid,
+                    }
+                  : null;
+              })())
           : null,
     };
   });

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   deductionHint,
+  deductionSettled,
   describeDeductionHint,
   type OutstandingDeduction,
 } from "../lib/deductionMatch";
@@ -69,7 +70,31 @@ describe("deductionHint", () => {
   });
 });
 
+describe("deductionSettled", () => {
+  // A different question from deductionHint above: not "is anything still
+  // owed" but "did the round's own matching already count this line" — asked
+  // by the route from the round's own transfers directly, never inferred
+  // from a balance. A member's outstanding figure can reach zero from a
+  // transfer that is not this one, and reporting that as "this line settled
+  // it" would be wrong even though the member really is settled.
+  it("carries the round's own month, not a balance", () => {
+    expect(deductionSettled({ period: "0669", label: "มิ.ย. 2569" })).toEqual({
+      match: "settled",
+      outstanding: 0,
+      period: "0669",
+      label: "มิ.ย. 2569",
+    });
+  });
+});
+
 describe("describeDeductionHint", () => {
+  it("says a settled line was already paid, not what is outstanding", () => {
+    const text = describeDeductionHint(deductionSettled({ period: "0669", label: "มิ.ย. 2569" }));
+    expect(text).toContain("มิ.ย. 2569");
+    expect(text).toContain("ชำระแล้ว");
+  });
+
+
   it("names the month, since a round is a month", () => {
     expect(describeDeductionHint(deductionHint(3000, owed())!)).toContain("มิ.ย. 2569");
   });
