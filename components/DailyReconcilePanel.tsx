@@ -492,6 +492,56 @@ export default function DailyReconcilePanel() {
     }
   };
 
+  // The same recording as onRecord above, run once per line instead of once
+  // per click. Only ever called with lines the table itself decided were
+  // eligible (see strongDeductionCategory below) — a known payer and a match
+  // the round already vouches for — so there is nothing left here to ask a
+  // person about; this is the click that used to open a form, choose the one
+  // category on offer, and confirm it, done the same way for everything
+  // selected instead of once per row.
+  const bulkRecordDeposits = async (
+    targets: { id: string; memberNumber: string; category: string }[]
+  ) => {
+    setSaving(true);
+    setError(null);
+    setActionNotice(null);
+    setRoundNote(null);
+    let recorded = 0;
+    const failures: string[] = [];
+    try {
+      // Sequential, not Promise.all: these are ordinary POSTs against the
+      // same day, and running them one at a time is what keeps a partial
+      // failure's error message attributable to the row it belongs to rather
+      // than a pile of responses arriving in no particular order.
+      for (const target of targets) {
+        const res = await fetch(`/api/statement-lines/${target.id}/record`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ memberNumber: target.memberNumber, category: target.category }),
+        });
+        if (res.ok) {
+          recorded += 1;
+        } else {
+          const body = await res.json().catch(() => ({}) as { error?: string });
+          failures.push(body.error || "บันทึกไม่สำเร็จ");
+        }
+      }
+    } finally {
+      setSaving(false);
+    }
+
+    setActionNotice(
+      recorded > 0
+        ? `บันทึกแล้ว ${recorded} รายการ เป็น "${DEDUCTION_CATEGORY}"` +
+          (failures.length > 0 ? ` · ไม่สำเร็จ ${failures.length} รายการ (${failures[0]})` : "")
+        : `บันทึกไม่สำเร็จทั้ง ${failures.length} รายการ (${failures[0]})`
+    );
+    if (recorded > 0) {
+      setRoundNote(recordMissedRoundNote(DEDUCTION_CATEGORY, DEDUCTION_CATEGORY, data?.round ?? null));
+    }
+    await fetchDay(from, to);
+  };
+
   // "The bank's code does not know it, but that one is a member paying in" —
   // a fact about this line only. It files nothing: it moves the row up into
   // the unclaimed list, where the same two buttons as every other unclaimed
@@ -641,6 +691,7 @@ export default function DailyReconcilePanel() {
     saving,
     onBind: bindAccount,
     onRecord: recordDeposit,
+    onBulkRecord: bulkRecordDeposits,
     onUnmark: unmarkMemberMoney,
   };
 
@@ -1462,6 +1513,16 @@ const strongDeductionCategory = (deduction: DeductionHint | null): string | null
     ? DEDUCTION_CATEGORY
     : null;
 
+// Eligible for the "เลือกแล้วบันทึกทีเดียว" toolbar: a known payer (the
+// number a bulk POST would need) and a match strong enough to skip asking a
+// person which category it is (see strongDeductionCategory) — the same bar a
+// single row's บันทึก button already clears when it prefills the form.
+const bulkEligible = (row: DailyStatementRow): boolean =>
+  canRecordFromLine(row.status) &&
+  !row.category &&
+  row.memberNumber !== null &&
+  strongDeductionCategory(row.deduction) !== null;
+
 const StatementTable = ({
   rows,
   showDate = false,
@@ -1478,10 +1539,72 @@ const StatementTable = ({
   // report. Without telling them apart, clicking บันทึก in one opened the form
   // in both.
   scope?: "statement" | "report";
-}) => (
-  <table className="w-full text-sm">
+}) => {
+  // Which rows are ticked for the bulk button, kept local to this table: the
+  // same day appears twice on screen (its own section and the report), and a
+  // tick made in one must not silently record from the other.
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const eligibleRows = actions?.onBulkRecord ? rows.filter(bulkEligible) : [];
+  const eligibleIds = new Set(eligibleRows.map((r) => r.id));
+  // Filtered against what is actually still eligible, so a tick made before
+  // the last refetch cannot linger and record a row that moved on (recorded
+  // by someone else, or singly, in the meantime).
+  const selectedEligible = [...selected].filter((id) => eligibleIds.has(id));
+  const allSelected = eligibleRows.length > 0 && selectedEligible.length === eligibleRows.length;
+
+  const toggleAll = () => {
+    setSelected(allSelected ? new Set() : new Set(eligibleIds));
+  };
+  const toggleOne = (id: string) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+  const runBulk = async () => {
+    if (!actions?.onBulkRecord || selectedEligible.length === 0) return;
+    const targets = eligibleRows
+      .filter((r) => selectedEligible.includes(r.id))
+      .map((r) => ({
+        id: r.id,
+        memberNumber: r.memberNumber as string,
+        category: strongDeductionCategory(r.deduction) as string,
+      }));
+    setSelected(new Set());
+    await actions.onBulkRecord(targets);
+  };
+
+  return (
+  <>
+    {eligibleRows.length > 0 && (
+      <div className="flex items-center gap-3 px-2 py-1.5 text-xs text-slate-600 no-print">
+        <label className="flex items-center gap-1.5">
+          <input
+            type="checkbox"
+            checked={allSelected}
+            onChange={toggleAll}
+            aria-label="เลือกทุกรายการที่ตรงกับเก็บไม่ได้"
+          />
+          เลือกทุกรายการที่ตรง ({eligibleRows.length})
+        </label>
+        {selectedEligible.length > 0 && (
+          <button
+            onClick={runBulk}
+            disabled={actions?.saving}
+            className="text-slate-900 font-medium hover:underline disabled:opacity-50"
+            title={`บันทึกทุกรายการที่เลือกเป็น "${DEDUCTION_CATEGORY}" — เหมือนกดบันทึกทีละรายการ`}
+          >
+            บันทึกที่เลือก ({selectedEligible.length} รายการ)
+          </button>
+        )}
+      </div>
+    )}
+    <table className="w-full text-sm">
     <thead className="text-slate-500 text-left text-xs uppercase tracking-wide">
       <tr>
+        {eligibleRows.length > 0 && <th className="px-2 py-1.5 w-6 no-print" />}
         <th className="px-2 py-1.5 font-semibold">{showDate ? "วันที่ / เวลา" : "เวลา"}</th>
         <th className="px-2 py-1.5 font-semibold">รหัส</th>
         <th className="px-2 py-1.5 font-semibold">รายละเอียด</th>
@@ -1503,6 +1626,18 @@ const StatementTable = ({
         return (
         <Fragment key={row.id}>
         <tr className="border-t border-slate-100 hover:bg-slate-50">
+          {eligibleRows.length > 0 && (
+            <td className="px-2 py-1.5 no-print">
+              {bulkEligible(row) && (
+                <input
+                  type="checkbox"
+                  checked={selected.has(row.id)}
+                  onChange={() => toggleOne(row.id)}
+                  aria-label="เลือกรายการนี้"
+                />
+              )}
+            </td>
+          )}
           <td className="px-2 py-1.5 whitespace-nowrap">
             <ExactClock iso={row.postedAt} withDate={showDate} />
           </td>
@@ -1602,7 +1737,7 @@ const StatementTable = ({
 
         {actions && open && (
           <tr className="bg-slate-50 border-t border-slate-100">
-            <td colSpan={9} className="px-3 py-2.5">
+            <td colSpan={eligibleRows.length > 0 ? 10 : 9} className="px-3 py-2.5">
               <ActionForm
                 actions={actions}
                 mode={open}
@@ -1624,7 +1759,9 @@ const StatementTable = ({
       })}
     </tbody>
   </table>
-);
+  </>
+  );
+};
 
 // One finding, folded or not. The heading is the control: a whole page of
 // stacked tables is only navigable if every one of them can be got out of the
@@ -1753,6 +1890,13 @@ interface RecordActions {
   saving: boolean;
   onBind: (accountNumber: string, memberNumber?: string) => void;
   onRecord: (depositId: string) => void;
+  // Records several lines in one go — the "เลือกแล้วบันทึกทีเดียว" toolbar in
+  // StatementTable, offered only for lines it already judged eligible (see
+  // strongDeductionCategory): a known payer and a match the round vouches
+  // for, so nothing here needs a person's judgment call per row.
+  onBulkRecord: (
+    targets: { id: string; memberNumber: string; category: string }[]
+  ) => Promise<void>;
   // Only ever called for a line a person marked as member money themselves,
   // which is also the only kind of row it is offered on.
   onUnmark: (lineId: string) => void;
