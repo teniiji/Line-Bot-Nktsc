@@ -19,6 +19,10 @@
 // with the same identity is not a coincidence: it is this file, already
 // loaded, under the account somebody meant to pick.
 
+import { prisma } from "./prisma";
+import { STATEMENT_ACCOUNTS } from "./statementReconcile";
+import { parseStatementLines, statementLineIdentity } from "./statementLines";
+
 // How much of a file has to be already stored elsewhere before it is treated
 // as the wrong account rather than as a coincidence.
 //
@@ -69,4 +73,51 @@ export function mixupError(
     "ระบบจะไม่นับเงินซ้ำ\n" +
     "• ถ้าเคยอัปผิดบัญชีไปแล้ว ลบไฟล์ที่อัปผิดได้ที่รายการ \"ไฟล์ Statement ที่อัปไว้\" ใต้ช่องอัปโหลด"
   );
+}
+
+export interface AccountMixup {
+  overlap: AccountOverlap;
+  // How many lines the uploaded file itself carries — mixupError's own
+  // "X จาก Y บรรทัด" needs it, and it is this function that already parsed
+  // the file to get it, so callers do not have to parse it a second time.
+  fileLines: number;
+}
+
+// The check itself, shared by every upload path: reads the file's own lines
+// (the same identity StatementLine stores them under), asks StatementLine
+// which of the *other* accounts already has each one, and hands the count to
+// mixedUpWith above. One implementation so a route added later inherits the
+// guard automatically instead of needing its own copy remembered.
+export async function findAccountMixup(
+  rows: unknown[][],
+  account: string
+): Promise<AccountMixup | null> {
+  const parsedLines = parseStatementLines(rows);
+  const others = Object.keys(STATEMENT_ACCOUNTS).filter((a) => a !== account);
+  if (parsedLines.length === 0 || others.length === 0) return null;
+
+  const identities = parsedLines.map(statementLineIdentity);
+  const elsewhere = await prisma.statementLine.findMany({
+    where: {
+      account: { in: others },
+      fingerprint: {
+        in: others.flatMap((a) => identities.map((id) => `${a}|${id}`)),
+      },
+    },
+    select: { account: true },
+  });
+
+  const byAccount = new Map<string, number>();
+  for (const row of elsewhere) {
+    byAccount.set(row.account, (byAccount.get(row.account) ?? 0) + 1);
+  }
+  const overlap = mixedUpWith(
+    parsedLines.length,
+    [...byAccount].map(([a, lines]) => ({
+      account: a,
+      branch: STATEMENT_ACCOUNTS[a] ?? a,
+      lines,
+    }))
+  );
+  return overlap ? { overlap, fileLines: parsedLines.length } : null;
 }

@@ -11,6 +11,7 @@ import {
   STATEMENT_ACCOUNTS,
 } from "@/lib/statementReconcile";
 import { storeStatementLines } from "@/lib/statementLineStore";
+import { findAccountMixup, mixupError } from "@/lib/statementAccountMixup";
 import {
   applyDirectoryAccounts,
   recomputeRoundPayments,
@@ -77,6 +78,19 @@ export async function POST(
     rows = await readFirstSheetRows(checked.file);
   } catch (err) {
     return NextResponse.json({ error: describeReadError(err) }, { status: 400 });
+  }
+
+  // Before writing anything: is this file already here under the other
+  // account? The upload dropdown remembers the last choice, and this path —
+  // unlike the daily-view-only upload in /api/statement-lines — used to write
+  // straight through with nothing to catch that slip. See
+  // lib/statementAccountMixup.ts.
+  const mixup = await findAccountMixup(rows, account);
+  if (mixup) {
+    return NextResponse.json(
+      { error: mixupError({ account, branch }, mixup.overlap, mixup.fileLines) },
+      { status: 409 }
+    );
   }
 
   const transfers = parseStatementRows(rows);
