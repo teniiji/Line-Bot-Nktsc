@@ -129,10 +129,12 @@ export async function GET(
   // Which statements this round was built from. Uploads accumulate, so
   // without this the only sign a file had been loaded was the totals moving,
   // and staff had no way to tell whether they had already dropped in the
-  // second half of the month.
+  // second half of the month. Cash entries excluded: "account: cash" was
+  // never a file, and belongs beside the transfers it sits among (see the
+  // 💵 tag on the row itself), not in a list of Statement uploads.
   const loaded = await prisma.statementTransfer.groupBy({
     by: ["account", "branch", "sourceFile"],
-    where: { roundId: round.id },
+    where: { roundId: round.id, account: { not: "cash" } },
     _count: { _all: true },
     _sum: { amount: true },
   });
