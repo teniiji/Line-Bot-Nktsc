@@ -17,6 +17,20 @@ export const dynamic = "force-dynamic";
 // No new UI state to hold: this scans every Expense that could possibly be
 // unbridged rather than a list staff would have to keep track of, and
 // reports what it did.
+//
+// At most one bridge per member per run, oldest recording first. The record
+// route is safe writing more than one for the same member because it reads
+// the member's status fresh from the database on every call — bridging one
+// payment there is recomputed before the next request can see it. This
+// route instead reads the round's members once and loops over every
+// candidate against that one snapshot, so a member with two stale
+// recordings (e.g. one payment genuinely for an earlier month, filed under
+// the same category, on top of the one that actually settles this round)
+// would otherwise both look "still owing" and both get written — turning an
+// old, unrelated payment into an overpayment on this round instead of
+// leaving it for staff to look at. The oldest is kept as the one most likely
+// to be the payment that was actually outstanding when it arrived; every
+// later one for the same member is left alone.
 export async function POST() {
   const candidates = await prisma.expense.findMany({
     where: {
@@ -24,11 +38,18 @@ export async function POST() {
       statementLineId: { not: null },
       memberNumber: { not: null },
     },
+    orderBy: { date: "asc" },
     select: { memberNumber: true, statementLineId: true },
   });
 
   if (candidates.length === 0) {
-    return NextResponse.json({ scanned: 0, bridged: 0, alreadyLinked: 0, notEligible: 0 });
+    return NextResponse.json({
+      scanned: 0,
+      bridged: 0,
+      alreadyLinked: 0,
+      notEligible: 0,
+      skippedDuplicateMember: 0,
+    });
   }
 
   const lines = await prisma.statementLine.findMany({
@@ -70,6 +91,8 @@ export async function POST() {
   let bridged = 0;
   let alreadyLinkedCount = 0;
   let notEligible = 0;
+  let skippedDuplicateMember = 0;
+  const bridgedThisRun = new Set<string>();
 
   for (const candidate of candidates) {
     const line = lineById.get(candidate.statementLineId as string);
@@ -85,6 +108,11 @@ export async function POST() {
     }
 
     const key = memberNumberKey(candidate.memberNumber as string);
+    if (key && bridgedThisRun.has(key)) {
+      skippedDuplicateMember += 1;
+      continue;
+    }
+
     const member = key ? onRound.find((m) => memberNumberKey(m.memberNumber) === key) ?? null : null;
     if (!canBridgeToRound(member)) {
       notEligible += 1;
@@ -106,6 +134,7 @@ export async function POST() {
         manualMemberNumber: true,
       },
     });
+    if (key) bridgedThisRun.add(key);
     bridged += 1;
   }
 
@@ -118,5 +147,6 @@ export async function POST() {
     bridged,
     alreadyLinked: alreadyLinkedCount,
     notEligible,
+    skippedDuplicateMember,
   });
 }
