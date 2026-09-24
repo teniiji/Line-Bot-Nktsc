@@ -19,7 +19,7 @@ export interface StatementFilter {
   hCodes: string[];
   // Encoded หน่วยคุมย่อย — see encodeSubUnit.
   subUnits: string[];
-  status: string; // "all" | "paid" | "overpaid" | "unpaid" | "no_account"
+  status: string; // "all" | "paid" | "overpaid" | "unpaid" | "no_account" | "cash"
 }
 
 export type StatementSort =
@@ -127,6 +127,11 @@ export function matchesStatus(m: StatementMemberRow, status: string): boolean {
     );
   }
   if (status === "many_accounts") return !m.accountNumber && (m.knownAccounts?.length ?? 0) > 1;
+  // At least one payment counted toward this member came in as cash rather
+  // than off a bank line — see app/api/statement-rounds/[id]/cash/route.ts.
+  // includes() rather than equality: paidBranch reads "เงินสด + หนองคาย" for
+  // someone who paid partly by cash and partly by transfer.
+  if (status === "cash") return m.paidBranch?.includes("เงินสด") ?? false;
   // The round's chase population as one bucket: everyone payroll could not
   // deduct from, whether or not they have since transferred the money.
   if (status === "uncollected") return m.deductionResult === "uncollected";

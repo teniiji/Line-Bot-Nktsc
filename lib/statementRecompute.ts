@@ -14,7 +14,13 @@ export async function recomputeRoundPayments(roundId: string): Promise<void> {
   const [members, transfers] = await Promise.all([
     prisma.statementMember.findMany({
       where: { roundId },
-      select: { id: true, memberNumber: true, amountDue: true, deductionResult: true },
+      select: {
+        id: true,
+        memberNumber: true,
+        amountDue: true,
+        expectedAmount: true,
+        deductionResult: true,
+      },
     }),
     // Transfers staff have marked as being for something else (ซื้อหุ้น,
     // ชำระหนี้ …) are money that arrived but not money that settles a
@@ -59,7 +65,13 @@ export async function recomputeRoundPayments(roundId: string): Promise<void> {
           // Nobody has said yet whether payroll could deduct from this
           // member, so they are not short of anything — and calling a row
           // with nothing due "✅ ชำระครบ" would put a whole unit that has not
-          // even replied among the people who have settled.
+          // even replied among the people who have settled. That silence
+          // stops applying the moment staff record a cash payment for them,
+          // though: unlike a bank transfer (which could be for anything —
+          // see the awaiting rule it does not override), the "บันทึกว่าจ่าย
+          // เงินสดแล้ว" button is staff saying this specific member settled
+          // this specific round, so it is judged against what was declared
+          // (expectedAmount) rather than left stuck on ⏳ รอผลการหัก.
           //
           // A member payroll did deduct from is "collected" for the same
           // reason: they owe this round nothing, and counting them among
@@ -67,7 +79,9 @@ export async function recomputeRoundPayments(roundId: string): Promise<void> {
           // money they were never asked for.
           status:
             member.deductionResult === "awaiting"
-              ? "awaiting"
+              ? paid?.branches.has("เงินสด")
+                ? calcPaymentStatus(amountPaid, member.expectedAmount ?? 0).status
+                : "awaiting"
               : member.deductionResult === "collected"
                 ? "collected"
                 : calcPaymentStatus(amountPaid, member.amountDue).status,
