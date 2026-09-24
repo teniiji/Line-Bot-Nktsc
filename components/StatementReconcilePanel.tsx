@@ -205,6 +205,12 @@ export default function StatementReconcilePanel() {
     sheet?: number;
   } | null>(null);
   const [statusFilter, setStatusFilter] = useState<string>("all");
+  // Which account's own CSV to export — "" is everyone, exactly what the
+  // export did before this existed. Narrows by paidBranch (see
+  // recomputeRoundPayments), which is null for anyone who has not paid at
+  // all: unpaid members belong to no account's statement yet, so they drop
+  // out of a หนองคาย-only or บึงกาฬ-only export and appear only in รวม.
+  const [csvBranch, setCsvBranch] = useState<"" | "หนองคาย" | "บึงกาฬ">("");
   const [searchInput, setSearchInput] = useState("");
   const [search, setSearch] = useState("");
   // The หน่วยคุม, and the หน่วยคุมย่อย inside it as one encoded value —
@@ -862,6 +868,11 @@ export default function StatementReconcilePanel() {
     sort
   );
   const shownTotals = summarizeStatementMembers(shown);
+  // Narrows what the export button sends to downloadStatementMembersCsv,
+  // on top of every other filter already on screen — includes() rather than
+  // === because paidBranch reads "บึงกาฬ + หนองคาย" for someone who paid
+  // into both.
+  const csvRows = csvBranch ? shown.filter((m) => m.paidBranch?.includes(csvBranch)) : shown;
   const filtered =
     statusFilter !== "all" ||
     subUnitFilter.length > 0 ||
@@ -1357,12 +1368,22 @@ export default function StatementReconcilePanel() {
                     ล้างตัวกรอง
                   </button>
                 )}
-                <button
-                  onClick={() => downloadStatementMembersCsv(shown, selected.label, unitNames)}
-                  disabled={shown.length === 0}
-                  className="ml-auto px-3 py-1.5 border border-slate-300 rounded-md bg-white hover:bg-slate-50 disabled:opacity-40"
+                <select
+                  value={csvBranch}
+                  onChange={(e) => setCsvBranch(e.target.value as typeof csvBranch)}
+                  className="ml-auto border border-slate-300 rounded-md px-2 py-1.5 bg-white text-sm"
+                  title='กรองไฟล์ CSV ตามบัญชีที่สมาชิกโอนเข้าจริง (413 หนองคาย / 447 บึงกาฬ) — คนที่ยังไม่ได้โอนเลยจะไม่อยู่ในไฟล์ของบัญชีใดบัญชีหนึ่ง อยู่ใน "รวม" เท่านั้น'
                 >
-                  ส่งออก CSV ({shown.length})
+                  <option value="">รวม</option>
+                  <option value="หนองคาย">413 หนองคาย</option>
+                  <option value="บึงกาฬ">447 บึงกาฬ</option>
+                </select>
+                <button
+                  onClick={() => downloadStatementMembersCsv(csvRows, selected.label, unitNames)}
+                  disabled={csvRows.length === 0}
+                  className="px-3 py-1.5 border border-slate-300 rounded-md bg-white hover:bg-slate-50 disabled:opacity-40"
+                >
+                  ส่งออก CSV ({csvRows.length})
                 </button>
               </div>
 
