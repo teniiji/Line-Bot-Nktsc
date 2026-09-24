@@ -264,6 +264,10 @@ export interface StatementTransferRow {
   description: string | null;
   // Set once staff say this money was for ซื้อหุ้น, ชำระหนี้, ฝากเงิน …
   excludedReason: string | null;
+  // True once staff have said directly who this money belongs to — a whole
+  // or partial transfer moved to a different member — rather than it being
+  // read off the account. See lib/statementSplitTransfer.ts.
+  manualMemberNumber: boolean;
   // A slip the member filed through the bot under some other purpose that
   // lines up with this transfer — a prompt to check, never a decision.
   slipHint: { category: string; amount: number; date: string } | null;

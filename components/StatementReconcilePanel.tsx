@@ -174,6 +174,13 @@ export default function StatementReconcilePanel() {
   const [transfers, setTransfers] = useState<StatementTransferRow[]>([]);
   const [excludedTotal, setExcludedTotal] = useState(0);
   const [expandedMember, setExpandedMember] = useState<string | null>(null);
+  // The one transfer row currently offering its "แบ่งให้สมาชิกอื่น" form, and
+  // what is typed into it — one at a time, the same as opening a บันทึก form
+  // elsewhere in the dashboard closes whichever was open before it.
+  const [splittingTransfer, setSplittingTransfer] = useState<string | null>(null);
+  const [splitMemberNumber, setSplitMemberNumber] = useState("");
+  const [splitAmountInput, setSplitAmountInput] = useState("");
+  const [splitError, setSplitError] = useState<string | null>(null);
   const [pendingClear, setPendingClear] = useState<{ account: string; branch: string } | null>(
     null
   );
@@ -269,6 +276,49 @@ export default function StatementReconcilePanel() {
         setError(body.error || "บันทึกไม่สำเร็จ");
         return;
       }
+      await Promise.all([fetchRound(selectedId), fetchRounds()]);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const openSplit = (transfer: StatementTransferRow) => {
+    setSplittingTransfer(transfer.id);
+    setSplitMemberNumber("");
+    // Defaults to the whole amount — most of the time a combined transfer is
+    // "this whole line was never mine", not a partial share, and retyping
+    // the figure already on screen would be asking for a slip.
+    setSplitAmountInput(String(transfer.amount));
+    setSplitError(null);
+  };
+
+  const closeSplit = () => {
+    setSplittingTransfer(null);
+    setSplitError(null);
+  };
+
+  const submitSplit = async (transferId: string) => {
+    if (!selectedId) return;
+    setSplitError(null);
+    setBusy(true);
+    try {
+      const res = await fetch(
+        `/api/statement-rounds/${selectedId}/transfers/${transferId}/split`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            memberNumber: splitMemberNumber.trim(),
+            amount: Number(splitAmountInput),
+          }),
+        }
+      );
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        setSplitError(body.error || "แบ่งยอดไม่สำเร็จ");
+        return;
+      }
+      closeSplit();
       await Promise.all([fetchRound(selectedId), fetchRounds()]);
     } finally {
       setBusy(false);
@@ -1616,6 +1666,18 @@ export default function StatementReconcilePanel() {
                                         🔁 {describeDoubleCount(t.alsoCountedIn)}
                                       </span>
                                     )}
+                                    {/* A row whose memberNumber staff set by
+                                        hand rather than one read off the
+                                        account — the other half of a split,
+                                        or a whole transfer moved outright. */}
+                                    {t.manualMemberNumber && (
+                                      <span
+                                        className="text-xs text-sky-700"
+                                        title="เลขสมาชิกของรายการนี้ถูกระบุเองโดยเจ้าหน้าที่ ไม่ใช่จับคู่จากเลขบัญชี — จะไม่ถูกจับคู่ทับตอนอัป Statement รอบถัดไป"
+                                      >
+                                        🔀 ย้ายมาให้คนนี้
+                                      </span>
+                                    )}
                                     <span className="ml-auto flex items-center gap-2">
                                       <select
                                         value={t.excludedReason ?? ""}
@@ -1636,7 +1698,55 @@ export default function StatementReconcilePanel() {
                                           </option>
                                         ))}
                                       </select>
+                                      <button
+                                        type="button"
+                                        onClick={() =>
+                                          splittingTransfer === t.id ? closeSplit() : openSplit(t)
+                                        }
+                                        disabled={busy}
+                                        className="text-xs text-slate-600 border border-slate-300 rounded px-2 py-1 hover:bg-slate-50 disabled:opacity-50"
+                                        title="เงินก้อนนี้รวมของสมาชิกคนอื่นไว้ด้วย — ระบุได้ว่าจะย้ายเท่าไหร่ไปให้ใคร"
+                                      >
+                                        {splittingTransfer === t.id ? "ยกเลิกแบ่งยอด" : "แบ่งให้สมาชิกอื่น"}
+                                      </button>
                                     </span>
+                                    {splittingTransfer === t.id && (
+                                      <div className="w-full flex flex-wrap items-center gap-2 pt-1 pl-1 border-t border-dashed border-slate-200 mt-1">
+                                        <span className="text-xs text-slate-500">ย้าย</span>
+                                        <input
+                                          type="number"
+                                          inputMode="decimal"
+                                          step="0.01"
+                                          value={splitAmountInput}
+                                          onChange={(e) => setSplitAmountInput(e.target.value)}
+                                          className="border border-slate-300 rounded px-2 py-1 text-xs w-24"
+                                        />
+                                        <span className="text-xs text-slate-500">บาท ให้เลขสมาชิก</span>
+                                        <input
+                                          type="text"
+                                          value={splitMemberNumber}
+                                          onChange={(e) => setSplitMemberNumber(e.target.value)}
+                                          placeholder="เลขสมาชิก"
+                                          className="border border-slate-300 rounded px-2 py-1 text-xs w-28"
+                                          autoFocus
+                                        />
+                                        <button
+                                          type="button"
+                                          onClick={() => submitSplit(t.id)}
+                                          disabled={busy || !splitMemberNumber.trim()}
+                                          className="text-xs text-white bg-slate-900 rounded px-2.5 py-1 disabled:opacity-50"
+                                        >
+                                          ย้ายยอด
+                                        </button>
+                                        {splitError && (
+                                          <p className="w-full text-xs text-red-600">{splitError}</p>
+                                        )}
+                                        <p className="w-full text-xs text-slate-400">
+                                          เลขสมาชิกปลายทางต้องอยู่ในรอบ {selected?.label ?? "นี้"} — ส่วนที่ไม่ได้ย้าย
+                                          (ถ้ามี) ยังนับเป็นของ {m.name} เหมือนเดิม
+                                        </p>
+                                      </div>
+                                    )}
                                   </div>
                                 ))}
                               </td>
