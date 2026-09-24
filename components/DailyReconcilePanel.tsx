@@ -581,11 +581,20 @@ export default function DailyReconcilePanel() {
         return;
       }
       setBackfillNotice(
-        body.bridged > 0
-          ? `เชื่อมย้อนหลังสำเร็จ ${body.bridged} รายการ` +
-            (body.notEligible > 0 ? ` · อีก ${body.notEligible} รายการไม่เข้าเงื่อนไข (ไม่ได้ค้างอยู่ในรอบล่าสุด)` : "")
-          : `ไม่มีรายการที่ต้องเชื่อมย้อนหลัง` +
-            (body.notEligible > 0 ? ` (${body.notEligible} รายการไม่เข้าเงื่อนไข)` : "")
+        (body.bridged > 0
+          ? `เชื่อมย้อนหลังสำเร็จ ${body.bridged} รายการ`
+          : `ไม่มีรายการที่ต้องเชื่อมย้อนหลัง`) +
+          (body.notEligible > 0
+            ? ` · อีก ${body.notEligible} รายการไม่เข้าเงื่อนไข (ไม่ได้ค้างอยู่ในรอบล่าสุด)`
+            : "") +
+          // A member with more than one stale recording gets only the oldest
+          // bridged automatically — the rest need a person to look at them,
+          // since guessing which one is real and which is something else
+          // (an earlier month's payment, a genuine double transfer) is
+          // exactly the mistake that produced the first version of this.
+          (body.skippedDuplicateMember > 0
+            ? ` · ${body.skippedDuplicateMember} รายการข้ามไว้เพราะสมาชิกคนเดียวกันมีมากกว่า 1 รายการที่ยังไม่เชื่อม ตรวจสอบเองว่าเป็นเดือนไหน`
+            : "")
       );
       await fetchDay(from, to);
     } finally {
