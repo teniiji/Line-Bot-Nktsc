@@ -812,6 +812,16 @@ model StatementTransfer {
   // transfers stop counting toward payment and leave the follow-up list, but
   // are kept and totalled: the money did arrive.
   excludedReason String?
+  // True once staff have said directly who this money belongs to, rather
+  // than it being read off the account number — see lib/statementSplitTransfer.ts.
+  // rematchRoundTransfers otherwise reassigns memberNumber from the account
+  // directory on every statement upload, which would silently undo a manual
+  // correction the next time somebody uploads a file. Set on both halves of
+  // a split: the part that moved (whose accountNumber now disagrees with its
+  // memberNumber on purpose) and the part left behind (which the rematch
+  // would otherwise recompute right back to, but should stay exactly what
+  // staff chose to keep).
+  manualMemberNumber Boolean @default(false)
   createdAt     DateTime  @default(now())
 
   @@unique([roundId, fingerprint])

@@ -86,9 +86,12 @@ export async function rematchRoundTransfers(roundId: string): Promise<void> {
       where: { roundId },
       select: { memberNumber: true, accountNumber: true },
     }),
+    // manualMemberNumber excluded from the where clause on purpose: those
+    // rows are still read here (so the loop below can skip them by id) but
+    // are never candidates for a rewrite — see the filter after the map.
     prisma.statementTransfer.findMany({
       where: { roundId },
-      select: { id: true, accountNumber: true, memberNumber: true },
+      select: { id: true, accountNumber: true, memberNumber: true, manualMemberNumber: true },
     }),
   ]);
 
@@ -116,6 +119,10 @@ export async function rematchRoundTransfers(roundId: string): Promise<void> {
   await Promise.all(
     transfers
       .map((transfer) => {
+        // Staff already said whose this is — an account-number rematch
+        // would otherwise put it straight back to the account holder on the
+        // next statement upload, undoing the correction it exists for.
+        if (transfer.manualMemberNumber) return null;
         const found = memberByAccount.get(transfer.accountNumber) ?? null;
         const matched = found && inRound.has(found) ? found : null;
         if (matched === transfer.memberNumber) return null;

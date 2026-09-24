@@ -201,6 +201,7 @@ export async function GET(
     branch: t.branch,
     description: t.description,
     excludedReason: t.excludedReason,
+    manualMemberNumber: t.manualMemberNumber,
     slipHint: hints.get(t.id) ?? null,
     // Empty on all but the few lines being counted more than once.
     alsoCountedIn: doubles.get(t.id) ?? [],
