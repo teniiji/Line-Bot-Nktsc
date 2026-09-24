@@ -55,9 +55,13 @@ export async function POST() {
   }
 
   const rounds = await prisma.statementRound.findMany({
-    select: { id: true, period: true, label: true },
+    select: { id: true, period: true, label: true, closedAt: true },
   });
-  const roundByPeriod = new Map(rounds.map((r) => [r.period, r]));
+  // A closed round is frozen: nothing sitting in one is touched, and nothing
+  // is moved into one — money for a closed month belongs on the
+  // ชำระข้ามเดือน tab, placed by a person.
+  const closedRoundIds = new Set(rounds.filter((r) => r.closedAt).map((r) => r.id));
+  const roundByPeriod = new Map(rounds.filter((r) => !r.closedAt).map((r) => [r.period, r]));
 
   const membersByRound = new Map<
     string,
@@ -91,6 +95,10 @@ export async function POST() {
   const touchedRounds = new Set<string>();
 
   for (const candidate of candidates) {
+    if (closedRoundIds.has(candidate.roundId)) {
+      alreadyCorrect += 1;
+      continue;
+    }
     if (!candidate.transferredAt) {
       // No date to judge it by — leave it where it is rather than guessing.
       alreadyCorrect += 1;

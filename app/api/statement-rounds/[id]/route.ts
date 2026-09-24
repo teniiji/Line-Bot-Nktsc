@@ -4,6 +4,7 @@ import { matchSlipHints } from "@/lib/statementSlipHints";
 import { countedElsewhere } from "@/lib/roundDoubleCount";
 import { recordedOwnersForAccounts } from "@/lib/roundRecordings";
 import { splitByBinding } from "@/lib/boundTransfers";
+import { ROUND_CLOSED_ERROR, countedAmount } from "@/lib/carriedDebt";
 
 export const dynamic = "force-dynamic";
 
@@ -30,7 +31,11 @@ export async function GET(
     }),
   ]);
 
-  const unmatchedRows = transfers.filter((t) => !t.memberNumber && !t.excludedReason);
+  // A line whose whole amount went to a carried debt has been placed, just
+  // not in this round — it is no longer anyone's work here.
+  const unmatchedRows = transfers.filter(
+    (t) => !t.memberNumber && !t.excludedReason && countedAmount(t) > 0.01
+  );
 
   // Whether the daily page has already been told whose these are. Staff ring
   // round and record the payment there; the round has no way to hear about it
@@ -204,6 +209,7 @@ export async function GET(
     description: t.description,
     excludedReason: t.excludedReason,
     manualMemberNumber: t.manualMemberNumber,
+    carriedAmount: t.carriedAmount,
     slipHint: hints.get(t.id) ?? null,
     // Empty on all but the few lines being counted more than once.
     alsoCountedIn: doubles.get(t.id) ?? [],
@@ -220,7 +226,7 @@ export async function GET(
     // done, or pressing บันทึก reads as having done nothing.
     outsideRound,
     outsideRoundTotal:
-      Math.round(outsideRound.reduce((sum, t) => sum + t.amount, 0) * 100) / 100,
+      Math.round(outsideRound.reduce((sum, t) => sum + countedAmount(t), 0) * 100) / 100,
     transfers: withHints,
     excluded,
     excludedTotal:
@@ -249,6 +255,32 @@ export async function DELETE(
   _request: NextRequest,
   { params }: { params: { id: string } }
 ) {
+  // A closed round is where its carried debts came from; deleting it would
+  // leave them, and any payments toward them, pointing at nothing.
+  const round = await prisma.statementRound.findUnique({
+    where: { id: params.id },
+    select: { closedAt: true },
+  });
+  if (round?.closedAt) {
+    return NextResponse.json({ error: ROUND_CLOSED_ERROR }, { status: 409 });
+  }
+  // Nor an open round some of whose money pays a carried debt: the payment
+  // finds its bank line by this round's id, and a round created again from
+  // the same statement would count that money a second time.
+  const carriedFromHere = await prisma.carriedDebtPayment.count({
+    where: { roundId: params.id },
+  });
+  if (carriedFromHere > 0) {
+    return NextResponse.json(
+      {
+        error:
+          `ลบรอบนี้ไม่ได้ — มียอดจากรอบนี้ ${carriedFromHere} รายการที่ย้ายไปชำระข้ามเดือนแล้ว ` +
+          `ต้องลบรายการชำระเหล่านั้นที่แถบ "ชำระข้ามเดือน" ก่อน`,
+      },
+      { status: 409 }
+    );
+  }
+
   // The member and transfer rows are this round's working data, not history
   // worth keeping on its own — both are rebuilt by re-uploading the two
   // sheets, so they go with the round rather than being orphaned.

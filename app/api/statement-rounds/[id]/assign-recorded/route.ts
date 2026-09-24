@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { ROUND_CLOSED_ERROR } from "@/lib/carriedDebt";
 import { normalizeAccountNumber } from "@/lib/statementReconcile";
 import { memberNumberKey } from "@/lib/memberNumber";
 import { agreedBindings, type ProposedBinding } from "@/lib/bulkBinding";
@@ -27,6 +28,9 @@ export async function POST(
   const round = await prisma.statementRound.findUnique({ where: { id: params.id } });
   if (!round) {
     return NextResponse.json({ error: "ไม่พบรอบนี้" }, { status: 404 });
+  }
+  if (round.closedAt) {
+    return NextResponse.json({ error: ROUND_CLOSED_ERROR }, { status: 409 });
   }
 
   const body = await request.json();

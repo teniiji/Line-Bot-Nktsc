@@ -87,6 +87,8 @@ export async function POST() {
   // a lookup per candidate.
   const rounds = await prisma.statementRound.findMany({
     select: { id: true, period: true, label: true },
+    // A closed round is frozen — see StatementRound.closedAt.
+    where: { closedAt: null },
   });
   const roundByPeriod = new Map(rounds.map((r) => [r.period, r]));
 

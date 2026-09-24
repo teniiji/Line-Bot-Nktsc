@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/prisma";
 import { calcPaymentStatus } from "@/lib/statementReconcile";
 import { fillAccounts } from "@/lib/accountHistory";
+import { countedAmount } from "@/lib/carriedDebt";
 
 // Recomputes every member's payment total for a round from the transfer rows
 // that are currently stored.
@@ -27,7 +28,13 @@ export async function recomputeRoundPayments(roundId: string): Promise<void> {
     // deduction, so they must not count toward anyone's payment.
     prisma.statementTransfer.findMany({
       where: { roundId, memberNumber: { not: null }, excludedReason: null },
-      select: { memberNumber: true, amount: true, transferredAt: true, branch: true },
+      select: {
+        memberNumber: true,
+        amount: true,
+        carriedAmount: true,
+        transferredAt: true,
+        branch: true,
+      },
     }),
   ]);
 
@@ -36,13 +43,17 @@ export async function recomputeRoundPayments(roundId: string): Promise<void> {
     { amountPaid: number; paidAt: Date | null; branches: Set<string> }
   >();
   for (const transfer of transfers) {
+    // The part staff moved to a carried debt (ชำระข้ามเดือน) pays an earlier
+    // month, not this round — see CarriedDebtPayment.
+    const counted = countedAmount(transfer);
+    if (counted <= 0) continue;
     const key = transfer.memberNumber as string;
     const entry = byMember.get(key) ?? {
       amountPaid: 0,
       paidAt: null as Date | null,
       branches: new Set<string>(),
     };
-    entry.amountPaid += transfer.amount;
+    entry.amountPaid += counted;
     if (transfer.transferredAt && (!entry.paidAt || transfer.transferredAt > entry.paidAt)) {
       entry.paidAt = transfer.transferredAt;
     }
@@ -156,13 +167,14 @@ export async function rematchRoundTransfers(roundId: string): Promise<void> {
 // rematch. Scoped to rounds that actually saw the account so this stays cheap
 // however large the directory grows.
 export async function rematchRoundsForAccount(accountNumber: string): Promise<number> {
-  const affected = await prisma.statementTransfer.findMany({
+  const found = await prisma.statementTransfer.findMany({
     where: { accountNumber },
     select: { roundId: true },
     distinct: ["roundId"],
   });
+  const affected = await openRoundsAmong(found.map((row) => row.roundId));
 
-  for (const { roundId } of affected) {
+  for (const roundId of affected) {
     await applyDirectoryAccounts(roundId);
     await rematchRoundTransfers(roundId);
     await recomputeRoundPayments(roundId);
@@ -190,12 +202,25 @@ export async function rematchRoundsForAccounts(accountNumbers: string[]): Promis
     for (const { roundId } of found) roundIds.add(roundId);
   }
 
-  for (const roundId of roundIds) {
+  const open = await openRoundsAmong([...roundIds]);
+  for (const roundId of open) {
     await applyDirectoryAccounts(roundId);
     await rematchRoundTransfers(roundId);
     await recomputeRoundPayments(roundId);
   }
-  return roundIds.size;
+  return open.length;
+}
+
+// A closed round's figures are what its carried debts were taken from, so a
+// directory edit must not quietly move its money after the fact — see
+// StatementRound.closedAt.
+async function openRoundsAmong(roundIds: string[]): Promise<string[]> {
+  if (roundIds.length === 0) return [];
+  const open = await prisma.statementRound.findMany({
+    where: { id: { in: roundIds }, closedAt: null },
+    select: { id: true },
+  });
+  return open.map((round) => round.id);
 }
 
 // Fills in the account number for members whose sheet left it blank, from

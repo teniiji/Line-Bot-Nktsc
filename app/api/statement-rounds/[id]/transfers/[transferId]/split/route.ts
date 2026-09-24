@@ -1,6 +1,7 @@
 import { randomUUID } from "crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { ROUND_CLOSED_ERROR } from "@/lib/carriedDebt";
 import { memberNumberKey } from "@/lib/memberNumber";
 import { isFullSplit, remainingAfterSplit, splitAmountProblem } from "@/lib/statementSplitTransfer";
 import { recomputeRoundPayments } from "@/lib/statementRecompute";
@@ -24,12 +25,26 @@ export async function POST(
   if (!round) {
     return NextResponse.json({ error: "ไม่พบรอบนี้" }, { status: 404 });
   }
+  if (round.closedAt) {
+    return NextResponse.json({ error: ROUND_CLOSED_ERROR }, { status: 409 });
+  }
 
   const transfer = await prisma.statementTransfer.findFirst({
     where: { id: params.transferId, roundId: round.id },
   });
   if (!transfer) {
     return NextResponse.json({ error: "ไม่พบรายการโอนนี้ในรอบนี้" }, { status: 404 });
+  }
+  // Splitting moves the line's amount between rows; the part already paying
+  // a carried debt would be moved along with it and counted twice.
+  if (transfer.carriedAmount > 0) {
+    return NextResponse.json(
+      {
+        error:
+          'รายการนี้มีบางส่วนย้ายไปชำระข้ามเดือนแล้ว — ต้องลบรายการชำระนั้นที่แถบ "ชำระข้ามเดือน" ก่อนถึงจะแบ่งยอดได้',
+      },
+      { status: 409 }
+    );
   }
 
   const body = await request.json();

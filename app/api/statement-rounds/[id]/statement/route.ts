@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { ROUND_CLOSED_ERROR } from "@/lib/carriedDebt";
+import { carriedByFingerprint } from "@/lib/carriedDebtStore";
 import {
   checkUploadedFile,
   describeReadError,
@@ -45,6 +47,9 @@ export async function POST(
   const round = await prisma.statementRound.findUnique({ where: { id: params.id } });
   if (!round) {
     return NextResponse.json({ error: "ไม่พบรอบนี้" }, { status: 404 });
+  }
+  if (round.closedAt) {
+    return NextResponse.json({ error: ROUND_CLOSED_ERROR }, { status: 409 });
   }
 
   const form = await request.formData();
@@ -144,6 +149,10 @@ export async function POST(
   );
   const refreshable = incoming.filter(({ fingerprint }) => !protectedFingerprints.has(fingerprint));
   const refreshableFingerprints = refreshable.map((row) => row.fingerprint);
+  // Also staff's own work: part of a line moved to a carried debt. Read from
+  // the payments rather than the old row, so a line that was cleared with
+  // "ล้าง 413" and uploaded again still comes back without counting twice.
+  const carried = await carriedByFingerprint(round.id, refreshableFingerprints);
 
   // Rows go in unmatched and are resolved by rematchRoundTransfers below
   // rather than being matched here: that keeps one implementation of "which
@@ -165,6 +174,7 @@ export async function POST(
         fingerprint,
         sourceFile: checked.file.name,
         excludedReason: reasons.get(fingerprint) ?? null,
+        carriedAmount: carried.get(fingerprint) ?? 0,
       })),
     }),
   ]);
@@ -231,6 +241,14 @@ export async function DELETE(
   const account = String(searchParams.get("account") ?? "").trim();
   if (!STATEMENT_ACCOUNTS[account]) {
     return NextResponse.json({ error: "ต้องระบุบัญชี (413 หรือ 447)" }, { status: 400 });
+  }
+
+  const round = await prisma.statementRound.findUnique({
+    where: { id: params.id },
+    select: { closedAt: true },
+  });
+  if (round?.closedAt) {
+    return NextResponse.json({ error: ROUND_CLOSED_ERROR }, { status: 409 });
   }
 
   const removed = await prisma.statementTransfer.deleteMany({
