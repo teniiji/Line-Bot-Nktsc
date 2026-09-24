@@ -9,7 +9,7 @@ import {
 import { isMemberDeposit } from "@/lib/statementLines";
 import { memberNumberKey } from "@/lib/memberNumber";
 import { DEDUCTION_CATEGORY } from "@/lib/statementSlipHints";
-import { canBridgeToRound } from "@/lib/roundReach";
+import { canBridgeToRound, coveredByRealTransfer } from "@/lib/roundReach";
 import { recomputeRoundPayments } from "@/lib/statementRecompute";
 import { periodOfDate } from "@/lib/deductionPeriod";
 
@@ -145,7 +145,26 @@ export async function POST(
           select: { memberNumber: true, deductionResult: true, status: true },
         });
         const member = onRound.find((m) => memberNumberKey(m.memberNumber) === memberNumber) ?? null;
-        if (canBridgeToRound(member)) {
+        // A member still showing "unpaid" only means the round has not seen
+        // enough money yet — not that this exact bank line is unaccounted
+        // for. If the round's own statement already carries a real transfer
+        // for the same account, amount and day, this line is that transfer
+        // read a second way, and writing it again would double it.
+        const realTransfers = member
+          ? await prisma.statementTransfer.findMany({
+              where: {
+                roundId: round.id,
+                accountNumber: line.senderAccount,
+                amount: line.amount,
+                manualMemberNumber: false,
+              },
+              select: { accountNumber: true, amount: true, transferredAt: true },
+            })
+          : [];
+        if (
+          canBridgeToRound(member) &&
+          !coveredByRealTransfer(realTransfers, line.senderAccount, line.amount, line.postedAt)
+        ) {
           await prisma.statementTransfer.create({
             data: {
               roundId: round.id,

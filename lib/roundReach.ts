@@ -39,6 +39,44 @@ export function canBridgeToRound(member: BridgeCandidate | null): boolean {
   return member !== null && member.deductionResult === "uncollected" && member.status === "unpaid";
 }
 
+export interface RealTransferCandidate {
+  accountNumber: string;
+  amount: number;
+  transferredAt: Date | null;
+}
+
+// Whether a real, file-uploaded transfer already covers this exact bank
+// line — same account, same amount, same calendar day. A bridged payment
+// (record route, backfill-bridge route) and its file-uploaded twin read the
+// same underlying bank line two different ways: a member's own transfer,
+// recorded once by hand from the daily view and once again when staff
+// upload the round's own statement covering the same date. Without this
+// check both get written, and the round counts the same money twice — one
+// real transfer sitting under two rows, one tagged 🔀 and one not, for
+// identical amounts on the identical minute. canBridgeToRound alone cannot
+// catch this: it only asks whether the member still owes anything, which a
+// second, unrelated bank line for the same amount would answer exactly the
+// same way.
+//
+// Day rather than minute: the two paths read the same bank export through
+// different parsers, and requiring exact-to-the-second agreement would let
+// a real duplicate through on nothing more than rounding.
+export function coveredByRealTransfer(
+  candidates: RealTransferCandidate[],
+  accountNumber: string,
+  amount: number,
+  transferredAt: Date
+): boolean {
+  const day = transferredAt.toISOString().slice(0, 10);
+  return candidates.some(
+    (t) =>
+      t.accountNumber === accountNumber &&
+      Math.abs(t.amount - amount) < 0.01 &&
+      t.transferredAt !== null &&
+      t.transferredAt.toISOString().slice(0, 10) === day
+  );
+}
+
 // After binding an account: said when no round moved.
 //
 // Silent when a round did pick it up (the count says so on its own) and when
