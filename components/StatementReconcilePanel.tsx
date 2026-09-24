@@ -8,6 +8,7 @@ import {
   formatStatementTime,
 } from "@/lib/format";
 import {
+  CarriedDebtRow,
   StatementFileSummary,
   StatementMemberRow,
   StatementRoundSummary,
@@ -17,6 +18,9 @@ import {
 } from "@/lib/types";
 
 import ConfirmDialog from "@/components/ConfirmDialog";
+import CarryToDebtForm from "@/components/CarryToDebtForm";
+import { memberNumberKey } from "@/lib/memberNumber";
+import { outstandingAtClose } from "@/lib/carriedDebt";
 import SheetMappingDialog, { type SheetPreview } from "@/components/SheetMappingDialog";
 import type { SheetMapping } from "@/lib/sheetColumns";
 import MultiSelect from "@/components/MultiSelect";
@@ -179,6 +183,12 @@ export default function StatementReconcilePanel() {
   // what is typed into it — one at a time, the same as opening a บันทึก form
   // elsewhere in the dashboard closes whichever was open before it.
   const [splittingTransfer, setSplittingTransfer] = useState<string | null>(null);
+  // The transfer whose "ชำระข้ามเดือน" form is open, if any.
+  const [carryingTransfer, setCarryingTransfer] = useState<string | null>(null);
+  // Every carried debt still owing, across all closed rounds — read once and
+  // indexed by member, to warn on a member who owes an earlier month too.
+  const [openDebts, setOpenDebts] = useState<CarriedDebtRow[]>([]);
+  const [pendingClose, setPendingClose] = useState(false);
   const [splitMemberNumber, setSplitMemberNumber] = useState("");
   const [splitAmountInput, setSplitAmountInput] = useState("");
   const [splitError, setSplitError] = useState<string | null>(null);
@@ -382,6 +392,17 @@ export default function StatementReconcilePanel() {
       if (data && data.length > 0) setSelectedId((prev) => prev ?? data[0].id);
     });
   }, [fetchRounds]);
+
+  const fetchOpenDebts = useCallback(async () => {
+    const res = await fetch("/api/carried-debts?open=1");
+    if (!res.ok) return;
+    const body = await res.json();
+    setOpenDebts(body.data ?? []);
+  }, []);
+
+  useEffect(() => {
+    fetchOpenDebts();
+  }, [fetchOpenDebts]);
 
   // The หน่วยคุม names staff maintain in ตั้งค่าระบบ. Fetched rather than
   // compiled in, so a unit renamed there shows its new name here without a
@@ -920,12 +941,72 @@ export default function StatementReconcilePanel() {
     if (!pendingDelete) return;
     const id = pendingDelete.id;
     setPendingDelete(null);
-    await fetch(`/api/statement-rounds/${id}`, { method: "DELETE" });
+    setError(null);
+    const res = await fetch(`/api/statement-rounds/${id}`, { method: "DELETE" });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      setError(body.error || "ลบรอบไม่สำเร็จ");
+      return;
+    }
     const data = await fetchRounds();
     setSelectedId(data && data.length > 0 ? data[0].id : null);
   };
 
+  // Month end: freeze the round and carry what members still owe on it to
+  // the ชำระข้ามเดือน tab. See app/api/statement-rounds/[id]/close.
+  const closeRound = async () => {
+    setPendingClose(false);
+    if (!selectedId) return;
+    setBusy(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const res = await fetch(`/api/statement-rounds/${selectedId}/close`, { method: "POST" });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setError(body.error || "ปิดรอบไม่สำเร็จ");
+        return;
+      }
+      setNotice(
+        `ปิดรอบแล้ว — ยกยอดค้าง ${body.carried} คน รวม ${formatAmount(body.carriedAmount)} ` +
+          `ไปที่แถบ "ชำระข้ามเดือน"` +
+          (body.awaiting > 0 ? ` · ${body.awaiting} คนยังรอผลการหัก ไม่ได้ถูกยกยอดไป` : "")
+      );
+      await Promise.all([fetchRound(selectedId), fetchRounds(), fetchOpenDebts()]);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const reopenRound = async () => {
+    if (!selectedId) return;
+    setBusy(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const res = await fetch(`/api/statement-rounds/${selectedId}/close`, { method: "DELETE" });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setError(body.error || "เปิดรอบไม่สำเร็จ");
+        return;
+      }
+      setNotice(`เปิดรอบอีกครั้งแล้ว — ยกเลิกยอดยกไปชำระข้ามเดือน ${body.removedDebts} รายการ`);
+      await Promise.all([fetchRound(selectedId), fetchRounds(), fetchOpenDebts()]);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const afterCarry = async () => {
+    setCarryingTransfer(null);
+    if (selectedId) await Promise.all([fetchRound(selectedId), fetchRounds()]);
+    await fetchOpenDebts();
+  };
+
   const selected = rounds.find((r) => r.id === selectedId) ?? null;
+  // A closed round is read-only — every write route refuses it anyway (see
+  // ROUND_CLOSED_ERROR); greying the controls saves staff the round trip.
+  const frozen = !!selected?.closedAt;
   const hCodes = hCodesOf(members);
   const unitLabel = (code: string) =>
     unitNames[code] ? `${code} ${unitNames[code]}` : controlUnitLabel(code);
@@ -967,6 +1048,28 @@ export default function StatementReconcilePanel() {
 
   const transfersOf = (memberNumber: string) =>
     transfers.filter((t) => t.memberNumber === memberNumber);
+  // Earlier months this member still owes (ชำระข้ามเดือน), leaving out this
+  // round's own debts when it is the closed one being looked at.
+  const debtsOf = (memberNumber: string) => {
+    const key = memberNumberKey(memberNumber);
+    return key
+      ? openDebts.filter(
+          (d) => d.sourceRoundId !== selectedId && memberNumberKey(d.memberNumber) === key
+        )
+      : [];
+  };
+  const owedEarlier = (memberNumber: string) =>
+    Math.round(
+      debtsOf(memberNumber).reduce((sum, d) => sum + d.amount - d.amountPaid, 0) * 100
+    ) / 100;
+  // Whether a transfer can still give some of itself to a carried debt:
+  // only from an open round, only money the round is still counting, and
+  // only once any carried debt exists at all.
+  const canCarry = (t: { amount: number; carriedAmount: number; excludedReason?: string | null }) =>
+    !selected?.closedAt &&
+    openDebts.length > 0 &&
+    !t.excludedReason &&
+    t.amount - t.carriedAmount > 0.01;
   // A member whose money carries an unresolved hint gets a mark in the table,
   // so the ones worth opening are visible without expanding every row.
   const memberHasHint = (memberNumber: string) =>
@@ -1151,6 +1254,7 @@ export default function StatementReconcilePanel() {
                     : "border-slate-300 text-slate-600"
                 }`}
               >
+                {r.closedAt && <span title="ปิดรอบแล้ว — ยอดค้างอยู่ที่แถบชำระข้ามเดือน">🔒 </span>}
                 {r.label}{" "}
                 <span className={r.id === selectedId ? "text-slate-300" : "text-slate-400"}>
                   ({r.paidMembers + r.overpaidMembers}/{r.totalMembers})
@@ -1161,6 +1265,22 @@ export default function StatementReconcilePanel() {
 
           {selected && (
             <>
+              {selected.closedAt ? (
+                <div className="flex flex-wrap items-center gap-3 px-4 py-3 border-b border-slate-100 text-sm bg-slate-50">
+                  <span className="text-slate-700">
+                    🔒 ปิดรอบแล้วเมื่อ {formatStatementDate(selected.closedAt)} — ยอดที่ยังค้างตอนปิดย้ายไปอยู่ที่แถบ{" "}
+                    <strong>ชำระข้ามเดือน</strong> แล้ว รอบนี้แก้ไม่ได้อีก (ดูได้อย่างเดียว)
+                  </span>
+                  <button
+                    onClick={reopenRound}
+                    disabled={busy}
+                    title="ใช้เมื่อปิดรอบผิด — ทำได้เฉพาะตอนที่ยังไม่มีใครชำระหนี้ข้ามเดือนของรอบนี้"
+                    className="ml-auto text-slate-600 hover:underline disabled:opacity-50"
+                  >
+                    เปิดรอบอีกครั้ง
+                  </button>
+                </div>
+              ) : (
               <div className="flex flex-wrap items-center gap-3 px-4 py-3 border-b border-slate-100 text-sm">
                 {/* The order on screen is the order of the month: the list
                     payroll was given, then what each unit could take off it. */}
@@ -1205,12 +1325,21 @@ export default function StatementReconcilePanel() {
                   อัปโหลด Statement
                 </button>
                 <button
+                  onClick={() => setPendingClose(true)}
+                  disabled={busy || selected.populationMembers === 0}
+                  title="สิ้นเดือน: ล็อกรอบนี้ แล้วยกยอดที่ยังค้างไปตั้งเป็นหนี้ที่แถบชำระข้ามเดือน"
+                  className="ml-auto px-3 py-1.5 border border-slate-300 rounded disabled:opacity-50"
+                >
+                  🔒 ปิดรอบ
+                </button>
+                <button
                   onClick={() => setPendingDelete(selected)}
-                  className="ml-auto text-red-600 hover:underline"
+                  className="text-red-600 hover:underline"
                 >
                   ลบรอบนี้
                 </button>
               </div>
+              )}
 
               {selected.awaitingMembers > 0 && (
                 <div className="px-4 py-2 border-b border-slate-100">
@@ -1633,6 +1762,20 @@ export default function StatementReconcilePanel() {
                               {m.note && (
                                 <span className="text-xs text-slate-400"> · {m.note}</span>
                               )}
+                              {/* A member who pays this month may also owe an
+                                  earlier one. Which debt a transfer settles is
+                                  staff's call — this only says there is a
+                                  choice to make. */}
+                              {owedEarlier(m.memberNumber) > 0 && (
+                                <span
+                                  className="block text-xs text-amber-700"
+                                  title={debtsOf(m.memberNumber)
+                                    .map((d) => `${d.sourceLabel} ค้าง ${formatAmount(d.amount - d.amountPaid)}`)
+                                    .join(" · ")}
+                                >
+                                  ⚠️ ค้างข้ามเดือน {formatAmount(owedEarlier(m.memberNumber))}
+                                </span>
+                              )}
                             </td>
                             {/* The หน่วยคุม and the สังกัด under it, in one
                                 column: a code on its own says nothing to
@@ -1803,13 +1946,21 @@ export default function StatementReconcilePanel() {
                                         </span>
                                       )
                                     )}
+                                    {t.carriedAmount > 0 && (
+                                      <span
+                                        className="text-xs text-amber-700"
+                                        title='ส่วนนี้ไม่นับในรอบนี้ — นับเป็นการชำระหนี้ข้ามเดือนแทน ย้อนกลับได้ที่แถบ "ชำระข้ามเดือน"'
+                                      >
+                                        ↪ ชำระข้ามเดือน {formatAmount(t.carriedAmount)}
+                                      </span>
+                                    )}
                                     <span className="ml-auto flex items-center gap-2">
                                       <select
                                         value={t.excludedReason ?? ""}
                                         onChange={(e) =>
                                           setTransferReason(t.id, e.target.value || null)
                                         }
-                                        disabled={busy}
+                                        disabled={busy || frozen}
                                         className={`border rounded px-2 py-1 text-xs ${
                                           t.excludedReason
                                             ? "border-amber-300 bg-amber-50"
@@ -1828,13 +1979,35 @@ export default function StatementReconcilePanel() {
                                         onClick={() =>
                                           splittingTransfer === t.id ? closeSplit() : openSplit(t)
                                         }
-                                        disabled={busy}
+                                        disabled={busy || frozen}
                                         className="text-xs text-slate-600 border border-slate-300 rounded px-2 py-1 hover:bg-slate-50 disabled:opacity-50"
                                         title="เงินก้อนนี้รวมของสมาชิกคนอื่นไว้ด้วย — ระบุได้ว่าจะย้ายเท่าไหร่ไปให้ใคร"
                                       >
                                         {splittingTransfer === t.id ? "ยกเลิกแบ่งยอด" : "แบ่งให้สมาชิกอื่น"}
                                       </button>
+                                      {canCarry(t) && (
+                                        <button
+                                          type="button"
+                                          onClick={() =>
+                                            setCarryingTransfer(carryingTransfer === t.id ? null : t.id)
+                                          }
+                                          disabled={busy}
+                                          className="text-xs text-amber-800 border border-amber-300 rounded px-2 py-1 hover:bg-amber-50 disabled:opacity-50"
+                                          title="เงินก้อนนี้จ่ายหนี้ของเดือนก่อนที่ปิดรอบไปแล้ว — ย้ายไปนับที่แถบชำระข้ามเดือน"
+                                        >
+                                          {carryingTransfer === t.id ? "ยกเลิก" : "ชำระข้ามเดือน"}
+                                        </button>
+                                      )}
                                     </span>
+                                    {carryingTransfer === t.id && selectedId && (
+                                      <CarryToDebtForm
+                                        roundId={selectedId}
+                                        transfer={t}
+                                        defaultMemberNumber={m.memberNumber}
+                                        openDebts={openDebts.filter((d) => d.sourceRoundId !== selectedId)}
+                                        onDone={afterCarry}
+                                      />
+                                    )}
                                     {splittingTransfer === t.id && (
                                       <div className="w-full flex flex-wrap items-center gap-2 pt-1 pl-1 border-t border-dashed border-slate-200 mt-1">
                                         <span className="text-xs text-slate-500">ย้าย</span>
@@ -1882,7 +2055,7 @@ export default function StatementReconcilePanel() {
                                         ? closeCash()
                                         : openCash(m.memberNumber)
                                     }
-                                    disabled={busy}
+                                    disabled={busy || frozen}
                                     className="text-xs text-slate-600 border border-slate-300 rounded px-2 py-1 hover:bg-slate-50 disabled:opacity-50"
                                     title="สมาชิกจ่ายเป็นเงินสดที่สำนักงาน — ไม่มีบรรทัดในสเตทเมนต์ธนาคารให้จับคู่ ต้องบันทึกตรงนี้"
                                   >
@@ -1950,7 +2123,7 @@ export default function StatementReconcilePanel() {
               {recordedBindings.length > 0 && (
                 <button
                   onClick={() => setConfirmRecorded(true)}
-                  disabled={busy}
+                  disabled={busy || frozen}
                   className="ml-3 text-xs px-2.5 py-1 border border-sky-300 bg-sky-50 text-sky-800 rounded disabled:opacity-50"
                   title="เงินเข้าประจำวันบันทึกไว้แล้วว่าบัญชีเหล่านี้เป็นของใคร — ผูกให้ทีเดียว โดยขอดูรายการก่อน"
                   aria-label="ใช้เลขที่เงินเข้าประจำวันบันทึกไว้ทั้งหมด"
@@ -2013,7 +2186,7 @@ export default function StatementReconcilePanel() {
                             onChange={(e) =>
                               e.target.value && setTransferReason(t.id, e.target.value)
                             }
-                            disabled={busy}
+                            disabled={busy || frozen}
                             className="border border-slate-300 rounded px-2 py-1 text-xs"
                             title="เงินก้อนนี้ไม่ใช่ค่าหักไม่ได้ — เอาออกจากรายการที่ต้องตาม"
                           >
@@ -2179,10 +2352,16 @@ export default function StatementReconcilePanel() {
                   </thead>
                   <tbody>
                     {outsideRound.map((t) => (
-                      <tr key={t.id} className="border-t border-slate-100 hover:bg-slate-50">
+                      <Fragment key={t.id}>
+                      <tr className="border-t border-slate-100 hover:bg-slate-50">
                         <td className="px-2 py-1.5 font-mono text-xs">{t.accountNumber}</td>
                         <td className="px-2 py-1.5 num text-right whitespace-nowrap font-medium">
                           {formatAmount(t.amount)}
+                          {t.carriedAmount > 0 && (
+                            <span className="block text-xs font-normal text-amber-700">
+                              ↪ ชำระข้ามเดือน {formatAmount(t.carriedAmount)}
+                            </span>
+                          )}
                         </td>
                         <td className="px-2 py-1.5 whitespace-nowrap text-slate-500">
                           <DateTimeCell iso={t.transferredAt} />
@@ -2230,10 +2409,43 @@ export default function StatementReconcilePanel() {
                               >
                                 แก้เจ้าของ
                               </button>
+                              {/* Not on this round's list, but may still owe a
+                                  month that has been closed — the commonest
+                                  way a carried debt gets paid. */}
+                              {owedEarlier(t.boundTo.memberNumber) > 0 && (
+                                <span className="block text-xs text-amber-700">
+                                  ⚠️ ค้างข้ามเดือน {formatAmount(owedEarlier(t.boundTo.memberNumber))}
+                                </span>
+                              )}
+                              {canCarry(t) && (
+                                <button
+                                  onClick={() =>
+                                    setCarryingTransfer(carryingTransfer === t.id ? null : t.id)
+                                  }
+                                  disabled={busy}
+                                  className="ml-2 text-xs text-amber-800 border border-amber-300 rounded px-2 py-0.5 hover:bg-amber-50 disabled:opacity-50"
+                                >
+                                  {carryingTransfer === t.id ? "ยกเลิก" : "ชำระข้ามเดือน"}
+                                </button>
+                              )}
                             </>
                           )}
                         </td>
                       </tr>
+                      {carryingTransfer === t.id && selectedId && (
+                        <tr className="bg-amber-50/40">
+                          <td colSpan={5} className="px-2 pb-2">
+                            <CarryToDebtForm
+                              roundId={selectedId}
+                              transfer={t}
+                              defaultMemberNumber={t.boundTo.memberNumber}
+                              openDebts={openDebts.filter((d) => d.sourceRoundId !== selectedId)}
+                              onDone={afterCarry}
+                            />
+                          </td>
+                        </tr>
+                      )}
+                      </Fragment>
                     ))}
                   </tbody>
                 </table>
@@ -2283,7 +2495,7 @@ export default function StatementReconcilePanel() {
                           <select
                             value={t.excludedReason ?? ""}
                             onChange={(e) => setTransferReason(t.id, e.target.value || null)}
-                            disabled={busy}
+                            disabled={busy || frozen}
                             className="border border-amber-300 bg-amber-50 rounded px-2 py-1 text-xs"
                           >
                             <option value="">นับเป็นจ่ายค่าหักไม่ได้</option>
@@ -2325,6 +2537,39 @@ export default function StatementReconcilePanel() {
         onChange={uploadStatement}
         className="hidden"
       />
+
+      <ConfirmDialog
+        open={pendingClose}
+        title={`ปิดรอบ ${selected?.label ?? ""}?`}
+        tone="neutral"
+        confirmLabel="ปิดรอบ"
+        onConfirm={closeRound}
+        onCancel={() => setPendingClose(false)}
+      >
+        {(() => {
+          // The same rule the close route applies, so the count asked about
+          // is the count that gets carried.
+          const carrying = members.filter((m) => outstandingAtClose(m) > 0);
+          const carryingAmount = carrying.reduce((sum, m) => sum + outstandingAtClose(m), 0);
+          const awaiting = members.filter((m) => m.deductionResult === "awaiting").length;
+          return (
+            <div className="space-y-2 text-sm text-slate-700">
+              <p>
+                ยอดที่ยังค้างจะถูกยกไปตั้งเป็นหนี้ที่แถบ <strong>ชำระข้ามเดือน</strong>:{" "}
+                <strong className="num">{carrying.length}</strong> คน รวม{" "}
+                <strong className="num">{formatAmount(carryingAmount)}</strong>
+              </p>
+              <p>หลังปิดแล้วรอบนี้จะแก้ไม่ได้ (อัปโหลดไฟล์เพิ่ม บันทึกเงินสด แบ่งยอด ฯลฯ ไม่ได้)</p>
+              {awaiting > 0 && (
+                <p className="text-amber-800">
+                  ⚠️ ยังมี <strong className="num">{awaiting}</strong> คนที่หน่วยยังไม่ส่งผลการหัก —
+                  คนกลุ่มนี้จะไม่ถูกยกยอดไป เพราะยังไม่รู้ว่าค้างหรือไม่
+                </p>
+              )}
+            </div>
+          );
+        })()}
+      </ConfirmDialog>
 
       <ConfirmDialog
         open={pendingDelete !== null}

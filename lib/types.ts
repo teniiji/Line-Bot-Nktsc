@@ -181,6 +181,9 @@ export interface OrganizationUnitEntry {
 export interface StatementRoundSummary {
   id: string;
   period: string;
+  // Set once the round is cut off at month end and what was still owed has
+  // moved to ชำระข้ามเดือน — see StatementRound.closedAt.
+  closedAt: string | null;
   label: string;
   createdAt: string;
   totalMembers: number;
@@ -268,6 +271,9 @@ export interface StatementTransferRow {
   // or partial transfer moved to a different member — rather than it being
   // read off the account. See lib/statementSplitTransfer.ts.
   manualMemberNumber: boolean;
+  // How much of this line staff moved to a carried debt (ชำระข้ามเดือน)
+  // instead of counting it toward this round.
+  carriedAmount: number;
   // A slip the member filed through the bot under some other purpose that
   // lines up with this transfer — a prompt to check, never a decision.
   slipHint: { category: string; amount: number; date: string } | null;
@@ -283,6 +289,7 @@ export interface StatementUnmatchedRow {
   id: string;
   accountNumber: string;
   amount: number;
+  carriedAmount: number;
   transferredAt: string | null;
   branch: string | null;
   description: string | null;
@@ -420,4 +427,33 @@ export interface DailyReconcileResult {
   // False when no statement covering this day has been uploaded yet — a
   // different thing from a day on which no money arrived.
   loaded: boolean;
+}
+
+// ชำระข้ามเดือน — see CarriedDebt in prisma/schema.prisma.
+export interface CarriedDebtPaymentRow {
+  id: string;
+  amount: number;
+  paidAt: string;
+  method: "transfer" | "cash";
+  // The open round the transfer was taken out of, when it was a transfer.
+  roundLabel: string | null;
+  accountNumber: string | null;
+  note: string | null;
+}
+
+export interface CarriedDebtRow {
+  id: string;
+  sourceRoundId: string;
+  sourceLabel: string;
+  memberNumber: string;
+  name: string;
+  hCode: string | null;
+  unitName: string | null;
+  unitCode: string | null;
+  accountNumber: string | null;
+  amount: number;
+  amountPaid: number;
+  paidAt: string | null;
+  status: "paid" | "overpaid" | "unpaid";
+  payments: CarriedDebtPaymentRow[];
 }

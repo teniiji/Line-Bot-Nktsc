@@ -137,9 +137,12 @@ export async function POST(
     try {
       const round = await prisma.statementRound.findUnique({
         where: { period: periodOfDate(line.postedAt) },
-        select: { id: true, period: true, label: true },
+        select: { id: true, period: true, label: true, closedAt: true },
       });
-      if (round) {
+      // A closed round's month has been cut off and set up as carried debt;
+      // money for it is placed on the ชำระข้ามเดือน tab by a person, not
+      // written into the frozen round here.
+      if (round && !round.closedAt) {
         const onRound = await prisma.statementMember.findMany({
           where: { roundId: round.id },
           select: { memberNumber: true, deductionResult: true, status: true },

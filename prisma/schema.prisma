@@ -680,8 +680,71 @@ model StatementRound {
   awaitingUnits   Int   @default(0)
   awaitingMembers Int   @default(0)
   awaitingAmount  Float @default(0)
+  // Set at month end, when the cooperative cuts the round off and sets up
+  // whatever is still owed as a debt of its own (CarriedDebt). A closed
+  // round is frozen: its figures are what the carried debts were taken
+  // from, so a late upload changing them would leave the two disagreeing.
+  closedAt  DateTime?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+}
+
+// What a member still owed on a round when it was closed — ชำระข้ามเดือน.
+//
+// One row per member per closed round rather than one running total per
+// member: staff need to see that a payment settled August and not July, and
+// the cooperative's own books cut off month by month. Name, unit and account
+// are copied at close so the debt still reads correctly after the round's
+// own list is replaced or the round is deleted.
+model CarriedDebt {
+  id            String    @id @default(cuid())
+  sourceRoundId String
+  // The source round's label ("สิงหาคม 2569"), kept so a debt still says
+  // which month it came from even if that round is later deleted.
+  sourceLabel   String
+  memberNumber  String
+  name          String
+  hCode         String?
+  unitName      String?
+  unitCode      String?
+  accountNumber String?
+  // Outstanding on the source round at the moment it was closed.
+  amount        Float
+  // Summed from CarriedDebtPayment by recomputeCarriedDebt — never written
+  // any other way, for the same reason StatementMember.amountPaid is not.
+  amountPaid    Float     @default(0)
+  paidAt        DateTime?
+  // paid / overpaid / unpaid, the same rule as StatementMember.status.
+  status        String    @default("unpaid")
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  @@unique([sourceRoundId, memberNumber])
+  @@index([memberNumber])
+}
+
+// One payment toward a carried debt.
+//
+// A transfer is taken out of the open round it arrived in (see
+// app/api/statement-rounds/[id]/transfers/[transferId]/carry) and located
+// again by roundId + fingerprint rather than by the transfer's id: a
+// statement re-upload deletes and recreates rows by fingerprint, and the
+// payment has to find — and keep excluding — the same bank line afterwards.
+// Cash has neither, and is entered on the ชำระข้ามเดือน tab directly.
+model CarriedDebtPayment {
+  id            String   @id @default(cuid())
+  debtId        String
+  amount        Float
+  paidAt        DateTime
+  method        String   // "transfer" | "cash"
+  roundId       String?
+  fingerprint   String?
+  accountNumber String?
+  note          String?
+  createdAt     DateTime @default(now())
+
+  @@index([debtId])
+  @@index([roundId, fingerprint])
 }
 
 // One member who could not be deducted this round, plus whatever the bank
@@ -826,6 +889,13 @@ model StatementTransfer {
   // purpose) and the part left behind (amount now disagrees with what the
   // bank line reported, on purpose).
   manualMemberNumber Boolean @default(false)
+  // How much of this line staff have taken out of this round to pay a
+  // carried debt (ชำระข้ามเดือน) instead — the sum of the CarriedDebtPayment
+  // rows pointing at this round and fingerprint. Kept beside amount rather
+  // than subtracted from it so taking a payment back is just a smaller sum,
+  // and so a re-upload that recreates the row can restore it from the
+  // payments. recomputeRoundPayments counts amount - carriedAmount.
+  carriedAmount Float     @default(0)
   createdAt     DateTime  @default(now())
 
   @@unique([roundId, fingerprint])

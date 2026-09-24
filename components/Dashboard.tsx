@@ -27,6 +27,7 @@ import TestDataCleanupPanel from "@/components/TestDataCleanupPanel";
 import DeductionRoundsPanel from "@/components/DeductionRoundsPanel";
 import OrganizationUnitsPanel from "@/components/OrganizationUnitsPanel";
 import StatementReconcilePanel from "@/components/StatementReconcilePanel";
+import CarriedDebtsPanel from "@/components/CarriedDebtsPanel";
 import DailyReconcilePanel from "@/components/DailyReconcilePanel";
 import LineGroupsPanel from "@/components/LineGroupsPanel";
 import MemberBankAccountsPanel from "@/components/MemberBankAccountsPanel";
@@ -316,6 +317,11 @@ export default function Dashboard() {
                 <MemberBankAccountsPanel />
               </div>
             ),
+          },
+          {
+            id: "carried-debts",
+            label: "ชำระข้ามเดือน",
+            content: <CarriedDebtsPanel />,
           },
           {
             id: "deductions",
