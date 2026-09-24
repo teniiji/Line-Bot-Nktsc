@@ -70,7 +70,15 @@ export async function POST(
     await prisma.$transaction([
       prisma.statementTransfer.update({
         where: { id: transfer.id },
-        data: { amount: remainingAfterSplit(transfer.amount, amount) },
+        data: {
+          amount: remainingAfterSplit(transfer.amount, amount),
+          // Its memberNumber is still the account's own, but the amount is
+          // no longer what the bank line said — a re-upload of the same
+          // statement (exports overlap date ranges routinely) refreshes a
+          // fingerprint it already has straight from the file otherwise,
+          // which would silently put the split-off share back.
+          manualMemberNumber: true,
+        },
       }),
       prisma.statementTransfer.create({
         data: {
