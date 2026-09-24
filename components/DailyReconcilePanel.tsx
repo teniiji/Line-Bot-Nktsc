@@ -266,6 +266,10 @@ export default function DailyReconcilePanel() {
   // Said when something done here has not reached the หักไม่ได้ round, which
   // is invisible otherwise — see lib/roundReach.ts.
   const [roundNote, setRoundNote] = useState<string | null>(null);
+  const [backfilling, setBackfilling] = useState(false);
+  // One-time catch-up for recordings filed before the bridge above existed
+  // — see app/api/statement-lines/backfill-bridge/route.ts.
+  const [backfillNotice, setBackfillNotice] = useState<string | null>(null);
 
   const fetchDay = useCallback(async (start: string, end: string) => {
     setLoading(true);
@@ -559,6 +563,34 @@ export default function DailyReconcilePanel() {
       );
     }
     await fetchDay(from, to);
+  };
+
+  // Runs the same bridge the record route above now does live, but over
+  // everything ever filed as the deduction category — catches recordings
+  // made before that fix existed. Safe to click more than once: anything
+  // already bridged is skipped, so a second click just confirms there is
+  // nothing left.
+  const runBackfillBridge = async () => {
+    setBackfilling(true);
+    setBackfillNotice(null);
+    try {
+      const res = await fetch("/api/statement-lines/backfill-bridge", { method: "POST" });
+      const body = await res.json();
+      if (!res.ok) {
+        setBackfillNotice(body.error || "เชื่อมย้อนหลังไม่สำเร็จ");
+        return;
+      }
+      setBackfillNotice(
+        body.bridged > 0
+          ? `เชื่อมย้อนหลังสำเร็จ ${body.bridged} รายการ` +
+            (body.notEligible > 0 ? ` · อีก ${body.notEligible} รายการไม่เข้าเงื่อนไข (ไม่ได้ค้างอยู่ในรอบล่าสุด)` : "")
+          : `ไม่มีรายการที่ต้องเชื่อมย้อนหลัง` +
+            (body.notEligible > 0 ? ` (${body.notEligible} รายการไม่เข้าเงื่อนไข)` : "")
+      );
+      await fetchDay(from, to);
+    } finally {
+      setBackfilling(false);
+    }
   };
 
   // "The bank's code does not know it, but that one is a member paying in" —
@@ -858,15 +890,26 @@ export default function DailyReconcilePanel() {
           <strong className="text-amber-700">เลือกบัญชีให้ตรงกับไฟล์</strong>
         </span>
         <button
+          onClick={runBackfillBridge}
+          disabled={backfilling}
+          title='ไล่หารายการที่เคยกดบันทึกเป็น "ชำระเก็บไม่ได้รายเดือน" ไว้ก่อนหน้า แต่รอบยังไม่เห็น แล้วเชื่อมให้ — ไม่กระทบรายการที่เชื่อมไปแล้ว'
+          className="ml-auto text-xs text-slate-500 hover:underline disabled:opacity-40"
+        >
+          {backfilling ? "กำลังเชื่อม…" : "🔄 เชื่อมรายการเก่าที่ตกค้างกับรอบ"}
+        </button>
+        <button
           onClick={() => {
             setShowUploads((v) => !v);
             if (!showUploads) fetchUploads();
           }}
-          className="ml-auto text-xs text-slate-500 hover:underline"
+          className="text-xs text-slate-500 hover:underline"
         >
           {showUploads ? "▾" : "▸"} ไฟล์ Statement ที่อัปไว้
         </button>
       </div>
+      {backfillNotice && (
+        <p className="px-4 py-2 text-sm text-sky-800 bg-sky-50">{backfillNotice}</p>
+      )}
 
       {/* The one action on this page that repeating cannot undo, so the only
           one that needs a list and a way out. See lib/statementUploads.ts. */}
