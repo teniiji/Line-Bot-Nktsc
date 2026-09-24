@@ -187,6 +187,22 @@ describe("sortStatementMembers", () => {
     expect(rows[0].memberNumber).toBe("001");
   });
 
+  it("sorts by name with the honorific stripped, not by it", () => {
+    // "นาง"/"นาย"/"นางสาว" all sort before every Thai given name — left in,
+    // the whole table would group by title first and name second.
+    const mixed = [
+      member({ memberNumber: "a", name: "นายบุญมี ศรีสุข" }),
+      member({ memberNumber: "b", name: "นางสาวอารีย์ ทองดี" }),
+      member({ memberNumber: "c", name: "นางกัลยา วงศ์ใหญ่" }),
+    ];
+    // By given name once the title is gone: กัลยา, บุญมี, อารีย์.
+    expect(sortStatementMembers(mixed, "name").map((m) => m.memberNumber)).toEqual([
+      "c",
+      "a",
+      "b",
+    ]);
+  });
+
   it("sorts by หน่วยคุม as a number, then สังกัด, then member number", () => {
     const mixed = [
       member({ memberNumber: "b", hCode: "10", unitName: "ก" }),
