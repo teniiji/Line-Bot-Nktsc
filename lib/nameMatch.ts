@@ -20,7 +20,7 @@ const HONORIFIC_PREFIXES = [
   "ms",
 ];
 
-function stripHonorific(name: string): string {
+export function stripHonorific(name: string): string {
   const lower = name.trim().toLowerCase();
   for (const prefix of HONORIFIC_PREFIXES) {
     if (lower.startsWith(prefix)) {

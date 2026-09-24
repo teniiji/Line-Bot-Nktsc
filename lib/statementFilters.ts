@@ -1,4 +1,5 @@
 import { StatementMemberRow } from "./types";
+import { stripHonorific } from "./nameMatch";
 
 // Filtering/sorting for the เทียบ Statement table. Kept out of the component
 // because these are the rules staff actually reason about ("who in this unit
@@ -150,7 +151,9 @@ type Comparator = (a: StatementMemberRow, b: StatementMemberRow) => number;
 
 const COMPARATORS: Record<Exclude<StatementSort, "default">, Comparator> = {
   outstanding: (a, b) => outstandingOf(b) - outstandingOf(a),
-  name: (a, b) => a.name.localeCompare(b.name, "th"),
+  // Stripped of นาย/นาง/นางสาว first — otherwise the sort groups by honorific
+  // before it groups by name, which is not what "ชื่อ ก-ฮ" means to staff.
+  name: (a, b) => stripHonorific(a.name).localeCompare(stripHonorific(b.name), "th"),
   memberNumber: byMemberNumber,
   // The หน่วยคุม carries its own second key: inside a unit, the rows belong
   // grouped by the สังกัด they came from rather than interleaved.
