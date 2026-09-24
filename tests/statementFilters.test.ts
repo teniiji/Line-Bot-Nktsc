@@ -78,6 +78,17 @@ describe("filterStatementMembers", () => {
     expect(found.map((m) => m.memberNumber)).toEqual(["003"]);
   });
 
+  it("finds members with at least one cash payment", () => {
+    const withCash: StatementMemberRow[] = [
+      ...rows,
+      member({ memberNumber: "005", paidBranch: "เงินสด" }),
+      // Paid partly by transfer, partly by cash — still counts.
+      member({ memberNumber: "006", paidBranch: "หนองคาย + เงินสด" }),
+    ];
+    const found = filterStatementMembers(withCash, { ...base, status: "cash" });
+    expect(found.map((m) => m.memberNumber)).toEqual(["005", "006"]);
+  });
+
   it("filters by unit", () => {
     const found = filterStatementMembers(rows, {
       ...base,

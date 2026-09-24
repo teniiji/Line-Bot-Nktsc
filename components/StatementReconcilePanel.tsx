@@ -936,6 +936,7 @@ export default function StatementReconcilePanel() {
     members.filter((m) => matchesStatus(m, status)).length;
   const missingAccountCount = countMatching("no_account");
   const manyAccountsCount = countMatching("many_accounts");
+  const cashCount = countMatching("cash");
 
   const transfersOf = (memberNumber: string) =>
     transfers.filter((t) => t.memberNumber === memberNumber);
@@ -1312,6 +1313,16 @@ export default function StatementReconcilePanel() {
                   count={selected.unpaidMembers}
                   countClass="text-red-600"
                 />
+                {cashCount > 0 && (
+                  <FilterChip
+                    active={statusFilter === "cash"}
+                    onClick={() => setStatusFilter(statusFilter === "cash" ? "all" : "cash")}
+                    label="💵 จ่ายเงินสด"
+                    count={cashCount}
+                    countClass="text-sky-700"
+                    title="มีอย่างน้อยหนึ่งรายการที่บันทึกว่าจ่ายเป็นเงินสด ไม่ใช่จากไฟล์ Statement"
+                  />
+                )}
                 {manyAccountsCount > 0 && (
                   <FilterChip
                     active={statusFilter === "many_accounts"}
