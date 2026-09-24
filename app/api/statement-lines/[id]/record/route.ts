@@ -8,6 +8,9 @@ import {
 } from "@/lib/depositRecord";
 import { isMemberDeposit } from "@/lib/statementLines";
 import { memberNumberKey } from "@/lib/memberNumber";
+import { DEDUCTION_CATEGORY } from "@/lib/statementSlipHints";
+import { canBridgeToRound } from "@/lib/roundReach";
+import { recomputeRoundPayments } from "@/lib/statementRecompute";
 
 export const dynamic = "force-dynamic";
 
@@ -78,8 +81,15 @@ export async function POST(
     select: { memberName: true },
   });
 
+  let expense: {
+    id: string;
+    amount: number;
+    category: string;
+    memberNumber: string | null;
+    memberFullName: string | null;
+  };
   try {
-    const expense = await prisma.expense.create({
+    expense = await prisma.expense.create({
       data: {
         amount: line.amount,
         category,
@@ -96,18 +106,69 @@ export async function POST(
       },
       select: { id: true, amount: true, category: true, memberNumber: true, memberFullName: true },
     });
-
-    return NextResponse.json({
-      ...expense,
-      // Flagged rather than refused, the same way the bank-account directory
-      // flags a member number the roster has never heard of: it is usually a
-      // typo, and staff should see it rather than have the work stopped.
-      inRoster: rosterMatch !== null,
-    });
   } catch (err) {
     if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === "P2002") {
       return NextResponse.json({ error: ALREADY_RECORDED_ERROR }, { status: 409 });
     }
     throw err;
   }
+
+  // Filing this as the deduction category is staff saying "this settles what
+  // this member owes the newest หักไม่ได้ round" — the same fact the round's
+  // own statement upload would have established, just learned by phone
+  // instead of by file. Writing it through, when the round agrees this
+  // member still owes, closes the gap lib/roundReach.ts otherwise only warns
+  // about. Best-effort and never fatal to the recording above: the
+  // transaction just filed is the thing staff came here for, and is real
+  // whether or not a round happens to be watching this member right now.
+  let bridgedRound: { period: string; label: string } | null = null;
+  if (category === DEDUCTION_CATEGORY && line.senderAccount) {
+    try {
+      const latestRound = await prisma.statementRound.findFirst({
+        orderBy: { period: "desc" },
+        select: { id: true, period: true, label: true },
+      });
+      if (latestRound) {
+        const onRound = await prisma.statementMember.findMany({
+          where: { roundId: latestRound.id },
+          select: { memberNumber: true, deductionResult: true, status: true },
+        });
+        const member = onRound.find((m) => memberNumberKey(m.memberNumber) === memberNumber) ?? null;
+        if (canBridgeToRound(member)) {
+          await prisma.statementTransfer.create({
+            data: {
+              roundId: latestRound.id,
+              memberNumber: member!.memberNumber,
+              accountNumber: line.senderAccount,
+              amount: line.amount,
+              transferredAt: line.postedAt,
+              account: line.account,
+              branch: line.branch,
+              description: line.description,
+              // Traceable back to the line it came from, and never mistaken
+              // for a fingerprint a real statement upload could also
+              // produce — see manualMemberNumber on StatementTransfer for
+              // why a collision there would matter.
+              fingerprint: `line:${line.fingerprint}`,
+              sourceFile: line.sourceFile,
+              manualMemberNumber: true,
+            },
+          });
+          await recomputeRoundPayments(latestRound.id);
+          bridgedRound = { period: latestRound.period, label: latestRound.label };
+        }
+      }
+    } catch (err) {
+      console.error("statement line not bridged to round", err);
+    }
+  }
+
+  return NextResponse.json({
+    ...expense,
+    // Flagged rather than refused, the same way the bank-account directory
+    // flags a member number the roster has never heard of: it is usually a
+    // typo, and staff should see it rather than have the work stopped.
+    inRoster: rosterMatch !== null,
+    bridgedRound,
+  });
 }

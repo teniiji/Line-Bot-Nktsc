@@ -18,7 +18,11 @@ import { bankFromDescription } from "@/lib/thaiBanks";
 import { cooperativeToday, shiftDay } from "@/lib/cooperativeClock";
 import { describeDeductionHint, type DeductionHint } from "@/lib/deductionMatch";
 import { overlapsAnotherAccount, type StatementUpload } from "@/lib/statementUploads";
-import { bindMissedRoundNote, recordMissedRoundNote } from "@/lib/roundReach";
+import {
+  bindMissedRoundNote,
+  recordBridgedRoundNote,
+  recordMissedRoundNote,
+} from "@/lib/roundReach";
 import { DEDUCTION_CATEGORY } from "@/lib/statementSlipHints";
 import {
   SECTION_OPEN_BY_DEFAULT,
@@ -462,11 +466,15 @@ export default function DailyReconcilePanel() {
           (body.inRoster ? "" : " — ⚠️ ไม่พบเลขสมาชิกนี้ในทะเบียนสมาชิก ตรวจสอบอีกครั้ง")
       );
       // A round keeps score from the statement uploaded into it and has never
-      // read a transaction, so filing one as a deduction payment leaves the
-      // member still owing there. Said only for that category: every other
-      // one has nothing to do with a round.
+      // read a transaction, so filing one as a deduction payment used to
+      // leave the member still owing there — the route now writes it
+      // through when the round agrees this member still owes (see
+      // lib/roundReach.ts), so the confirmation replaces the warning
+      // wherever that happened.
       setRoundNote(
-        recordMissedRoundNote(actCategory, DEDUCTION_CATEGORY, data?.round ?? null)
+        body.bridgedRound
+          ? recordBridgedRoundNote(body.bridgedRound, 1, 1)
+          : recordMissedRoundNote(actCategory, DEDUCTION_CATEGORY, data?.round ?? null)
       );
 
       // Recording says what this one payment was. It does not teach the
@@ -507,6 +515,8 @@ export default function DailyReconcilePanel() {
     setActionNotice(null);
     setRoundNote(null);
     let recorded = 0;
+    let bridged = 0;
+    let bridgedRound: { period: string; label: string } | null = null;
     const failures: string[] = [];
     try {
       // Sequential, not Promise.all: these are ordinary POSTs against the
@@ -521,6 +531,11 @@ export default function DailyReconcilePanel() {
         });
         if (res.ok) {
           recorded += 1;
+          const body = await res.json().catch(() => ({}) as { bridgedRound?: unknown });
+          if (body.bridgedRound) {
+            bridged += 1;
+            bridgedRound = body.bridgedRound as { period: string; label: string };
+          }
         } else {
           const body = await res.json().catch(() => ({}) as { error?: string });
           failures.push(body.error || "บันทึกไม่สำเร็จ");
@@ -537,7 +552,11 @@ export default function DailyReconcilePanel() {
         : `บันทึกไม่สำเร็จทั้ง ${failures.length} รายการ (${failures[0]})`
     );
     if (recorded > 0) {
-      setRoundNote(recordMissedRoundNote(DEDUCTION_CATEGORY, DEDUCTION_CATEGORY, data?.round ?? null));
+      setRoundNote(
+        bridgedRound
+          ? recordBridgedRoundNote(bridgedRound, bridged, recorded)
+          : recordMissedRoundNote(DEDUCTION_CATEGORY, DEDUCTION_CATEGORY, data?.round ?? null)
+      );
     }
     await fetchDay(from, to);
   };
