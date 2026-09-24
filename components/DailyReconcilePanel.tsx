@@ -270,6 +270,11 @@ export default function DailyReconcilePanel() {
   // One-time catch-up for recordings filed before the bridge above existed
   // — see app/api/statement-lines/backfill-bridge/route.ts.
   const [backfillNotice, setBackfillNotice] = useState<string | null>(null);
+  const [fixingRounds, setFixingRounds] = useState(false);
+  // One-time repair for bridged transfers placed by "newest round" instead
+  // of the round the payment's own date falls in — see
+  // app/api/statement-lines/fix-bridge-rounds/route.ts.
+  const [fixRoundsNotice, setFixRoundsNotice] = useState<string | null>(null);
 
   const fetchDay = useCallback(async (start: string, end: string) => {
     setLoading(true);
@@ -585,7 +590,7 @@ export default function DailyReconcilePanel() {
           ? `เชื่อมย้อนหลังสำเร็จ ${body.bridged} รายการ`
           : `ไม่มีรายการที่ต้องเชื่อมย้อนหลัง`) +
           (body.notEligible > 0
-            ? ` · อีก ${body.notEligible} รายการไม่เข้าเงื่อนไข (ไม่ได้ค้างอยู่ในรอบล่าสุด)`
+            ? ` · อีก ${body.notEligible} รายการไม่เข้าเงื่อนไข (ไม่มีรอบของเดือนนั้น หรือรอบนั้นไม่เห็นว่าค้าง)`
             : "") +
           // A member with more than one stale recording gets only the oldest
           // bridged automatically — the rest need a person to look at them,
@@ -599,6 +604,35 @@ export default function DailyReconcilePanel() {
       await fetchDay(from, to);
     } finally {
       setBackfilling(false);
+    }
+  };
+
+  // Repairs bridged transfers (this one's, and the live record route's)
+  // written before both were fixed to place a payment by the round its own
+  // date falls in rather than by "whichever round is newest" — see
+  // app/api/statement-lines/fix-bridge-rounds/route.ts. Safe to click more
+  // than once: a transfer already in its correct round is left alone.
+  const runFixBridgeRounds = async () => {
+    setFixingRounds(true);
+    setFixRoundsNotice(null);
+    try {
+      const res = await fetch("/api/statement-lines/fix-bridge-rounds", { method: "POST" });
+      const body = await res.json();
+      if (!res.ok) {
+        setFixRoundsNotice(body.error || "แก้รอบไม่สำเร็จ");
+        return;
+      }
+      setFixRoundsNotice(
+        body.moved === 0 && body.removed === 0
+          ? `ไม่มีรายการที่เชื่อมผิดรอบ (${body.scanned} รายการที่ตรวจ ถูกรอบอยู่แล้วทั้งหมด)`
+          : `ย้ายไปรอบที่ถูกต้อง ${body.moved} รายการ` +
+            (body.removed > 0
+              ? ` · เอาออก ${body.removed} รายการ (ไม่มีรอบของเดือนนั้น หรือรอบนั้นไม่เห็นว่าค้างแล้ว — กลับเป็นรายการที่ยังไม่เชื่อม ไปดูได้ที่รายการของเดือนนั้น)`
+              : "")
+      );
+      await fetchDay(from, to);
+    } finally {
+      setFixingRounds(false);
     }
   };
 
@@ -907,6 +941,14 @@ export default function DailyReconcilePanel() {
           {backfilling ? "กำลังเชื่อม…" : "🔄 เชื่อมรายการเก่าที่ตกค้างกับรอบ"}
         </button>
         <button
+          onClick={runFixBridgeRounds}
+          disabled={fixingRounds}
+          title="แก้รายการที่เชื่อมเข้ารอบผิดเดือน (เช่น ยอดเดือนก่อนถูกนับเป็นยอดของเดือนนี้) ให้ย้ายไปรอบที่ถูกต้องตามวันที่โอนจริง — ไม่แตะไฟล์ Statement ที่อัปไว้เลย"
+          className="text-xs text-slate-500 hover:underline disabled:opacity-40"
+        >
+          {fixingRounds ? "กำลังแก้…" : "🩹 แก้รายการที่เชื่อมผิดรอบ"}
+        </button>
+        <button
           onClick={() => {
             setShowUploads((v) => !v);
             if (!showUploads) fetchUploads();
@@ -918,6 +960,9 @@ export default function DailyReconcilePanel() {
       </div>
       {backfillNotice && (
         <p className="px-4 py-2 text-sm text-sky-800 bg-sky-50">{backfillNotice}</p>
+      )}
+      {fixRoundsNotice && (
+        <p className="px-4 py-2 text-sm text-amber-900 bg-amber-50">{fixRoundsNotice}</p>
       )}
 
       {/* The one action on this page that repeating cannot undo, so the only

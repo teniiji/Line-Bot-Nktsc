@@ -46,3 +46,21 @@ export function describeDeductionPeriod(period: string): string {
   if (!parsed) return "";
   return `${THAI_MONTHS[parsed.month - 1]} ${parsed.year}`;
 }
+
+// The inverse of parseDeductionPeriod: which round's MMYY code a real
+// calendar date falls in. For finding the round a payment actually belongs
+// to, rather than describing a round already chosen — see
+// app/api/statement-lines/[id]/record/route.ts, where bridging a daily-view
+// recording into "whichever round is newest" (instead of the round whose
+// month the payment actually landed in) turned an earlier month's payment
+// into an overpayment on a later round's books.
+//
+// Reads UTC getters directly, not cooperativeNow(): a transaction's date is
+// already Thai wall clock written as UTC (see lib/cooperativeClock.ts), so
+// adding the +7 offset again would push a payment near midnight into the
+// wrong day — and occasionally the wrong month.
+export function periodOfDate(date: Date): string {
+  const month = date.getUTCMonth() + 1;
+  const beYear = date.getUTCFullYear() + 543;
+  return `${String(month).padStart(2, "0")}${String(beYear - BE_CENTURY).padStart(2, "0")}`;
+}

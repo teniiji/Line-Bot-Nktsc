@@ -4,6 +4,7 @@ import { DEDUCTION_CATEGORY } from "@/lib/statementSlipHints";
 import { canBridgeToRound } from "@/lib/roundReach";
 import { recomputeRoundPayments } from "@/lib/statementRecompute";
 import { memberNumberKey } from "@/lib/memberNumber";
+import { periodOfDate } from "@/lib/deductionPeriod";
 
 export const dynamic = "force-dynamic";
 
@@ -18,19 +19,22 @@ export const dynamic = "force-dynamic";
 // unbridged rather than a list staff would have to keep track of, and
 // reports what it did.
 //
-// At most one bridge per member per run, oldest recording first. The record
-// route is safe writing more than one for the same member because it reads
-// the member's status fresh from the database on every call — bridging one
-// payment there is recomputed before the next request can see it. This
-// route instead reads the round's members once and loops over every
-// candidate against that one snapshot, so a member with two stale
-// recordings (e.g. one payment genuinely for an earlier month, filed under
-// the same category, on top of the one that actually settles this round)
-// would otherwise both look "still owing" and both get written — turning an
-// old, unrelated payment into an overpayment on this round instead of
-// leaving it for staff to look at. The oldest is kept as the one most likely
-// to be the payment that was actually outstanding when it arrived; every
-// later one for the same member is left alone.
+// Each candidate is matched to the round whose MMYY code its own payment
+// date falls in (periodOfDate) — never "whichever round is newest": a
+// cooperative running a round a month has several open rounds side by side,
+// and grabbing "newest" is exactly what turned an August recording into an
+// overpayment on September's round the first time this shipped.
+//
+// At most one bridge per member per round per run, oldest recording first.
+// The record route is safe writing more than one for the same member
+// because it reads the member's status fresh from the database on every
+// call — bridging one payment there is recomputed before the next request
+// can see it. This route instead reads each round's members once and loops
+// over every candidate against that one snapshot, so a member with two
+// stale recordings landing on the same round would otherwise both look
+// "still owing" and both get written. The oldest is kept as the one most
+// likely to be the payment that was actually outstanding when it arrived;
+// every later one for the same member and round is left alone.
 export async function POST() {
   const candidates = await prisma.expense.findMany({
     where: {
@@ -77,26 +81,42 @@ export async function POST() {
   });
   const alreadyLinked = new Set(existing.map((t) => t.fingerprint));
 
-  const latestRound = await prisma.statementRound.findFirst({
-    orderBy: { period: "desc" },
+  // Every round the cooperative has ever created, keyed by its MMYY code —
+  // few enough (one a month) that fetching them all up front is cheaper than
+  // a lookup per candidate.
+  const rounds = await prisma.statementRound.findMany({
     select: { id: true, period: true, label: true },
   });
-  const onRound = latestRound
-    ? await prisma.statementMember.findMany({
-        where: { roundId: latestRound.id },
-        select: { memberNumber: true, deductionResult: true, status: true },
-      })
-    : [];
+  const roundByPeriod = new Map(rounds.map((r) => [r.period, r]));
+
+  // Each round's members, fetched only for a round a candidate actually
+  // named — a cooperative with years of rounds should not pay for the ones
+  // nothing here points at.
+  const membersByRound = new Map<
+    string,
+    { memberNumber: string; deductionResult: string; status: string }[]
+  >();
+  const membersOf = async (roundId: string) => {
+    const cached = membersByRound.get(roundId);
+    if (cached) return cached;
+    const rows = await prisma.statementMember.findMany({
+      where: { roundId },
+      select: { memberNumber: true, deductionResult: true, status: true },
+    });
+    membersByRound.set(roundId, rows);
+    return rows;
+  };
 
   let bridged = 0;
   let alreadyLinkedCount = 0;
   let notEligible = 0;
   let skippedDuplicateMember = 0;
   const bridgedThisRun = new Set<string>();
+  const touchedRounds = new Set<string>();
 
   for (const candidate of candidates) {
     const line = lineById.get(candidate.statementLineId as string);
-    if (!latestRound || !line || !line.senderAccount) {
+    if (!line || !line.senderAccount || !line.postedAt) {
       notEligible += 1;
       continue;
     }
@@ -107,12 +127,20 @@ export async function POST() {
       continue;
     }
 
+    const round = roundByPeriod.get(periodOfDate(line.postedAt)) ?? null;
+    if (!round) {
+      notEligible += 1;
+      continue;
+    }
+
     const key = memberNumberKey(candidate.memberNumber as string);
-    if (key && bridgedThisRun.has(key)) {
+    const dedupeKey = key ? `${round.id}|${key}` : null;
+    if (dedupeKey && bridgedThisRun.has(dedupeKey)) {
       skippedDuplicateMember += 1;
       continue;
     }
 
+    const onRound = await membersOf(round.id);
     const member = key ? onRound.find((m) => memberNumberKey(m.memberNumber) === key) ?? null : null;
     if (!canBridgeToRound(member)) {
       notEligible += 1;
@@ -121,7 +149,7 @@ export async function POST() {
 
     await prisma.statementTransfer.create({
       data: {
-        roundId: latestRound.id,
+        roundId: round.id,
         memberNumber: member!.memberNumber,
         accountNumber: line.senderAccount,
         amount: line.amount,
@@ -134,12 +162,13 @@ export async function POST() {
         manualMemberNumber: true,
       },
     });
-    if (key) bridgedThisRun.add(key);
+    if (dedupeKey) bridgedThisRun.add(dedupeKey);
+    touchedRounds.add(round.id);
     bridged += 1;
   }
 
-  if (bridged > 0 && latestRound) {
-    await recomputeRoundPayments(latestRound.id);
+  for (const roundId of touchedRounds) {
+    await recomputeRoundPayments(roundId);
   }
 
   return NextResponse.json({
