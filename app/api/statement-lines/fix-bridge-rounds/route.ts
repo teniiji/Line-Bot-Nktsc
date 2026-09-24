@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { canBridgeToRound } from "@/lib/roundReach";
+import { canBridgeToRound, coveredByRealTransfer } from "@/lib/roundReach";
 import { recomputeRoundPayments } from "@/lib/statementRecompute";
 import { memberNumberKey } from "@/lib/memberNumber";
 import { periodOfDate } from "@/lib/deductionPeriod";
@@ -8,17 +8,25 @@ import { periodOfDate } from "@/lib/deductionPeriod";
 export const dynamic = "force-dynamic";
 
 // One-time repair for every transfer app/api/statement-lines/[id]/record/route.ts
-// and app/api/statement-lines/backfill-bridge/route.ts wrote before both were
-// fixed to place a bridged payment by the round its own date falls in rather
-// than by "whichever round is newest" — see periodOfDate in
-// lib/deductionPeriod.ts and the comments on those two routes for how an
-// August recording ended up counted as a September payment.
+// and app/api/statement-lines/backfill-bridge/route.ts wrote before both
+// routes checked what this one now also checks. Two separate mistakes,
+// both caught here:
 //
-// Scoped by construction to exactly the rows that bug could have written:
+//   * wrong round — a bridged payment placed by "whichever round is newest"
+//     instead of the round its own date falls in (periodOfDate), so an
+//     August recording ended up counted as a September payment.
+//   * duplicate of a real transfer — a bridged payment for the same bank
+//     line the round's own Statement upload already carries, because
+//     canBridgeToRound only asks whether the member still owes anything,
+//     which a second unrelated bank line answers exactly the same way as
+//     the round's own upload already having counted this one.
+//
+// Scoped by construction to exactly the rows either bug could have written:
 // manualMemberNumber transfers whose fingerprint carries the "line:" prefix
 // both routes use for a bridged payment. A split's own manualMemberNumber
 // rows and a cash payment's "cash:" rows are untouched — neither is ever
-// misplaced by round, because neither is chosen by "newest round" at all.
+// misplaced by round or duplicated by a file upload, because neither is
+// chosen by "newest round" or read off a bank line at all.
 //
 // Not an upload problem, so there is nothing here for staff to delete a
 // Statement file over: every real uploaded transfer already sits in the
@@ -30,12 +38,20 @@ export async function POST() {
       id: true,
       roundId: true,
       memberNumber: true,
+      accountNumber: true,
+      amount: true,
       transferredAt: true,
     },
   });
 
   if (candidates.length === 0) {
-    return NextResponse.json({ scanned: 0, alreadyCorrect: 0, moved: 0, removed: 0 });
+    return NextResponse.json({
+      scanned: 0,
+      alreadyCorrect: 0,
+      moved: 0,
+      removedDuplicate: 0,
+      removedUnplaceable: 0,
+    });
   }
 
   const rounds = await prisma.statementRound.findMany({
@@ -58,9 +74,20 @@ export async function POST() {
     return rows;
   };
 
+  // Real transfers a round already holds for one account+amount — fetched
+  // per (round, account, amount) as candidates need it rather than up
+  // front, since most rounds and most account/amount pairs are never asked
+  // about.
+  const realTransfersOf = async (roundId: string, accountNumber: string, amount: number) =>
+    prisma.statementTransfer.findMany({
+      where: { roundId, accountNumber, amount, manualMemberNumber: false },
+      select: { accountNumber: true, amount: true, transferredAt: true },
+    });
+
   let alreadyCorrect = 0;
   let moved = 0;
-  let removed = 0;
+  let removedDuplicate = 0;
+  let removedUnplaceable = 0;
   const touchedRounds = new Set<string>();
 
   for (const candidate of candidates) {
@@ -70,28 +97,42 @@ export async function POST() {
       continue;
     }
 
+    // Checked first, in whichever round the row is sitting in right now: a
+    // bridged payment the round's own statement already carries as a real
+    // transfer is the same money counted twice, whether or not the round
+    // it landed in also happens to be the right month.
+    const currentReal = await realTransfersOf(candidate.roundId, candidate.accountNumber, candidate.amount);
+    if (coveredByRealTransfer(currentReal, candidate.accountNumber, candidate.amount, candidate.transferredAt)) {
+      await prisma.statementTransfer.delete({ where: { id: candidate.id } });
+      touchedRounds.add(candidate.roundId);
+      removedDuplicate += 1;
+      continue;
+    }
+
     const correctRound = roundByPeriod.get(periodOfDate(candidate.transferredAt)) ?? null;
     if (correctRound && correctRound.id === candidate.roundId) {
       alreadyCorrect += 1;
       continue;
     }
 
-    // Nowhere right to put it (no round covers that month) or the member it
-    // would land on there is not one the round still shows as owing (already
-    // settled some other way, or not even on that round's list) — either way
-    // it does not belong in the round it is sitting in now, and guessing a
-    // different one it does belong in is exactly the mistake being undone
-    // here. Removing it reverts the underlying Expense to the plain,
-    // unbridged state it was in before either route touched it; staff can
-    // place it correctly by hand the same way as any other daily-view
-    // recording lib/roundReach.ts warns about.
     const key = memberNumberKey(candidate.memberNumber ?? "");
     const member =
       correctRound && key
         ? (await membersOf(correctRound.id)).find((m) => memberNumberKey(m.memberNumber) === key) ?? null
         : null;
 
-    if (correctRound && canBridgeToRound(member)) {
+    // Moving it would only recreate the same duplicate one round over, so
+    // the correct round's own real transfers are checked before committing
+    // to a move.
+    const targetReal =
+      correctRound && canBridgeToRound(member)
+        ? await realTransfersOf(correctRound.id, candidate.accountNumber, candidate.amount)
+        : null;
+    const targetIsDuplicate =
+      targetReal !== null &&
+      coveredByRealTransfer(targetReal, candidate.accountNumber, candidate.amount, candidate.transferredAt);
+
+    if (correctRound && canBridgeToRound(member) && !targetIsDuplicate) {
       await prisma.statementTransfer.update({
         where: { id: candidate.id },
         data: { roundId: correctRound.id },
@@ -99,10 +140,24 @@ export async function POST() {
       touchedRounds.add(candidate.roundId);
       touchedRounds.add(correctRound.id);
       moved += 1;
-    } else {
+    } else if (targetIsDuplicate) {
       await prisma.statementTransfer.delete({ where: { id: candidate.id } });
       touchedRounds.add(candidate.roundId);
-      removed += 1;
+      removedDuplicate += 1;
+    } else {
+      // Nowhere right to put it (no round covers that month) or the member
+      // it would land on there is not one the round still shows as owing
+      // (already settled some other way, or not even on that round's list)
+      // — either way it does not belong in the round it is sitting in now,
+      // and guessing a different one it does belong in is exactly the
+      // mistake being undone here. Removing it reverts the underlying
+      // Expense to the plain, unbridged state it was in before either
+      // route touched it; staff can place it correctly by hand the same
+      // way as any other daily-view recording lib/roundReach.ts warns
+      // about.
+      await prisma.statementTransfer.delete({ where: { id: candidate.id } });
+      touchedRounds.add(candidate.roundId);
+      removedUnplaceable += 1;
     }
   }
 
@@ -114,6 +169,7 @@ export async function POST() {
     scanned: candidates.length,
     alreadyCorrect,
     moved,
-    removed,
+    removedDuplicate,
+    removedUnplaceable,
   });
 }

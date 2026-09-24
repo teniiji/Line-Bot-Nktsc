@@ -599,6 +599,9 @@ export default function DailyReconcilePanel() {
           // exactly the mistake that produced the first version of this.
           (body.skippedDuplicateMember > 0
             ? ` · ${body.skippedDuplicateMember} รายการข้ามไว้เพราะสมาชิกคนเดียวกันมีมากกว่า 1 รายการที่ยังไม่เชื่อม ตรวจสอบเองว่าเป็นเดือนไหน`
+            : "") +
+          (body.alreadyCoveredByFile > 0
+            ? ` · อีก ${body.alreadyCoveredByFile} รายการไม่เชื่อม เพราะไฟล์ Statement ของรอบมีรายการนี้นับไว้อยู่แล้ว`
             : "")
       );
       await fetchDay(from, to);
@@ -623,11 +626,14 @@ export default function DailyReconcilePanel() {
         return;
       }
       setFixRoundsNotice(
-        body.moved === 0 && body.removed === 0
-          ? `ไม่มีรายการที่เชื่อมผิดรอบ (${body.scanned} รายการที่ตรวจ ถูกรอบอยู่แล้วทั้งหมด)`
+        body.moved === 0 && body.removedDuplicate === 0 && body.removedUnplaceable === 0
+          ? `ไม่มีรายการที่ต้องแก้ (${body.scanned} รายการที่ตรวจ ถูกต้องอยู่แล้วทั้งหมด)`
           : `ย้ายไปรอบที่ถูกต้อง ${body.moved} รายการ` +
-            (body.removed > 0
-              ? ` · เอาออก ${body.removed} รายการ (ไม่มีรอบของเดือนนั้น หรือรอบนั้นไม่เห็นว่าค้างแล้ว — กลับเป็นรายการที่ยังไม่เชื่อม ไปดูได้ที่รายการของเดือนนั้น)`
+            (body.removedDuplicate > 0
+              ? ` · เอาออก ${body.removedDuplicate} รายการ เพราะเป็นยอดเดียวกับที่ไฟล์ Statement ของรอบนับไว้อยู่แล้ว (นับซ้ำ)`
+              : "") +
+            (body.removedUnplaceable > 0
+              ? ` · เอาออกอีก ${body.removedUnplaceable} รายการ (ไม่มีรอบของเดือนนั้น หรือรอบนั้นไม่เห็นว่าค้างแล้ว — กลับเป็นรายการที่ยังไม่เชื่อม ไปดูได้ที่รายการของเดือนนั้น)`
               : "")
       );
       await fetchDay(from, to);

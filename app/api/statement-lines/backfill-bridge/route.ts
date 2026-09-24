@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { DEDUCTION_CATEGORY } from "@/lib/statementSlipHints";
-import { canBridgeToRound } from "@/lib/roundReach";
+import { canBridgeToRound, coveredByRealTransfer } from "@/lib/roundReach";
 import { recomputeRoundPayments } from "@/lib/statementRecompute";
 import { memberNumberKey } from "@/lib/memberNumber";
 import { periodOfDate } from "@/lib/deductionPeriod";
@@ -53,6 +53,7 @@ export async function POST() {
       alreadyLinked: 0,
       notEligible: 0,
       skippedDuplicateMember: 0,
+      alreadyCoveredByFile: 0,
     });
   }
 
@@ -111,6 +112,7 @@ export async function POST() {
   let alreadyLinkedCount = 0;
   let notEligible = 0;
   let skippedDuplicateMember = 0;
+  let alreadyCoveredByFile = 0;
   const bridgedThisRun = new Set<string>();
   const touchedRounds = new Set<string>();
 
@@ -147,6 +149,23 @@ export async function POST() {
       continue;
     }
 
+    // The round's own statement may already carry a real transfer for this
+    // exact bank line — the same money read a second way, not a second
+    // payment. Writing this candidate on top of it would double it.
+    const realTransfers = await prisma.statementTransfer.findMany({
+      where: {
+        roundId: round.id,
+        accountNumber: line.senderAccount,
+        amount: line.amount,
+        manualMemberNumber: false,
+      },
+      select: { accountNumber: true, amount: true, transferredAt: true },
+    });
+    if (coveredByRealTransfer(realTransfers, line.senderAccount, line.amount, line.postedAt)) {
+      alreadyCoveredByFile += 1;
+      continue;
+    }
+
     await prisma.statementTransfer.create({
       data: {
         roundId: round.id,
@@ -177,5 +196,6 @@ export async function POST() {
     alreadyLinked: alreadyLinkedCount,
     notEligible,
     skippedDuplicateMember,
+    alreadyCoveredByFile,
   });
 }

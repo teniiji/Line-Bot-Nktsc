@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   bindMissedRoundNote,
   canBridgeToRound,
+  coveredByRealTransfer,
   recordBridgedRoundNote,
   recordMissedRoundNote,
 } from "../lib/roundReach";
@@ -94,5 +95,37 @@ describe("recordBridgedRoundNote", () => {
     expect(note).toContain("2");
     expect(note).toContain("5");
     expect(note).toContain("เทียบ Statement");
+  });
+});
+
+describe("coveredByRealTransfer", () => {
+  const real = [{ accountNumber: "4301008047", amount: 3000, transferredAt: new Date("2026-09-23T11:23:00Z") }];
+
+  it("catches the same bank line already sitting in the round as a real transfer", () => {
+    expect(coveredByRealTransfer(real, "4301008047", 3000, new Date("2026-09-23T11:23:00Z"))).toBe(true);
+  });
+
+  it("matches on the calendar day, not the exact minute", () => {
+    // The daily-view line and the round's own uploaded transfer read the
+    // same bank export through different parsers — small timestamp drift
+    // must not let a real duplicate through.
+    expect(coveredByRealTransfer(real, "4301008047", 3000, new Date("2026-09-23T23:59:00Z"))).toBe(true);
+  });
+
+  it("does not match a different day, account, or amount", () => {
+    expect(coveredByRealTransfer(real, "4301008047", 3000, new Date("2026-09-24T11:23:00Z"))).toBe(false);
+    expect(coveredByRealTransfer(real, "9999999999", 3000, new Date("2026-09-23T11:23:00Z"))).toBe(false);
+    expect(coveredByRealTransfer(real, "4301008047", 3001, new Date("2026-09-23T11:23:00Z"))).toBe(false);
+  });
+
+  it("is not fooled by a candidate with no date", () => {
+    expect(
+      coveredByRealTransfer(
+        [{ accountNumber: "4301008047", amount: 3000, transferredAt: null }],
+        "4301008047",
+        3000,
+        new Date("2026-09-23T11:23:00Z")
+      )
+    ).toBe(false);
   });
 });
