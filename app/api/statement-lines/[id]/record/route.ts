@@ -11,6 +11,7 @@ import { memberNumberKey } from "@/lib/memberNumber";
 import { DEDUCTION_CATEGORY } from "@/lib/statementSlipHints";
 import { canBridgeToRound } from "@/lib/roundReach";
 import { recomputeRoundPayments } from "@/lib/statementRecompute";
+import { periodOfDate } from "@/lib/deductionPeriod";
 
 export const dynamic = "force-dynamic";
 
@@ -114,30 +115,40 @@ export async function POST(
   }
 
   // Filing this as the deduction category is staff saying "this settles what
-  // this member owes the newest หักไม่ได้ round" — the same fact the round's
-  // own statement upload would have established, just learned by phone
-  // instead of by file. Writing it through, when the round agrees this
-  // member still owes, closes the gap lib/roundReach.ts otherwise only warns
-  // about. Best-effort and never fatal to the recording above: the
-  // transaction just filed is the thing staff came here for, and is real
-  // whether or not a round happens to be watching this member right now.
+  // this member owes the หักไม่ได้ round for the month this payment landed
+  // in" — the same fact the round's own statement upload would have
+  // established, just learned by phone instead of by file. Writing it
+  // through, when that round agrees this member still owes, closes the gap
+  // lib/roundReach.ts otherwise only warns about.
+  //
+  // The round is the one whose MMYY code the payment's own date falls in
+  // (periodOfDate), never just "whichever round is newest": a cooperative
+  // that opens a new round every month has an August payment and a
+  // September round open at once, and grabbing "newest" turned an August
+  // payment into an overpayment on September's books the first time this
+  // shipped. No round for that month, or the member is not on it — no
+  // bridge, same as before.
+  //
+  // Best-effort and never fatal to the recording above: the transaction just
+  // filed is the thing staff came here for, and is real whether or not a
+  // round happens to be watching this member right now.
   let bridgedRound: { period: string; label: string } | null = null;
   if (category === DEDUCTION_CATEGORY && line.senderAccount) {
     try {
-      const latestRound = await prisma.statementRound.findFirst({
-        orderBy: { period: "desc" },
+      const round = await prisma.statementRound.findUnique({
+        where: { period: periodOfDate(line.postedAt) },
         select: { id: true, period: true, label: true },
       });
-      if (latestRound) {
+      if (round) {
         const onRound = await prisma.statementMember.findMany({
-          where: { roundId: latestRound.id },
+          where: { roundId: round.id },
           select: { memberNumber: true, deductionResult: true, status: true },
         });
         const member = onRound.find((m) => memberNumberKey(m.memberNumber) === memberNumber) ?? null;
         if (canBridgeToRound(member)) {
           await prisma.statementTransfer.create({
             data: {
-              roundId: latestRound.id,
+              roundId: round.id,
               memberNumber: member!.memberNumber,
               accountNumber: line.senderAccount,
               amount: line.amount,
@@ -154,8 +165,8 @@ export async function POST(
               manualMemberNumber: true,
             },
           });
-          await recomputeRoundPayments(latestRound.id);
-          bridgedRound = { period: latestRound.period, label: latestRound.label };
+          await recomputeRoundPayments(round.id);
+          bridgedRound = { period: round.period, label: round.label };
         }
       }
     } catch (err) {
