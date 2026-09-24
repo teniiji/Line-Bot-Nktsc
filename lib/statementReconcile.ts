@@ -5,7 +5,7 @@
 // has paid can be tested directly — these are the numbers staff chase people
 // over, so getting them wrong is expensive.
 
-import { memberNumberKey } from "./memberNumber";
+import { isPlausibleMemberNumber, memberNumberKey } from "./memberNumber";
 
 export interface MaiDaiRow {
   memberNumber: string;
@@ -241,7 +241,9 @@ export function parseMaiDaiSheet(rows: unknown[][]): MaiDaiSheet {
     // Canonical from the moment it is read, so this sheet's spelling of a
     // member number never has to be reconciled against anybody else's.
     const memberNumber = memberNumberKey(String(row[0] ?? "")) ?? "";
-    if (!memberNumber) continue;
+    // A foot-of-sheet total ("รวม") can land in this column too, and reads
+    // as non-empty text rather than nothing — see lib/memberNumber.ts.
+    if (!memberNumber || !isPlausibleMemberNumber(memberNumber)) continue;
 
     const collected = parseAmount(row[3]);
     const amountDue = parseAmount(row[4]);

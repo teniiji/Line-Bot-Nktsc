@@ -207,6 +207,20 @@ describe("parseMaiDaiSheet", () => {
     expect(sheet.rows).toHaveLength(0);
     expect(sheet.awaitingMembers).toBe(0);
   });
+
+  it("does not read a foot-of-sheet รวม line as a member", () => {
+    // Real case: a ผลการหัก file's grand-total row, "รวม" sitting in column
+    // A where every other row has a member number — memberNumberKey passes
+    // it through as non-empty text, so it read as a member named รวม with
+    // the file's own total (here ฿34,450) as their ยอดหักไม่ได้.
+    const withTotal: unknown[][] = [
+      ...rows.slice(0, 3),
+      ["รวม", "รวม", 13000, 7000, 34450, null, null, null, null, null],
+    ];
+    const sheet = parseMaiDaiSheet(withTotal);
+    expect(sheet.rows.some((r) => r.memberNumber === "รวม")).toBe(false);
+    expect(sheet.all.some((r) => r.memberNumber === "รวม")).toBe(false);
+  });
 });
 
 describe("pickUnitNameColumn", () => {

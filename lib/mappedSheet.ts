@@ -5,7 +5,7 @@
 // whoever uploaded the file) rather than from a fixed contract no real file
 // turned out to follow.
 
-import { memberNumberKey } from "./memberNumber";
+import { isPlausibleMemberNumber, memberNumberKey } from "./memberNumber";
 import { normalizeAccountNumber } from "./statementReconcile";
 import type { DeductionSheetRow } from "./statementReconcile";
 import { readCell, readNumber, type SheetMapping } from "./sheetColumns";
@@ -47,7 +47,11 @@ export function readMappedSheet(
   for (const row of rows.slice(firstDataRow)) {
     if (!row) continue;
     const memberNumber = memberNumberKey(readCell(at(row, "memberNumber")));
-    if (!memberNumber) {
+    // A total row's own label — "รวม" and the like — can land in whichever
+    // column this file's memberNumber turned out to be, and passes
+    // memberNumberKey unchanged: it is non-empty text, just never a member.
+    // See lib/memberNumber.ts.
+    if (!memberNumber || !isPlausibleMemberNumber(memberNumber)) {
       // Only count a row that had something in it; trailing blanks are not
       // rows anybody left out.
       if (row.some((cell) => readCell(cell))) skipped += 1;

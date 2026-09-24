@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { differentMembers, memberNumberKey, sameMember } from "../lib/memberNumber";
+import {
+  differentMembers,
+  isPlausibleMemberNumber,
+  memberNumberKey,
+  sameMember,
+} from "../lib/memberNumber";
 
 describe("memberNumberKey", () => {
   it("strips leading zeros and surrounding space", () => {
@@ -32,6 +37,23 @@ describe("memberNumberKey", () => {
     expect(memberNumberKey("29262-1")).toBe("29262-1");
     expect(memberNumberKey("29 262")).toBe("29 262");
     expect(memberNumberKey("29262/2569")).toBe("29262/2569");
+  });
+});
+
+describe("isPlausibleMemberNumber", () => {
+  it("accepts a real member number, hyphens and all", () => {
+    expect(isPlausibleMemberNumber("29262")).toBe(true);
+    expect(isPlausibleMemberNumber("29262-1")).toBe(true);
+    expect(isPlausibleMemberNumber("0")).toBe(true);
+  });
+
+  it("rejects a total row's own label landing in the column", () => {
+    // Real case: a ผลการหัก file's "รวม" line, in the same column this
+    // file's member number was found in — memberNumberKey leaves it as
+    // non-empty text, since it never assumes a shape.
+    expect(isPlausibleMemberNumber("รวม")).toBe(false);
+    expect(isPlausibleMemberNumber("รวมทั้งสิ้น")).toBe(false);
+    expect(isPlausibleMemberNumber("หมายเหตุ")).toBe(false);
   });
 });
 
