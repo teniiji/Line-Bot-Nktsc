@@ -23,6 +23,22 @@ export interface RoundName {
   label: string;
 }
 
+export interface BridgeCandidate {
+  deductionResult: string;
+  status: string;
+}
+
+// Whether a daily-view recording, filed as the deduction category, can be
+// written straight into the round's own bookkeeping instead of leaving the
+// gap this file otherwise warns about. Only the ordinary "still owes money
+// on the newest round" case qualifies — a member the round has already
+// resolved (paid/overpaid/collected) or has not heard from yet (awaiting)
+// has nothing here for a bank line to settle, and writing one anyway would
+// either double a real payment or invent one nobody asked for.
+export function canBridgeToRound(member: BridgeCandidate | null): boolean {
+  return member !== null && member.deductionResult === "uncollected" && member.status === "unpaid";
+}
+
 // After binding an account: said when no round moved.
 //
 // Silent when a round did pick it up (the count says so on its own) and when
@@ -56,5 +72,29 @@ export function recordMissedRoundNote(
     `หมายเหตุ: รอบ ${round.label} จะยังขึ้นว่าค้างอยู่ — ` +
     `ยอด "โอนมาแล้ว" ของรอบนับจาก Statement ที่อัปเข้ารอบเท่านั้น ไม่ได้นับรายการที่บันทึกด้วยมือ ` +
     `ถ้าต้องการให้รอบขึ้นว่าจ่ายแล้ว ให้อัป Statement เข้ารอบที่แท็บ "เทียบ Statement"`
+  );
+}
+
+// After recording one or more deduction payments that canBridgeToRound did
+// let through: says what actually happened to the round, in place of the
+// warning above wherever the write landed. Bulk recording can mix outcomes
+// (some rows still owing on the round, some not), so this names both counts
+// rather than only the success — a note that only ever says "done" would
+// hide the ones that still need the old advice.
+export function recordBridgedRoundNote(
+  round: RoundName,
+  bridged: number,
+  total: number
+): string {
+  if (bridged >= total) {
+    return (
+      `บันทึกลงรอบ ${round.label} เป็นชำระ "หักไม่ได้" ให้ด้วยแล้ว` +
+      (total > 1 ? ` ทั้ง ${bridged} รายการ` : "") +
+      ` — ไม่ต้องอัป Statement ซ้ำ`
+    );
+  }
+  return (
+    `บันทึกลงรอบ ${round.label} ให้แล้ว ${bridged} จาก ${total} รายการ — ที่เหลือรอบยังไม่เห็น ` +
+    `(อาจไม่ได้ค้างอยู่ในรอบนี้ หรือรอบนับว่าจ่ายไปแล้ว) ถ้าต้องการให้ครบ อัป Statement เข้ารอบที่แท็บ "เทียบ Statement"`
   );
 }

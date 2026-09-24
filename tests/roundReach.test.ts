@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { bindMissedRoundNote, recordMissedRoundNote } from "../lib/roundReach";
+import {
+  bindMissedRoundNote,
+  canBridgeToRound,
+  recordBridgedRoundNote,
+  recordMissedRoundNote,
+} from "../lib/roundReach";
 import { DEDUCTION_CATEGORY } from "../lib/statementSlipHints";
 
 const round = { label: "ส.ค. 2569" };
@@ -47,5 +52,47 @@ describe("recordMissedRoundNote", () => {
 
   it("stays quiet when there is no round to name", () => {
     expect(recordMissedRoundNote(DEDUCTION_CATEGORY, DEDUCTION_CATEGORY, null)).toBeNull();
+  });
+});
+
+describe("canBridgeToRound", () => {
+  it("lets through a member the round still shows as owing", () => {
+    expect(canBridgeToRound({ deductionResult: "uncollected", status: "unpaid" })).toBe(true);
+  });
+
+  it("refuses a member the round has already resolved", () => {
+    expect(canBridgeToRound({ deductionResult: "uncollected", status: "paid" })).toBe(false);
+    expect(canBridgeToRound({ deductionResult: "uncollected", status: "overpaid" })).toBe(false);
+  });
+
+  it("refuses a member whose unit has not reported back", () => {
+    // awaiting/collected members owe nothing yet as far as this round knows
+    // — writing a transfer against them would invent a debt, not settle one.
+    expect(canBridgeToRound({ deductionResult: "awaiting", status: "awaiting" })).toBe(false);
+    expect(canBridgeToRound({ deductionResult: "collected", status: "collected" })).toBe(false);
+  });
+
+  it("refuses when the member is not on this round at all", () => {
+    expect(canBridgeToRound(null)).toBe(false);
+  });
+});
+
+describe("recordBridgedRoundNote", () => {
+  it("confirms a single recording that landed on the round", () => {
+    const note = recordBridgedRoundNote(round, 1, 1);
+    expect(note).toContain("ส.ค. 2569");
+    expect(note).not.toContain("จาก 1 รายการ");
+  });
+
+  it("confirms every row of a bulk recording that all landed", () => {
+    const note = recordBridgedRoundNote(round, 5, 5);
+    expect(note).toContain("5");
+  });
+
+  it("names both counts when only some of a bulk recording landed", () => {
+    const note = recordBridgedRoundNote(round, 2, 5);
+    expect(note).toContain("2");
+    expect(note).toContain("5");
+    expect(note).toContain("เทียบ Statement");
   });
 });
