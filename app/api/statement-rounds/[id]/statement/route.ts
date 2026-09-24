@@ -123,7 +123,7 @@ export async function POST(
   // guarantee the per-line duplicate check gave.
   const existing = await prisma.statementTransfer.findMany({
     where: { roundId: round.id, fingerprint: { in: fingerprints } },
-    select: { fingerprint: true, excludedReason: true },
+    select: { fingerprint: true, excludedReason: true, manualMemberNumber: true },
   });
   // Carried across the refresh: this is staff's own work, not something the
   // statement can tell us again.
@@ -132,6 +132,18 @@ export async function POST(
       .filter((row) => row.excludedReason)
       .map((row) => [row.fingerprint, row.excludedReason])
   );
+  // A row staff have made a manual call about (split off to another member,
+  // or left holding less than the bank line after one) is skipped entirely
+  // here — not deleted, not rewritten — because the ordinary refresh below
+  // would otherwise replace its amount and memberNumber with whatever this
+  // file reports for the same fingerprint, silently undoing the split the
+  // moment a statement export happens to cover that day again. See
+  // manualMemberNumber on the StatementTransfer model.
+  const protectedFingerprints = new Set(
+    existing.filter((row) => row.manualMemberNumber).map((row) => row.fingerprint)
+  );
+  const refreshable = incoming.filter(({ fingerprint }) => !protectedFingerprints.has(fingerprint));
+  const refreshableFingerprints = refreshable.map((row) => row.fingerprint);
 
   // Rows go in unmatched and are resolved by rematchRoundTransfers below
   // rather than being matched here: that keeps one implementation of "which
@@ -139,10 +151,10 @@ export async function POST(
   // round's sheet and the MemberBankAccount directory.
   await prisma.$transaction([
     prisma.statementTransfer.deleteMany({
-      where: { roundId: round.id, fingerprint: { in: fingerprints } },
+      where: { roundId: round.id, fingerprint: { in: refreshableFingerprints } },
     }),
     prisma.statementTransfer.createMany({
-      data: incoming.map(({ fingerprint, transfer }) => ({
+      data: refreshable.map(({ fingerprint, transfer }) => ({
         roundId: round.id,
         accountNumber: transfer.accountNumber,
         amount: transfer.amount,
@@ -156,7 +168,7 @@ export async function POST(
       })),
     }),
   ]);
-  const refreshed = existing.length;
+  const refreshed = existing.length - protectedFingerprints.size;
 
   // The same file, read a second way. The round only wants member transfers;
   // the daily reconciliation wants everything the account received, counter
