@@ -889,6 +889,33 @@ export default function StatementReconcilePanel() {
     }
   };
 
+  // One-time cleanup for a summary row ("รวม", "รวมทั้งสิ้น") imported as if
+  // it were a member — a sheet-reading gap closed for new uploads, but not
+  // for a round built before that fix. Global rather than scoped to the
+  // round on screen: the same leftover row can sit in any round created
+  // before the guard existed. See app/api/statement-rounds/fix-implausible-members.
+  const fixImplausibleMembers = async () => {
+    setBusy(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const res = await fetch("/api/statement-rounds/fix-implausible-members", { method: "POST" });
+      const body = await res.json();
+      if (!res.ok) {
+        setError(body.error || "ลบไม่สำเร็จ");
+        return;
+      }
+      setNotice(
+        body.removed > 0
+          ? `ลบแถวสรุปที่ติดมาเป็นสมาชิกแล้ว ${body.removed} รายการ (${(body.removedNumbers ?? []).join(", ")})`
+          : "ไม่พบแถวสรุปที่ติดมาเป็นสมาชิก"
+      );
+      await Promise.all(selectedId ? [fetchRound(selectedId), fetchRounds()] : [fetchRounds()]);
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const confirmDeleteRound = async () => {
     if (!pendingDelete) return;
     const id = pendingDelete.id;
@@ -1043,12 +1070,22 @@ export default function StatementReconcilePanel() {
             </p>
           </PanelHelp>
         </div>
-        <button
-          onClick={() => setShowNew((v) => !v)}
-          className="text-sm px-3 py-1.5 border border-slate-300 rounded whitespace-nowrap"
-        >
-          {showNew ? "ยกเลิก" : "+ สร้างรอบใหม่"}
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={fixImplausibleMembers}
+            disabled={busy}
+            title='ลบแถวสรุป ("รวม", "รวมทั้งสิ้น") ที่ติดเข้ามาเป็นสมาชิกจากไฟล์รายการหักเก่า — ตรวจทุกรอบ ไม่ใช่แค่รอบที่เปิดอยู่'
+            className="text-xs text-slate-500 hover:underline disabled:opacity-40 whitespace-nowrap"
+          >
+            🧹 ลบแถวสรุปที่ติดมาเป็นสมาชิก
+          </button>
+          <button
+            onClick={() => setShowNew((v) => !v)}
+            className="text-sm px-3 py-1.5 border border-slate-300 rounded whitespace-nowrap"
+          >
+            {showNew ? "ยกเลิก" : "+ สร้างรอบใหม่"}
+          </button>
+        </div>
       </div>
 
       {showNew && (
