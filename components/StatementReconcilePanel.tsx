@@ -26,6 +26,7 @@ import { describeDeductionPeriod } from "@/lib/deductionPeriod";
 import { downloadStatementMembersCsv } from "@/lib/csv";
 import { EXCLUDE_REASONS } from "@/lib/statementSlipHints";
 import { describeDoubleCount } from "@/lib/roundDoubleCount";
+import { cooperativeToday } from "@/lib/cooperativeClock";
 import { sectionOpen } from "@/lib/sections";
 import {
   UNMATCHED_SORT_OPTIONS,
@@ -181,6 +182,13 @@ export default function StatementReconcilePanel() {
   const [splitMemberNumber, setSplitMemberNumber] = useState("");
   const [splitAmountInput, setSplitAmountInput] = useState("");
   const [splitError, setSplitError] = useState<string | null>(null);
+  // The one member currently offering the "บันทึกเงินสด" form — a payment
+  // that never touches a bank account at all, so no Statement upload could
+  // ever bring it in on its own. See app/api/statement-rounds/[id]/cash.
+  const [cashMember, setCashMember] = useState<string | null>(null);
+  const [cashAmount, setCashAmount] = useState("");
+  const [cashDate, setCashDate] = useState(cooperativeToday());
+  const [cashError, setCashError] = useState<string | null>(null);
   const [pendingClear, setPendingClear] = useState<{ account: string; branch: string } | null>(
     null
   );
@@ -325,6 +333,44 @@ export default function StatementReconcilePanel() {
         return;
       }
       closeSplit();
+      await Promise.all([fetchRound(selectedId), fetchRounds()]);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const openCash = (memberNumber: string) => {
+    setCashMember(memberNumber);
+    setCashAmount("");
+    setCashDate(cooperativeToday());
+    setCashError(null);
+  };
+
+  const closeCash = () => {
+    setCashMember(null);
+    setCashError(null);
+  };
+
+  const submitCash = async (memberNumber: string) => {
+    if (!selectedId) return;
+    setCashError(null);
+    setBusy(true);
+    try {
+      const res = await fetch(`/api/statement-rounds/${selectedId}/cash`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          memberNumber,
+          amount: Number(cashAmount),
+          transferredAt: cashDate,
+        }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        setCashError(body.error || "บันทึกเงินสดไม่สำเร็จ");
+        return;
+      }
+      closeCash();
       await Promise.all([fetchRound(selectedId), fetchRounds()]);
     } finally {
       setBusy(false);
@@ -1596,26 +1642,28 @@ export default function StatementReconcilePanel() {
                               )}
                             </td>
                             <td className="px-4 py-2.5 num text-right whitespace-nowrap">
-                              {m.amountPaid > 0 ? (
-                                <button
-                                  onClick={() =>
-                                    setExpandedMember(
-                                      expandedMember === m.memberNumber ? null : m.memberNumber
-                                    )
-                                  }
-                                  className="hover:underline"
-                                  title="ดูรายการโอนของคนนี้ / ระบุว่าเงินก้อนไหนไม่ใช่ค่าหักไม่ได้"
-                                >
-                                  {formatAmount(m.amountPaid)}
-                                  {memberHasHint(m.memberNumber) && (
-                                    <span className="text-amber-600" title="อาจเป็นเงินที่โอนมาด้วยเหตุผลอื่น">
-                                      {" "}⚠️
-                                    </span>
-                                  )}
-                                </button>
-                              ) : (
-                                "—"
-                              )}
+                              {/* Reachable even at ฿0: a member with no bank
+                                  transfer yet is exactly who still needs the
+                                  "บันทึกว่าจ่ายเงินสดแล้ว" button — gating
+                                  this on amountPaid > 0 would hide it from
+                                  everyone who has not paid by transfer,
+                                  which is most of a round. */}
+                              <button
+                                onClick={() =>
+                                  setExpandedMember(
+                                    expandedMember === m.memberNumber ? null : m.memberNumber
+                                  )
+                                }
+                                className="hover:underline"
+                                title="ดูรายการโอนของคนนี้ / ระบุว่าเงินก้อนไหนไม่ใช่ค่าหักไม่ได้ / บันทึกเงินสด"
+                              >
+                                {m.amountPaid > 0 ? formatAmount(m.amountPaid) : "—"}
+                                {memberHasHint(m.memberNumber) && (
+                                  <span className="text-amber-600" title="อาจเป็นเงินที่โอนมาด้วยเหตุผลอื่น">
+                                    {" "}⚠️
+                                  </span>
+                                )}
+                              </button>
                             </td>
                             <td
                               className={`px-4 py-2.5 num text-right whitespace-nowrap ${
@@ -1690,14 +1738,22 @@ export default function StatementReconcilePanel() {
                                     {/* A row whose memberNumber staff set by
                                         hand rather than one read off the
                                         account — the other half of a split,
-                                        or a whole transfer moved outright. */}
-                                    {t.manualMemberNumber && (
-                                      <span
-                                        className="text-xs text-sky-700"
-                                        title="เลขสมาชิกของรายการนี้ถูกระบุเองโดยเจ้าหน้าที่ ไม่ใช่จับคู่จากเลขบัญชี — จะไม่ถูกจับคู่ทับตอนอัป Statement รอบถัดไป"
-                                      >
-                                        🔀 ย้ายมาให้คนนี้
+                                        a whole transfer moved outright, or a
+                                        cash payment that was never a bank
+                                        line to begin with. */}
+                                    {t.manualMemberNumber && t.accountNumber === "เงินสด" ? (
+                                      <span className="text-xs text-sky-700" title="ไม่มีบรรทัดในสเตทเมนต์ธนาคาร — บันทึกตรงจากหน้านี้">
+                                        💵 เงินสด
                                       </span>
+                                    ) : (
+                                      t.manualMemberNumber && (
+                                        <span
+                                          className="text-xs text-sky-700"
+                                          title="เลขสมาชิกของรายการนี้ถูกระบุเองโดยเจ้าหน้าที่ ไม่ใช่จับคู่จากเลขบัญชี — จะไม่ถูกจับคู่ทับตอนอัป Statement รอบถัดไป"
+                                        >
+                                          🔀 ย้ายมาให้คนนี้
+                                        </span>
+                                      )
                                     )}
                                     <span className="ml-auto flex items-center gap-2">
                                       <select
@@ -1770,6 +1826,53 @@ export default function StatementReconcilePanel() {
                                     )}
                                   </div>
                                 ))}
+                                <div className="pt-2 mt-1 border-t border-slate-200">
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      cashMember === m.memberNumber
+                                        ? closeCash()
+                                        : openCash(m.memberNumber)
+                                    }
+                                    disabled={busy}
+                                    className="text-xs text-slate-600 border border-slate-300 rounded px-2 py-1 hover:bg-slate-50 disabled:opacity-50"
+                                    title="สมาชิกจ่ายเป็นเงินสดที่สำนักงาน — ไม่มีบรรทัดในสเตทเมนต์ธนาคารให้จับคู่ ต้องบันทึกตรงนี้"
+                                  >
+                                    {cashMember === m.memberNumber ? "ยกเลิกบันทึกเงินสด" : "บันทึกว่าจ่ายเงินสดแล้ว"}
+                                  </button>
+                                  {cashMember === m.memberNumber && (
+                                    <div className="w-full flex flex-wrap items-center gap-2 pt-2">
+                                      <span className="text-xs text-slate-500">ยอด</span>
+                                      <input
+                                        type="number"
+                                        inputMode="decimal"
+                                        step="0.01"
+                                        value={cashAmount}
+                                        onChange={(e) => setCashAmount(e.target.value)}
+                                        className="border border-slate-300 rounded px-2 py-1 text-xs w-24"
+                                        autoFocus
+                                      />
+                                      <span className="text-xs text-slate-500">บาท วันที่จ่าย</span>
+                                      <input
+                                        type="date"
+                                        value={cashDate}
+                                        onChange={(e) => setCashDate(e.target.value)}
+                                        className="border border-slate-300 rounded px-2 py-1 text-xs"
+                                      />
+                                      <button
+                                        type="button"
+                                        onClick={() => submitCash(m.memberNumber)}
+                                        disabled={busy || !cashAmount.trim() || !cashDate}
+                                        className="text-xs text-white bg-slate-900 rounded px-2.5 py-1 disabled:opacity-50"
+                                      >
+                                        บันทึกเงินสด
+                                      </button>
+                                      {cashError && (
+                                        <p className="w-full text-xs text-red-600">{cashError}</p>
+                                      )}
+                                    </div>
+                                  )}
+                                </div>
                               </td>
                             </tr>
                           )}
