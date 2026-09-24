@@ -274,6 +274,21 @@ describe("readMappedSheet", () => {
     expect(readMappedSheet(unitFile, reading.firstDataRow, reading.mapping).skipped).toBe(1);
   });
 
+  it("also skips it when the รวม label lands in the member number column itself", () => {
+    // A different file's foot-of-sheet total wrote "รวม" under เลขที่ rather
+    // than under ชื่อ — memberNumberKey passes it through as non-empty text,
+    // so without isPlausibleMemberNumber this became a phantom "member"
+    // named รวม with the file's grand total as their own ยอดหักไม่ได้.
+    const reading = detectSheetColumns(unitFile);
+    const withTotalInMemberColumn = [
+      ...unitFile.slice(0, -1),
+      ["", "รวม", "", 34100, 25900, 8200, "", ""],
+    ];
+    const read = readMappedSheet(withTotalInMemberColumn, reading.firstDataRow, reading.mapping);
+    expect(read.rows.some((r) => r.memberNumber === "รวม")).toBe(false);
+    expect(read.skipped).toBe(1);
+  });
+
   it("leaves every row of a รายการหัก awaiting its result", () => {
     // No result columns at all is not a fault — it is the list on its way
     // out, before anybody has answered for it.

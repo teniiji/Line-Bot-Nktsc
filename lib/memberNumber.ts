@@ -37,6 +37,21 @@ export function memberNumberKey(value: string | null | undefined): string | null
   return trimmed.replace(/^0+(?=.)/, "");
 }
 
+// Whether a value read from a sheet could plausibly be a real member number,
+// as opposed to a summary row's own label landing in that column — "รวม",
+// "รวมทั้งสิ้น", a stray หมายเหตุ. Every real case seen (see the file header
+// above) is digits, sometimes with a leading zero; a value with no digit in
+// it at all is not a member number that memberNumberKey merely wrote
+// unusually, it is text that was never one.
+//
+// Used only where a sheet is read into a round — a bulk import with nobody
+// to notice a phantom member and ask about it — not on anything a person
+// types through the bot, where the existing leniency (accept an odd number
+// a member can see and correct) still holds.
+export function isPlausibleMemberNumber(key: string): boolean {
+  return /\d/.test(key);
+}
+
 // Whether two member numbers name the same member. False when either is
 // missing: "nothing is known" must never read as agreement, because the
 // reconciliation uses this to decide that a payment IS a member's.
