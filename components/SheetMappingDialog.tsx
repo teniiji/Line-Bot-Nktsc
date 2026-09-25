@@ -206,7 +206,7 @@ export default function SheetMappingDialog({
                       {row.expectedAmount != null ? formatAmount(row.expectedAmount) : "—"}
                     </td>
                     <td className="px-2 py-1.5 num text-right">
-                      {row.amountDue > 0 ? formatAmount(row.amountDue) : "—"}
+                      {row.amountDue !== 0 ? formatAmount(row.amountDue) : "—"}
                     </td>
                     <td className="px-2 py-1.5 whitespace-nowrap text-slate-600">
                       {RESULT_LABEL[row.result] ?? row.result}

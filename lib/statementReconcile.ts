@@ -274,8 +274,11 @@ export function parseMaiDaiSheet(rows: unknown[][]): MaiDaiSheet {
       continue;
     }
 
-    if (amountDue === null || amountDue <= 0) {
-      all.push({ ...member, expectedAmount, amountDue: 0, result: "collected" });
+    // 0 is collected in full. Below 0 is payroll taking more than was asked
+    // (หักเกิน) — still collected, but the figure is kept exactly as the
+    // sheet has it, so a unit's total here adds up to the sheet's own total.
+    if (amountDue <= 0) {
+      all.push({ ...member, expectedAmount, amountDue, result: "collected" });
       continue;
     }
 

@@ -1820,6 +1820,14 @@ export default function StatementReconcilePanel() {
                             <td className="px-4 py-2.5 num text-right whitespace-nowrap">
                               {m.deductionResult === "uncollected" ? (
                                 formatAmount(m.amountDue)
+                              ) : m.amountDue < 0 ? (
+                                // หักเกิน: payroll took more than was asked. Shown
+                                // as the sheet has it, and counted in the
+                                // totals, so they add up to the sheet's own.
+                                <span className="text-amber-700" title="หักเงินเดือนเกินกว่ายอดที่แจ้งหัก">
+                                  {formatAmount(m.amountDue)}
+                                  <span className="block text-xs">หักเกิน</span>
+                                </span>
                               ) : (
                                 // Nothing is owed on this row — but the round
                                 // does know what payroll was asked to take,

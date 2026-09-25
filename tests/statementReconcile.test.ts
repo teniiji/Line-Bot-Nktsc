@@ -223,6 +223,24 @@ describe("parseMaiDaiSheet", () => {
     expect(sheet.awaitingMembers).toBe(3);
   });
 
+  it("keeps a negative หักไม่ได้ (หักเกิน) as the sheet has it, so totals match the sheet", () => {
+    // The สพป.สกลนคร เขต 1 sheet: 2,739.88 + 30 − 70 = 2,699.88 on its own total row.
+    const sheet = parseMaiDaiSheet([
+      ["28826", "หักเกิน", 19220, 19290, -70, "1", "ร.ร. ก", null, null, "1"],
+      ["29387", "ค้าง", 23020, 20280.12, 2739.88, "1", "ร.ร. ก", null, null, "1"],
+      ["26221", "ค้างนิดหน่อย", 28340, 28310, 30, "1", "ร.ร. ก", null, null, "1"],
+    ]);
+    expect(sheet.all.map((r) => [r.memberNumber, r.result, r.amountDue])).toEqual([
+      ["28826", "collected", -70],
+      ["29387", "uncollected", 2739.88],
+      ["26221", "uncollected", 30],
+    ]);
+    const total = sheet.all.reduce((sum, r) => sum + r.amountDue, 0);
+    expect(Math.round(total * 100) / 100).toBe(2699.88);
+    // Only the ones who owe become the list to chase.
+    expect(sheet.rows.map((r) => r.memberNumber)).toEqual(["29387", "26221"]);
+  });
+
   it("treats a zero result as collected, not as awaiting", () => {
     const zero: unknown[][] = [["001", "หักได้ครบ", 5000, 5000, 0, "1", "ร.ร. ก", null, null, "1"]];
     const sheet = parseMaiDaiSheet(zero);

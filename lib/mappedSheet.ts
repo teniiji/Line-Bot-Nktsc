@@ -84,6 +84,9 @@ export function readMappedSheet(
       uncollected += 1;
     } else {
       result = "collected";
+      // Below 0 is หักเกิน — payroll took more than was asked. Kept as the
+      // sheet has it so a unit's total matches the sheet's own total row.
+      if (uncollectedAmount !== null && uncollectedAmount < 0) amountDue = uncollectedAmount;
       collected += 1;
     }
 
