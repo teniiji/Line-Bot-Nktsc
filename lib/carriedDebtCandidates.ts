@@ -81,7 +81,13 @@ export interface Candidate {
 // anybody, so the whole of what is left of it is spare.
 export interface DailyLine {
   id: string;
-  senderAccount: string;
+  // Null for a line whose description names no paying account — a unit's
+  // payroll office paying for a member (BSD02 "…/เทศบาล…") is one.
+  senderAccount: string | null;
+  // Members the เงินเข้าประจำวัน page pairs this line with through a slip
+  // they sent or a recording staff made (lib/dailyReconcile.ts). That is how
+  // money from an account nobody knows is the member's still finds them.
+  owners?: string[];
   // The line's amount less what already went to carried debts.
   available: number;
   postedAt: Date | null;
@@ -100,9 +106,13 @@ export interface LineCandidate {
   debtId: string;
   lineId: string;
   available: number;
-  // The member still owes the open round for the line's own month, so the
-  // money may well be for that month instead — staff decide.
+  // The member still owes the open round for the line's own month, or that
+  // round has not heard whether it could deduct yet, so the money may well
+  // be for that month instead — staff decide.
   contested: boolean;
+  // Found through the daily page's pairing with the member's own slip rather
+  // than by account.
+  bySlip: boolean;
   clear: boolean;
 }
 
@@ -250,7 +260,11 @@ export function findLineCandidates(
   }
   const stillOwing = new Set(
     monthStandings
-      .filter((s) => s.deductionResult === "uncollected" && s.status === "unpaid")
+      .filter(
+        (s) =>
+          (s.deductionResult === "uncollected" && s.status === "unpaid") ||
+          s.deductionResult === "awaiting"
+      )
       .map((s) => `${s.period}|${memberNumberKey(s.memberNumber) ?? s.memberNumber}`)
   );
 
@@ -259,22 +273,26 @@ export function findLineCandidates(
     (a.postedAt?.getTime() ?? 0) - (b.postedAt?.getTime() ?? 0) || a.id.localeCompare(b.id);
   for (const line of [...lines].sort(byLineDate)) {
     if (line.available <= EPSILON) continue;
+    const owners = new Set((line.owners ?? []).map((o) => memberNumberKey(o) ?? o));
     for (const debt of open) {
-      if (!debt.accounts.includes(line.senderAccount)) continue;
-      if (debt.since && line.postedAt && line.postedAt < debt.since) continue;
       const key = memberNumberKey(debt.memberNumber) ?? debt.memberNumber;
+      const bySlip = owners.has(key);
+      const byAccount = line.senderAccount !== null && debt.accounts.includes(line.senderAccount);
+      if (!bySlip && !byAccount) continue;
+      if (debt.since && line.postedAt && line.postedAt < debt.since) continue;
       const contested = line.postedAt
         ? stillOwing.has(`${periodOfDate(line.postedAt)}|${key}`)
         : true;
+      // An account two debtors share says nothing about which; a slip does.
+      const sharedAccount =
+        !bySlip && (debtorsOfAccount.get(line.senderAccount as string)?.size ?? 0) > 1;
       candidates.push({
         debtId: debt.id,
         lineId: line.id,
         available: line.available,
         contested,
-        clear:
-          !contested &&
-          (openDebtsOf.get(key) ?? 0) === 1 &&
-          (debtorsOfAccount.get(line.senderAccount)?.size ?? 0) === 1,
+        bySlip,
+        clear: !contested && (openDebtsOf.get(key) ?? 0) === 1 && !sharedAccount,
       });
     }
   }

@@ -483,12 +483,16 @@ export interface CarriedDebtLineCandidateRow {
   debtId: string;
   lineId: string;
   account: string;
-  senderAccount: string;
+  senderAccount: string | null;
+  description: string;
   amount: number;
   postedAt: string | null;
   available: number;
-  // The member still owes the open round for the line's own month.
+  // The member still owes, or is still awaiting a result on, the open round
+  // for the line's own month.
   contested: boolean;
+  // Paired with the member's own slip on the daily page, not by account.
+  bySlip: boolean;
   clear: boolean;
   suggested: number;
 }

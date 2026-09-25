@@ -720,13 +720,18 @@ export default function CarriedDebtsPanel() {
                                     )}
                                     <span className="text-xs text-slate-500">
                                       เงินเข้าประจำวัน บัญชี {l.account}
-                                      <span className="font-mono text-slate-400"> · {l.senderAccount}</span>
+                                      <span className="font-mono text-slate-400">
+                                        {" "}· {l.senderAccount ?? l.description}
+                                      </span>
+                                      {l.bySlip && (
+                                        <span className="text-sky-700"> · ตรงกับสลิปของสมาชิก</span>
+                                      )}
                                     </span>
                                     <span
                                       className={`text-xs ${l.contested ? "text-amber-700" : "text-emerald-700"}`}
                                     >
                                       {l.contested
-                                        ? "ยังไม่อยู่ในรอบใด — แต่สมาชิกยังค้างรอบของเดือนที่โอน อาจเป็นยอดของเดือนนั้น ใช้ก็ต่อเมื่อแน่ใจ"
+                                        ? "ยังไม่อยู่ในรอบใด — แต่รอบของเดือนที่โอนยังค้างหรือยังรอผลการหักของสมาชิกนี้ อาจเป็นยอดของเดือนนั้น ใช้ก็ต่อเมื่อแน่ใจ"
                                         : "ยังไม่อยู่ในรอบใด ไม่ได้นับให้ใคร"}
                                     </span>
                                     <span className="flex items-center gap-1.5 ml-auto">
