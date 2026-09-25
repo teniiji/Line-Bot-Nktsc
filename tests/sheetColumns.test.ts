@@ -299,6 +299,43 @@ describe("readMappedSheet", () => {
     expect(read.rows.every((r) => r.amountDue === 0)).toBe(true);
   });
 
+  it("reads a blank in either mapped result column as awaiting", () => {
+    const noHeader: unknown[][] = [
+      ["14568", "นายก ทดสอบ", 600, 0, 600],
+      ["14569", "นายข ทดสอบ", 600, null, 600],
+      ["14570", "นายค ทดสอบ", 600, 600, null],
+      ["14571", "นายง ทดสอบ", 600, null, null],
+      ["14572", "นายจ ทดสอบ", 600, 600, 0],
+    ];
+    const mapping = { memberNumber: 0, name: 1, expected: 2, collected: 3, uncollected: 4 };
+    const read = readMappedSheet(noHeader, 0, mapping);
+    expect(read.rows.map((r) => [r.memberNumber, r.result])).toEqual([
+      ["14568", "uncollected"],
+      ["14569", "awaiting"],
+      ["14570", "awaiting"],
+      ["14571", "awaiting"],
+      ["14572", "collected"],
+    ]);
+    expect([read.awaiting, read.collected, read.uncollected]).toEqual([3, 1, 1]);
+  });
+
+  it("judges only the result columns the file actually has", () => {
+    // A sheet of หักไม่ได้ only, no หักได้ column: its filled rows are
+    // answers, not half-answers.
+    const onlyUncollected: unknown[][] = [
+      ["14568", "นายก ทดสอบ", 600, 600],
+      ["14569", "นายข ทดสอบ", 600, 0],
+      ["14570", "นายค ทดสอบ", 600, null],
+    ];
+    const read = readMappedSheet(onlyUncollected, 0, {
+      memberNumber: 0,
+      name: 1,
+      expected: 2,
+      uncollected: 3,
+    });
+    expect(read.rows.map((r) => r.result)).toEqual(["uncollected", "collected", "awaiting"]);
+  });
+
   it("takes the ยอดแจ้งหัก once somebody points at the column", () => {
     const reading = detectSheetColumns(masterFile);
     const read = readMappedSheet(masterFile, reading.firstDataRow, {
