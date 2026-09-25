@@ -26,7 +26,9 @@ export async function POST(
 
   const body = await request.json().catch(() => ({}) as Record<string, unknown>);
   const line = await prisma.statementLine.findUnique({ where: { id: String(body.lineId ?? "") } });
-  if (!line || !isMemberDeposit(line.channel) || !line.senderAccount || line.amount <= 0) {
+  // No paying account is fine: a unit's payroll office paying for a member
+  // (BSD02 "…/เทศบาล…") names none, and is found through the member's slip.
+  if (!line || !isMemberDeposit(line.channel) || line.amount <= 0) {
     return NextResponse.json({ error: "ไม่พบรายการเงินเข้านี้" }, { status: 404 });
   }
 
@@ -37,7 +39,7 @@ export async function POST(
     where: {
       OR: [
         { fingerprint: lineKey },
-        { accountNumber: line.senderAccount, amount: line.amount },
+        ...(line.senderAccount ? [{ accountNumber: line.senderAccount, amount: line.amount }] : []),
       ],
     },
     select: { roundId: true, fingerprint: true, accountNumber: true, amount: true, transferredAt: true },
@@ -45,8 +47,9 @@ export async function POST(
   const held = inRounds.find(
     (t) =>
       t.fingerprint === lineKey ||
-      (line.postedAt !== null &&
-        coveredByRealTransfer([t], line.senderAccount as string, line.amount, line.postedAt))
+      (line.senderAccount !== null &&
+        line.postedAt !== null &&
+        coveredByRealTransfer([t], line.senderAccount, line.amount, line.postedAt))
   );
   if (held) {
     const round = await prisma.statementRound.findUnique({

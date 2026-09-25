@@ -47,10 +47,12 @@ export async function GET() {
       lineId: l.id,
       account: l.account,
       senderAccount: l.senderAccount,
+      description: l.description,
       amount: l.amount,
       postedAt: l.postedAt,
       available: c.available,
       contested: c.contested,
+      bySlip: c.bySlip,
       clear: c.clear,
       suggested: Math.round(Math.min(c.available, outstandingOf.get(c.debtId) ?? 0) * 100) / 100,
     };

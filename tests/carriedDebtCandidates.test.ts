@@ -258,6 +258,42 @@ describe("daily lines no round holds", () => {
     ).toEqual([]);
   });
 
+  it("finds a line with no paying account through the member's own slip", () => {
+    // 29755: the unit (เทศบาลนครขอนแก่น) paid ฿13,500 by BSD02, which names
+    // no account; the daily page paired it with the member's slip.
+    const [c] = findLineCandidates(
+      [debt({ memberNumber: "29755", outstanding: 13500, accounts: ["4130514067"], since: aug })],
+      [line({ senderAccount: null, owners: ["29755"], available: 13500 })],
+      []
+    );
+    expect(c).toMatchObject({ bySlip: true, contested: false, clear: true, available: 13500 });
+  });
+
+  it("does not offer somebody else's slip-paired line", () => {
+    expect(
+      findLineCandidates([debt()], [line({ senderAccount: null, owners: ["11111"] })], [])
+    ).toEqual([]);
+  });
+
+  it("leaves it to staff while that month's round is still awaiting the member's result", () => {
+    const [c] = findLineCandidates(
+      [debt()],
+      [line()],
+      [{ period: "0969", memberNumber: "29642", deductionResult: "awaiting", status: "awaiting" }]
+    );
+    expect(c).toMatchObject({ contested: true, clear: false });
+  });
+
+  it("trusts a slip over an account two debtors share", () => {
+    const found = findLineCandidates(
+      [debt(), debt({ id: "d2", memberNumber: "30000" })],
+      [line({ owners: ["30000"] })],
+      []
+    );
+    expect(found.find((c) => c.debtId === "d2")).toMatchObject({ bySlip: true, clear: true });
+    expect(found.find((c) => c.debtId === "d1")).toMatchObject({ bySlip: false, clear: false });
+  });
+
   it("plans round transfers and daily lines together, oldest money first", () => {
     const plan = planClearPayments(
       [debt({ outstanding: 5000 })],
