@@ -457,3 +457,32 @@ export interface CarriedDebtRow {
   status: "paid" | "overpaid" | "unpaid";
   payments: CarriedDebtPaymentRow[];
 }
+
+// A statement transfer that could be paying a carried debt — see
+// lib/carriedDebtCandidates.ts.
+export interface CarriedDebtCandidateRow {
+  debtId: string;
+  transferId: string;
+  roundId: string;
+  roundLabel: string;
+  roundClosed: boolean;
+  accountNumber: string;
+  amount: number;
+  transferredAt: string | null;
+  sourceFile: string | null;
+  available: number;
+  spare: number;
+  reason: "unplaced" | "collected" | "surplus" | "needed" | "awaiting";
+  clear: boolean;
+  suggested: number;
+}
+
+// A debtor's bank line that is on the daily page but in no round.
+export interface CarriedDebtDailyOnlyRow {
+  debtId: string;
+  lineId: string;
+  account: string;
+  postedAt: string | null;
+  amount: number;
+  senderAccount: string;
+}

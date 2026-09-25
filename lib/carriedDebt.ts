@@ -72,6 +72,17 @@ export function carryAmountProblem(available: number, amount: number): string | 
   return null;
 }
 
+/**
+ * Whether a closed round forbids moving this transfer's money to (or back
+ * from) a carried debt. Only money the round counts for somebody is frozen:
+ * a line it counts for nobody changes none of the figures the round's debts
+ * were taken from — and a debtor's late payment that landed in the round
+ * under an account nobody had bound yet is exactly such a line.
+ */
+export function frozenByClosedRound(roundClosed: boolean, countsFor: string | null): boolean {
+  return roundClosed && countsFor !== null;
+}
+
 export interface DebtSummary {
   amountPaid: number;
   paidAt: Date | null;

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { ROUND_CLOSED_ERROR } from "@/lib/carriedDebt";
+import { ROUND_CLOSED_ERROR, frozenByClosedRound } from "@/lib/carriedDebt";
 import { recomputeCarriedDebt, syncTransferCarried } from "@/lib/carriedDebtStore";
 import { recomputeRoundPayments } from "@/lib/statementRecompute";
 
@@ -20,13 +20,22 @@ export async function DELETE(
   }
 
   // Handing the money back would change a round that has since been closed
-  // — its carried debts were taken from the figures this would move.
+  // — its carried debts were taken from the figures this would move. Unless
+  // the round counts that line for nobody, when nothing there moves.
+  let roundClosed = false;
   if (payment.roundId) {
     const round = await prisma.statementRound.findUnique({
       where: { id: payment.roundId },
       select: { closedAt: true },
     });
-    if (round?.closedAt) {
+    roundClosed = !!round?.closedAt;
+    const line = payment.fingerprint
+      ? await prisma.statementTransfer.findFirst({
+          where: { roundId: payment.roundId, fingerprint: payment.fingerprint },
+          select: { memberNumber: true },
+        })
+      : null;
+    if (frozenByClosedRound(roundClosed, line ? line.memberNumber : "unknown")) {
       return NextResponse.json({ error: ROUND_CLOSED_ERROR }, { status: 409 });
     }
   }
@@ -35,7 +44,7 @@ export async function DELETE(
   await recomputeCarriedDebt(payment.debtId);
   if (payment.roundId && payment.fingerprint) {
     await syncTransferCarried(payment.roundId, payment.fingerprint);
-    await recomputeRoundPayments(payment.roundId);
+    if (!roundClosed) await recomputeRoundPayments(payment.roundId);
   }
 
   return NextResponse.json({ ok: true });

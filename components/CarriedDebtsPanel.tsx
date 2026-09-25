@@ -1,12 +1,17 @@
 "use client";
 
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
-import type { CarriedDebtRow } from "@/lib/types";
+import type {
+  CarriedDebtCandidateRow,
+  CarriedDebtDailyOnlyRow,
+  CarriedDebtRow,
+} from "@/lib/types";
 import { formatAmount, formatStatementDate } from "@/lib/format";
 import { cooperativeToday } from "@/lib/cooperativeClock";
 import { stripHonorific } from "@/lib/nameMatch";
 import PanelHelp from "@/components/PanelHelp";
 import DateField from "@/components/DateField";
+import ConfirmDialog from "@/components/ConfirmDialog";
 
 // ชำระข้ามเดือน — what members still owed when each month's round was
 // closed, and what has been paid toward it since. One row per member per
@@ -29,6 +34,23 @@ const STATUS_ORDER: Record<string, number> = { unpaid: 0, overpaid: 1, paid: 2 }
 const outstandingOf = (debt: CarriedDebtRow) =>
   Math.max(0, Math.round((debt.amount - debt.amountPaid) * 100) / 100);
 
+// Why the round a transfer sits in can, or cannot, spare it — see
+// SpareReason in lib/carriedDebtCandidates.ts.
+function reasonText(c: CarriedDebtCandidateRow): string {
+  switch (c.reason) {
+    case "unplaced":
+      return `ไม่ได้นับให้ใครในรอบ ${c.roundLabel}`;
+    case "collected":
+      return `รอบ ${c.roundLabel} หักเงินเดือนได้แล้ว ยอดโอนนี้จึงเกินมา`;
+    case "surplus":
+      return `เกินจากยอดที่ต้องจ่ายของรอบ ${c.roundLabel} ${formatAmount(c.spare)}`;
+    case "awaiting":
+      return `รอบ ${c.roundLabel} ยังรอผลการหัก — ยังไม่รู้ว่ารอบนั้นต้องใช้ยอดนี้ไหม`;
+    default:
+      return `รอบ ${c.roundLabel} ยังนับยอดนี้เป็นค่าหักของเดือนนั้น — ใช้ก็ต่อเมื่อแน่ใจว่าโอนมาจ่ายหนี้เก่า`;
+  }
+}
+
 export default function CarriedDebtsPanel() {
   const [debts, setDebts] = useState<CarriedDebtRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -45,6 +67,32 @@ export default function CarriedDebtsPanel() {
   const [cashDate, setCashDate] = useState(cooperativeToday());
   const [cashNote, setCashNote] = useState("");
 
+  const [candidates, setCandidates] = useState<CarriedDebtCandidateRow[]>([]);
+  const [dailyOnly, setDailyOnly] = useState<CarriedDebtDailyOnlyRow[]>([]);
+  const [plan, setPlan] = useState<{ debtId: string; transferId: string; amount: number }[]>([]);
+  const [planTotal, setPlanTotal] = useState(0);
+  const [checking, setChecking] = useState(false);
+  const [confirmPlan, setConfirmPlan] = useState(false);
+  const [applyAmounts, setApplyAmounts] = useState<Record<string, string>>({});
+
+  // Statement transfers that could be paying each open debt. Read-only; a
+  // candidate is applied by the button beside it or, for the clear ones, in
+  // bulk after staff have seen the list.
+  const fetchCandidates = useCallback(async () => {
+    setChecking(true);
+    try {
+      const res = await fetch("/api/carried-debts/candidates");
+      const body = await res.json().catch(() => ({}));
+      setCandidates(body.candidates ?? []);
+      setDailyOnly(body.dailyOnly ?? []);
+      setPlan(body.plan ?? []);
+      setPlanTotal(body.planTotal ?? 0);
+      setApplyAmounts({});
+    } finally {
+      setChecking(false);
+    }
+  }, []);
+
   const fetchDebts = useCallback(async () => {
     setLoading(true);
     const res = await fetch("/api/carried-debts");
@@ -53,9 +101,29 @@ export default function CarriedDebtsPanel() {
     setLoading(false);
   }, []);
 
+  const refresh = useCallback(async () => {
+    await Promise.all([fetchDebts(), fetchCandidates()]);
+  }, [fetchDebts, fetchCandidates]);
+
   useEffect(() => {
-    fetchDebts();
-  }, [fetchDebts]);
+    refresh();
+  }, [refresh]);
+
+  const candidatesOf = useMemo(() => {
+    const map = new Map<string, CarriedDebtCandidateRow[]>();
+    for (const c of candidates) map.set(c.debtId, [...(map.get(c.debtId) ?? []), c]);
+    return map;
+  }, [candidates]);
+  const dailyOnlyOf = useMemo(() => {
+    const map = new Map<string, CarriedDebtDailyOnlyRow[]>();
+    for (const l of dailyOnly) map.set(l.debtId, [...(map.get(l.debtId) ?? []), l]);
+    return map;
+  }, [dailyOnly]);
+  const debtById = useMemo(() => new Map(debts.map((d) => [d.id, d])), [debts]);
+  const candidateByKey = useMemo(
+    () => new Map(candidates.map((c) => [`${c.debtId}|${c.transferId}`, c])),
+    [candidates]
+  );
 
   // The months on offer, newest first, from the debts themselves — a closed
   // round nobody owed anything on has nothing to show here.
@@ -66,15 +134,18 @@ export default function CarriedDebtsPanel() {
   }, [debts]);
 
   const inMonth = debts.filter((d) => !month || d.sourceRoundId === month);
+  const found = (d: CarriedDebtRow) =>
+    d.status === "unpaid" && ((candidatesOf.get(d.id)?.length ?? 0) > 0 || dailyOnlyOf.has(d.id));
   const counts = {
     all: inMonth.length,
     unpaid: inMonth.filter((d) => d.status === "unpaid").length,
+    found: inMonth.filter(found).length,
     paid: inMonth.filter((d) => d.status === "paid").length,
     overpaid: inMonth.filter((d) => d.status === "overpaid").length,
   };
   const needle = search.trim().toLowerCase();
   const shown = inMonth
-    .filter((d) => status === "all" || d.status === status)
+    .filter((d) => status === "all" || (status === "found" ? found(d) : d.status === status))
     .filter(
       (d) =>
         !needle ||
@@ -125,7 +196,7 @@ export default function CarriedDebtsPanel() {
       setNotice(
         `บันทึกเงินสด ${formatAmount(Number(cashAmount))} ให้ ${debt.memberNumber} ${debt.name} (${debt.sourceLabel}) แล้ว`
       );
-      await fetchDebts();
+      await refresh();
     } finally {
       setBusy(false);
     }
@@ -145,7 +216,60 @@ export default function CarriedDebtsPanel() {
         return;
       }
       setNotice("ลบรายการชำระแล้ว — ถ้าเป็นเงินโอน ยอดนั้นกลับไปนับในรอบที่โอนเข้ามาแล้ว");
-      await fetchDebts();
+      await refresh();
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // One candidate, by hand, through the round's own carry route — the same
+  // one the "ชำระข้ามเดือน" button on the round page uses.
+  const applyCandidate = async (debt: CarriedDebtRow, c: CarriedDebtCandidateRow) => {
+    const key = `${c.debtId}|${c.transferId}`;
+    const amount = Number(applyAmounts[key] ?? c.suggested);
+    setBusy(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const res = await fetch(`/api/statement-rounds/${c.roundId}/transfers/${c.transferId}/carry`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ debtId: debt.id, amount }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setError(body.error || "ใช้ยอดนี้ไม่สำเร็จ");
+        return;
+      }
+      setNotice(
+        `ใช้ยอดโอน ${formatAmount(amount)} (รอบ ${c.roundLabel}) ชำระหนี้ ${debt.sourceLabel} ของ ${debt.memberNumber} ${debt.name} แล้ว`
+      );
+      await refresh();
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const applyPlan = async () => {
+    setConfirmPlan(false);
+    setBusy(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const res = await fetch("/api/carried-debts/candidates/apply", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ items: plan.map((p) => ({ debtId: p.debtId, transferId: p.transferId })) }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setError(body.error || "บันทึกไม่สำเร็จ");
+        return;
+      }
+      setNotice(
+        `ใช้ยอดโอนชำระหนี้ข้ามเดือนแล้ว ${body.applied} รายการ (${body.debts} คน) รวม ${formatAmount(body.amount ?? 0)}`
+      );
+      await refresh();
     } finally {
       setBusy(false);
     }
@@ -164,6 +288,12 @@ export default function CarriedDebtsPanel() {
             <strong>เงินโอน</strong>: ไปที่รอบของเดือนที่เงินเข้ามา (เช่น รอบกันยายน) แล้วกด{" "}
             <strong>&quot;ชำระข้ามเดือน&quot;</strong> ที่รายการโอนนั้น เลือกว่าจ่ายหนี้เดือนไหน — ยอดนั้นจะไม่นับในรอบกันยายนแล้ว
             มานับที่นี่แทน สมาชิกที่ค้างข้ามเดือนจะมีป้าย ⚠️ ค้างข้ามเดือน ในรอบนั้น
+          </p>
+          <p>
+            <strong>ตรวจจาก Statement</strong>: ระบบหายอดโอนจากบัญชีที่รู้ว่าเป็นของสมาชิกแต่ละคน ในทุกรอบที่อัป Statement
+            ไว้ แล้วบอกว่ารอบนั้นต้องใช้ยอดนั้นหรือไม่ (💸 พบยอดโอน) — กดที่แถวเพื่อดูและกด &quot;ใช้ชำระหนี้นี้&quot; ·
+            ปุ่ม &quot;✅ ใช้ยอดที่ชัดเจน&quot; ใช้ให้ทีเดียวเฉพาะรายที่ไม่ต้องเลือก (ค้างเดือนเดียว และรอบที่เงินเข้าไม่ต้องใช้ยอดนั้น)
+            โดยแสดงรายการให้ดูก่อนยืนยัน
           </p>
           <p>
             <strong>เงินสด</strong>: บันทึกได้ที่นี่เลย (กดที่แถวสมาชิก) · ลบรายการชำระที่บันทึกผิดได้ที่นี่ —
@@ -188,6 +318,7 @@ export default function CarriedDebtsPanel() {
         {(
           [
             ["unpaid", "❌ ยังค้าง"],
+            ["found", "💸 พบยอดโอน"],
             ["paid", "✅ ชำระครบ"],
             ["overpaid", "⚠️ ชำระเกิน"],
             ["all", "ทั้งหมด"],
@@ -223,6 +354,70 @@ export default function CarriedDebtsPanel() {
           คงเหลือ <strong className="num text-red-600">{formatAmount(totals.outstanding)}</strong>
         </span>
       </div>
+
+      {debts.length > 0 && (
+        <div className="flex flex-wrap items-center gap-2 px-4 py-2 border-b border-slate-100 text-sm bg-sky-50/50">
+          <span className="text-slate-600">
+            {checking
+              ? "กำลังตรวจยอดโอนจาก Statement…"
+              : `ตรวจจาก Statement: พบยอดโอนที่อาจเป็นการชำระหนี้ ${counts.found} คน`}
+          </span>
+          <button
+            onClick={fetchCandidates}
+            disabled={checking || busy}
+            className="text-xs border border-slate-300 rounded px-2.5 py-1 bg-white disabled:opacity-50"
+          >
+            🔍 ตรวจอีกครั้ง
+          </button>
+          {plan.length > 0 && (
+            <button
+              onClick={() => setConfirmPlan(true)}
+              disabled={checking || busy}
+              className="text-xs text-white bg-emerald-700 rounded px-2.5 py-1 disabled:opacity-50 sm:ml-auto"
+            >
+              ✅ ใช้ยอดที่ชัดเจน {plan.length} รายการ · {formatAmount(planTotal)}
+            </button>
+          )}
+        </div>
+      )}
+
+      <ConfirmDialog
+        open={confirmPlan}
+        tone="neutral"
+        title={`ใช้ยอดโอนชำระหนี้ข้ามเดือน ${plan.length} รายการ`}
+        description="เฉพาะรายการที่ชัดเจน: สมาชิกค้างหนี้เดือนเดียว บัญชีที่โอนไม่ใช่ของลูกหนี้คนอื่น และรอบที่เงินเข้าไม่ต้องใช้ยอดนี้ ยอดที่ใช้จะไม่นับในรอบนั้นแล้ว (ลบย้อนกลับได้ที่แถวสมาชิก)"
+        confirmLabel="ยืนยันใช้ยอด"
+        onConfirm={applyPlan}
+        onCancel={() => setConfirmPlan(false)}
+      >
+        <div className="max-h-72 overflow-auto text-xs border border-slate-200 rounded">
+          <table className="w-full">
+            <tbody>
+              {plan.map((p) => {
+                const debt = debtById.get(p.debtId);
+                const c = candidateByKey.get(`${p.debtId}|${p.transferId}`);
+                return (
+                  <tr key={`${p.debtId}|${p.transferId}`} className="border-t border-slate-100 align-top">
+                    <td className="px-2 py-1">
+                      <span className="num">{debt?.memberNumber}</span> {debt?.name}
+                      <div className="text-slate-500">หนี้ {debt?.sourceLabel}</div>
+                    </td>
+                    <td className="px-2 py-1">
+                      <span className="num">
+                        {c?.transferredAt ? formatStatementDate(c.transferredAt) : "—"}
+                      </span>
+                      <div className="text-slate-500">จากรอบ {c?.roundLabel}</div>
+                    </td>
+                    <td className="px-2 py-1 num text-right font-medium whitespace-nowrap">
+                      {formatAmount(p.amount)}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </ConfirmDialog>
 
       {notice && <p className="text-sm text-green-700 bg-green-50 px-4 py-2">{notice}</p>}
       {error && <p className="text-sm text-red-700 bg-red-50 px-4 py-2">{error}</p>}
@@ -279,6 +474,11 @@ export default function CarriedDebtsPanel() {
                       >
                         {STATUS_LABEL[debt.status] ?? debt.status}
                       </span>
+                      {found(debt) && (
+                        <span className="ml-1.5 inline-block px-2 py-0.5 rounded-full text-xs border bg-sky-50 text-sky-700 border-sky-200 whitespace-nowrap">
+                          💸 พบยอดโอน
+                        </span>
+                      )}
                     </td>
                   </tr>
                   {expanded === debt.id && (
@@ -318,6 +518,83 @@ export default function CarriedDebtsPanel() {
                             </div>
                           ))
                         )}
+                        {debt.status === "unpaid" &&
+                          ((candidatesOf.get(debt.id)?.length ?? 0) > 0 || dailyOnlyOf.has(debt.id)) && (
+                            <div className="pt-2 mt-1 border-t border-slate-200">
+                              <p className="text-xs text-sky-800 font-medium mb-1">
+                                💸 ยอดโอนจากบัญชีของสมาชิกที่พบใน Statement
+                              </p>
+                              {(candidatesOf.get(debt.id) ?? []).map((c) => {
+                                const key = `${c.debtId}|${c.transferId}`;
+                                return (
+                                  <div
+                                    key={key}
+                                    className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm py-1"
+                                  >
+                                    <span className="num text-slate-500">
+                                      {c.transferredAt ? formatStatementDate(c.transferredAt) : "—"}
+                                    </span>
+                                    <span className="num font-medium">{formatAmount(c.amount)}</span>
+                                    {c.available < c.amount - 0.01 && (
+                                      <span className="text-xs text-slate-500">
+                                        (เหลือ {formatAmount(c.available)})
+                                      </span>
+                                    )}
+                                    <span className="text-xs text-slate-500">
+                                      รอบ {c.roundLabel}
+                                      {c.roundClosed && " 🔒"}
+                                      <span className="font-mono text-slate-400"> · {c.accountNumber}</span>
+                                    </span>
+                                    <span
+                                      className={`text-xs ${
+                                        c.spare > 0.01 ? "text-emerald-700" : "text-amber-700"
+                                      }`}
+                                    >
+                                      {reasonText(c)}
+                                    </span>
+                                    <span className="flex items-center gap-1.5 ml-auto">
+                                      <input
+                                        type="number"
+                                        inputMode="decimal"
+                                        step="0.01"
+                                        value={applyAmounts[key] ?? String(c.suggested)}
+                                        onChange={(e) =>
+                                          setApplyAmounts((prev) => ({ ...prev, [key]: e.target.value }))
+                                        }
+                                        className="border border-slate-300 rounded px-2 py-1 text-xs w-24"
+                                      />
+                                      <button
+                                        onClick={() => applyCandidate(debt, c)}
+                                        disabled={busy || !(Number(applyAmounts[key] ?? c.suggested) > 0)}
+                                        className="text-xs text-white bg-sky-700 rounded px-2.5 py-1 disabled:opacity-50 whitespace-nowrap"
+                                      >
+                                        ใช้ชำระหนี้นี้
+                                      </button>
+                                    </span>
+                                  </div>
+                                );
+                              })}
+                              {(dailyOnlyOf.get(debt.id) ?? []).map((l) => (
+                                <div
+                                  key={l.lineId}
+                                  className="flex flex-wrap items-center gap-x-3 text-sm py-1 text-slate-500"
+                                >
+                                  <span className="num">
+                                    {l.postedAt ? formatStatementDate(l.postedAt) : "—"}
+                                  </span>
+                                  <span className="num font-medium">{formatAmount(l.amount)}</span>
+                                  <span className="text-xs">
+                                    บัญชี {l.account}
+                                    <span className="font-mono text-slate-400"> · {l.senderAccount}</span>
+                                  </span>
+                                  <span className="text-xs text-amber-700">
+                                    อยู่ในเงินเข้าประจำวันเท่านั้น ยังไม่อยู่ในรอบใด — อัป Statement ช่วงวันนี้เข้ารอบที่ยังเปิดอยู่ก่อน
+                                    แล้วกลับมาใช้ชำระที่นี่
+                                  </span>
+                                </div>
+                              ))}
+                            </div>
+                          )}
                         <div className="flex flex-wrap items-center gap-2 pt-2 mt-1 border-t border-slate-200">
                           <span className="text-xs text-slate-500">บันทึกชำระเงินสด ยอด</span>
                           <input
@@ -349,8 +626,8 @@ export default function CarriedDebtsPanel() {
                             บันทึกเงินสด
                           </button>
                           <p className="w-full text-xs text-slate-400">
-                            เงินโอนไม่ต้องบันทึกที่นี่ — กด &quot;ชำระข้ามเดือน&quot; ที่รายการโอนในรอบที่เงินเข้ามา
-                            ระบบจะไม่นับซ้ำ
+                            เงินโอนไม่ต้องบันทึกเป็นเงินสด — ใช้ปุ่ม &quot;ใช้ชำระหนี้นี้&quot; ด้านบน หรือกด
+                            &quot;ชำระข้ามเดือน&quot; ที่รายการโอนในรอบที่เงินเข้ามา ระบบจะไม่นับซ้ำ
                           </p>
                         </div>
                       </td>
