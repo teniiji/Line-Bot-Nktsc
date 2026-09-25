@@ -747,6 +747,20 @@ model CarriedDebtPayment {
   @@index([roundId, fingerprint])
 }
 
+// Staff saying a bank line is not payment toward one carried debt
+// ("ไม่ใช่ยอดของหนี้นี้"), so the check against the statements stops offering
+// it there. Keyed by the line's identity across re-uploads rather than a row
+// id: "t:<roundId>|<fingerprint>" for a round's transfer, "line:<fingerprint>"
+// for a daily line.
+model CarriedDebtDismissal {
+  id        String   @id @default(cuid())
+  debtId    String
+  sourceKey String
+  createdAt DateTime @default(now())
+
+  @@unique([debtId, sourceKey])
+}
+
 // One member who could not be deducted this round, plus whatever the bank
 // statements say they have since paid.
 //

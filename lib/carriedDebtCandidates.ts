@@ -40,6 +40,8 @@ export interface RoundTransfer {
   carriedAmount: number;
   excludedReason: string | null;
   transferredAt: Date | null;
+  // Debts staff have said this money is not for ("ไม่ใช่ยอดของหนี้นี้").
+  dismissedFor?: string[];
 }
 
 // Where the member the transfer counts for stands in that round.
@@ -49,6 +51,8 @@ export interface RoundStanding {
   deductionResult: string;
   amountDue: number;
   amountPaid: number;
+  // What was asked of payroll that month (ยอดแจ้งหัก).
+  expectedAmount?: number | null;
 }
 
 // Why the round the transfer sits in can, or cannot, spare it:
@@ -73,6 +77,11 @@ export interface Candidate {
   // one month, the account is nobody else's among the debtors, and the round
   // it sits in can spare it.
   clear: boolean;
+  // The amount is exactly what was asked of payroll for the member in the
+  // month it arrived — the look of that month's own deduction, paid some
+  // other way (a unit transferring for a member who moved away). Never
+  // applied in bulk; staff decide.
+  looksMonthly: boolean;
 }
 
 // A bank line from the daily page (StatementLine) that no round holds. A
@@ -84,12 +93,16 @@ export interface DailyLine {
   // Null for a line whose description names no paying account — a unit's
   // payroll office paying for a member (BSD02 "…/เทศบาล…") is one.
   senderAccount: string | null;
+  // Debts staff have said this money is not for ("ไม่ใช่ยอดของหนี้นี้").
+  dismissedFor?: string[];
   // Members the เงินเข้าประจำวัน page pairs this line with through a slip
   // they sent or a recording staff made (lib/dailyReconcile.ts). That is how
   // money from an account nobody knows is the member's still finds them.
   owners?: string[];
   // The line's amount less what already went to carried debts.
   available: number;
+  // The line's full amount, when it differs from what is still available.
+  amount?: number;
   postedAt: Date | null;
 }
 
@@ -100,6 +113,7 @@ export interface MonthStanding {
   memberNumber: string;
   deductionResult: string;
   status: string;
+  expectedAmount?: number | null;
 }
 
 export interface LineCandidate {
@@ -113,6 +127,10 @@ export interface LineCandidate {
   // Found through the daily page's pairing with the member's own slip rather
   // than by account.
   bySlip: boolean;
+  // See Candidate.looksMonthly.
+  looksMonthly: boolean;
+  // The period (MMYY) of the month the line arrived in.
+  period: string | null;
   clear: boolean;
 }
 
@@ -125,6 +143,10 @@ export interface PlannedPayment {
   source: PaymentSource;
   amount: number;
 }
+
+// Whether an amount is exactly that month's ยอดแจ้งหัก for the member.
+const matchesExpected = (expected: number | null | undefined, amount: number) =>
+  expected !== null && expected !== undefined && expected > EPSILON && Math.abs(expected - amount) < EPSILON;
 
 const standingKey = (roundId: string, memberNumber: string) =>
   `${roundId}|${memberNumberKey(memberNumber) ?? memberNumber}`;
@@ -209,6 +231,8 @@ export function findCandidates(
     }
   }
 
+  const standingOf = new Map(standings.map((s) => [standingKey(s.roundId, s.memberNumber), s]));
+
   const candidates: Candidate[] = [];
   for (const transfer of [...transfers].sort(byDate)) {
     if (transfer.excludedReason) continue;
@@ -223,14 +247,24 @@ export function findCandidates(
         ? countedFor === key
         : debt.accounts.includes(transfer.accountNumber);
       if (!mine) continue;
+      if (transfer.dismissedFor?.includes(debt.id)) continue;
       const sharedAccount = !countedFor && (debtorsOfAccount.get(transfer.accountNumber)?.size ?? 0) > 1;
+      const looksMonthly = matchesExpected(
+        standingOf.get(standingKey(transfer.roundId, debt.memberNumber))?.expectedAmount,
+        transfer.amount
+      );
       candidates.push({
         debtId: debt.id,
         transferId: transfer.id,
         available: info.available,
         spare: info.spare,
         reason: info.reason,
-        clear: info.spare > EPSILON && (openDebtsOf.get(key) ?? 0) === 1 && !sharedAccount,
+        looksMonthly,
+        clear:
+          info.spare > EPSILON &&
+          (openDebtsOf.get(key) ?? 0) === 1 &&
+          !sharedAccount &&
+          !looksMonthly,
       });
     }
   }
@@ -258,6 +292,12 @@ export function findLineCandidates(
       debtorsOfAccount.set(account, set);
     }
   }
+  const expectedIn = new Map(
+    monthStandings.map((s) => [
+      `${s.period}|${memberNumberKey(s.memberNumber) ?? s.memberNumber}`,
+      s.expectedAmount ?? null,
+    ])
+  );
   const stillOwing = new Set(
     monthStandings
       .filter(
@@ -279,10 +319,13 @@ export function findLineCandidates(
       const bySlip = owners.has(key);
       const byAccount = line.senderAccount !== null && debt.accounts.includes(line.senderAccount);
       if (!bySlip && !byAccount) continue;
+      if (line.dismissedFor?.includes(debt.id)) continue;
       if (debt.since && line.postedAt && line.postedAt < debt.since) continue;
-      const contested = line.postedAt
-        ? stillOwing.has(`${periodOfDate(line.postedAt)}|${key}`)
-        : true;
+      const period = line.postedAt ? periodOfDate(line.postedAt) : null;
+      const looksMonthly =
+        period !== null &&
+        matchesExpected(expectedIn.get(`${period}|${key}`), line.amount ?? line.available);
+      const contested = period ? stillOwing.has(`${period}|${key}`) || looksMonthly : true;
       // An account two debtors share says nothing about which; a slip does.
       const sharedAccount =
         !bySlip && (debtorsOfAccount.get(line.senderAccount as string)?.size ?? 0) > 1;
@@ -292,6 +335,8 @@ export function findLineCandidates(
         available: line.available,
         contested,
         bySlip,
+        looksMonthly,
+        period,
         clear: !contested && (openDebtsOf.get(key) ?? 0) === 1 && !sharedAccount,
       });
     }

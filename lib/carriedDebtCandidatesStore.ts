@@ -18,6 +18,10 @@ import type {
 
 const CHUNK = 1000;
 
+// A round transfer's identity across re-uploads, for CarriedDebtDismissal.
+export const transferSourceKey = (roundId: string, fingerprint: string) =>
+  `t:${roundId}|${fingerprint}`;
+
 function chunks<T>(items: T[]): T[][] {
   const out: T[][] = [];
   for (let i = 0; i < items.length; i += CHUNK) out.push(items.slice(i, i + CHUNK));
@@ -46,6 +50,10 @@ export interface CandidateInputs {
   standings: RoundStanding[];
   lines: DailyLineRow[];
   monthStandings: MonthStanding[];
+  // Open rounds for the months daily lines arrived in, for "นับเป็นยอดรอบ …".
+  monthRounds: { id: string; period: string; label: string }[];
+  // How many suggestions staff have hidden, per debt.
+  dismissedCount: Record<string, number>;
 }
 
 export async function loadCandidateInputs(debtIds?: string[]): Promise<CandidateInputs> {
@@ -53,10 +61,29 @@ export async function loadCandidateInputs(debtIds?: string[]): Promise<Candidate
     where: { status: "unpaid", ...(debtIds ? { id: { in: debtIds } } : {}) },
   });
   if (rows.length === 0) {
-    return { debts: [], transfers: [], standings: [], lines: [], monthStandings: [] };
+    return {
+      debts: [],
+      transfers: [],
+      standings: [],
+      lines: [],
+      monthStandings: [],
+      monthRounds: [],
+      dismissedCount: {},
+    };
   }
 
   const numbers = [...new Set(rows.map((d) => d.memberNumber))];
+
+  // Money staff have said is not for a given debt — see CarriedDebtDismissal.
+  const dismissedBySource = new Map<string, string[]>();
+  for (const slice of chunks(rows.map((r) => r.id))) {
+    for (const row of await prisma.carriedDebtDismissal.findMany({
+      where: { debtId: { in: slice } },
+      select: { debtId: true, sourceKey: true },
+    })) {
+      dismissedBySource.set(row.sourceKey, [...(dismissedBySource.get(row.sourceKey) ?? []), row.debtId]);
+    }
+  }
   const bound: { memberNumber: string; accountNumber: string }[] = [];
   for (const slice of chunks(numbers)) {
     bound.push(
@@ -134,10 +161,13 @@ export async function loadCandidateInputs(debtIds?: string[]): Promise<Candidate
       excludedReason: t.excludedReason,
       transferredAt: t.transferredAt,
       sourceFile: t.sourceFile,
+      dismissedFor: dismissedBySource.get(transferSourceKey(t.roundId, t.fingerprint)) ?? [],
     }));
 
+  // The members transfers count for, and the debtors themselves — whose
+  // ยอดแจ้งหัก in each round says whether a payment looks like that month's.
   const memberNumbersInRounds = [
-    ...new Set(transfers.map((t) => t.memberNumber).filter(Boolean)),
+    ...new Set([...transfers.map((t) => t.memberNumber).filter(Boolean), ...numbers]),
   ] as string[];
   const standings: RoundStanding[] = [];
   for (const slice of chunks(memberNumbersInRounds)) {
@@ -153,6 +183,7 @@ export async function loadCandidateInputs(debtIds?: string[]): Promise<Candidate
           deductionResult: true,
           amountDue: true,
           amountPaid: true,
+          expectedAmount: true,
         },
       }))
     );
@@ -220,6 +251,7 @@ export async function loadCandidateInputs(debtIds?: string[]): Promise<Candidate
   }
   const lines: DailyLineRow[] = loose.map((line) => ({
     id: line.id,
+    dismissedFor: dismissedBySource.get(`${LINE_FINGERPRINT_PREFIX}${line.fingerprint}`) ?? [],
     senderAccount: line.senderAccount,
     owners: owners.get(line.id) ?? [],
     description: line.description,
@@ -240,7 +272,7 @@ export async function loadCandidateInputs(debtIds?: string[]): Promise<Candidate
   const monthRounds = periods.length
     ? await prisma.statementRound.findMany({
         where: { period: { in: periods }, closedAt: null },
-        select: { id: true, period: true },
+        select: { id: true, period: true, label: true },
       })
     : [];
   const periodOfRound = new Map(monthRounds.map((r) => [r.id, r.period]));
@@ -249,7 +281,13 @@ export async function loadCandidateInputs(debtIds?: string[]): Promise<Candidate
     for (const slice of chunks(numbers)) {
       const rowsInMonth = await prisma.statementMember.findMany({
         where: { roundId: { in: monthRounds.map((r) => r.id) }, memberNumber: { in: slice } },
-        select: { roundId: true, memberNumber: true, deductionResult: true, status: true },
+        select: {
+          roundId: true,
+          memberNumber: true,
+          deductionResult: true,
+          status: true,
+          expectedAmount: true,
+        },
       });
       for (const row of rowsInMonth) {
         monthStandings.push({
@@ -257,12 +295,25 @@ export async function loadCandidateInputs(debtIds?: string[]): Promise<Candidate
           memberNumber: row.memberNumber,
           deductionResult: row.deductionResult,
           status: row.status,
+          expectedAmount: row.expectedAmount,
         });
       }
     }
   }
 
-  return { debts, transfers, standings, lines, monthStandings };
+  // One bank line is one hidden suggestion, whether it was hidden as a daily
+  // line, as a round row, or (after "นับเป็นยอดรอบ …") as both.
+  const hiddenLines = new Map<string, Set<string>>();
+  for (const [sourceKey, debtIds] of dismissedBySource) {
+    const line = sourceKey.replace(/^t:[^|]*\|/, "");
+    for (const id of debtIds) {
+      hiddenLines.set(id, (hiddenLines.get(id) ?? new Set()).add(line));
+    }
+  }
+  const dismissedCount: Record<string, number> = {};
+  for (const [id, set] of hiddenLines) dismissedCount[id] = set.size;
+
+  return { debts, transfers, standings, lines, monthStandings, monthRounds, dismissedCount };
 }
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -315,4 +366,22 @@ async function slipPairedLines(
     }
   }
   return found;
+}
+
+// The identity a CarriedDebtDismissal is stored under, from the ids the page
+// knows: "t:<transferId>" or "l:<lineId>".
+export async function sourceKeyOf(source: string): Promise<string | null> {
+  const id = source.slice(2);
+  if (source.startsWith("t:")) {
+    const transfer = await prisma.statementTransfer.findUnique({
+      where: { id },
+      select: { roundId: true, fingerprint: true },
+    });
+    return transfer ? transferSourceKey(transfer.roundId, transfer.fingerprint) : null;
+  }
+  if (source.startsWith("l:")) {
+    const line = await prisma.statementLine.findUnique({ where: { id }, select: { fingerprint: true } });
+    return line ? `${LINE_FINGERPRINT_PREFIX}${line.fingerprint}` : null;
+  }
+  return null;
 }

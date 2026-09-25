@@ -294,6 +294,53 @@ describe("daily lines no round holds", () => {
     expect(found.find((c) => c.debtId === "d1")).toMatchObject({ bySlip: false, clear: false });
   });
 
+  it("treats a line of exactly that month's ยอดแจ้งหัก as possibly that month's own money", () => {
+    // 29755: the unit's ฿13,500 in September, September's แจ้งหัก ฿13,500, and a
+    // July debt of ฿13,500 — the money is September's, not July's.
+    const [c] = findLineCandidates(
+      [debt({ memberNumber: "29755", outstanding: 13500, since: new Date(Date.UTC(2026, 6, 1)) })],
+      [line({ senderAccount: null, owners: ["29755"], available: 13500, amount: 13500 })],
+      [
+        {
+          period: "0969",
+          memberNumber: "29755",
+          deductionResult: "collected",
+          status: "collected",
+          expectedAmount: 13500,
+        },
+      ]
+    );
+    expect(c).toMatchObject({ looksMonthly: true, contested: true, clear: false, period: "0969" });
+  });
+
+  it("drops a suggestion staff said is not for this debt, and only for this debt", () => {
+    const found = findLineCandidates(
+      [debt(), debt({ id: "d2", memberNumber: "30000", accounts: ["4130000001"] })],
+      [line({ dismissedFor: ["d1"] })],
+      []
+    );
+    expect(found.map((c) => c.debtId)).toEqual(["d2"]);
+    expect(
+      findCandidates([debt()], [transfer({ dismissedFor: ["d1"] })], [])
+    ).toEqual([]);
+  });
+
+  it("keeps a round transfer of that month's ยอดแจ้งหัก out of the bulk plan", () => {
+    const [c] = findCandidates(
+      [debt()],
+      [transfer({ memberNumber: "29642" })],
+      [standing({ deductionResult: "collected", amountDue: 0, expectedAmount: 4700 })]
+    );
+    expect(c).toMatchObject({ reason: "collected", looksMonthly: true, clear: false });
+    expect(
+      planClearPayments(
+        [debt()],
+        [transfer({ memberNumber: "29642" })],
+        [standing({ deductionResult: "collected", amountDue: 0, expectedAmount: 4700 })]
+      )
+    ).toEqual([]);
+  });
+
   it("plans round transfers and daily lines together, oldest money first", () => {
     const plan = planClearPayments(
       [debt({ outstanding: 5000 })],

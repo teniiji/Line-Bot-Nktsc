@@ -473,6 +473,8 @@ export interface CarriedDebtCandidateRow {
   available: number;
   spare: number;
   reason: "unplaced" | "collected" | "surplus" | "needed" | "awaiting";
+  // Exactly that month's ยอดแจ้งหัก — possibly that month's own money.
+  looksMonthly: boolean;
   clear: boolean;
   suggested: number;
 }
@@ -493,6 +495,9 @@ export interface CarriedDebtLineCandidateRow {
   contested: boolean;
   // Paired with the member's own slip on the daily page, not by account.
   bySlip: boolean;
+  looksMonthly: boolean;
+  // The open round of the month the line arrived in, when the member is on it.
+  monthRound: { id: string | null; label: string | null } | null;
   clear: boolean;
   suggested: number;
 }

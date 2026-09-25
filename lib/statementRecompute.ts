@@ -34,13 +34,15 @@ export async function recomputeRoundPayments(roundId: string): Promise<void> {
         carriedAmount: true,
         transferredAt: true,
         branch: true,
+        fingerprint: true,
+        manualMemberNumber: true,
       },
     }),
   ]);
 
   const byMember = new Map<
     string,
-    { amountPaid: number; paidAt: Date | null; branches: Set<string> }
+    { amountPaid: number; paidAt: Date | null; branches: Set<string>; staffPlaced: boolean }
   >();
   for (const transfer of transfers) {
     // The part staff moved to a carried debt (ชำระข้ามเดือน) pays an earlier
@@ -52,8 +54,14 @@ export async function recomputeRoundPayments(roundId: string): Promise<void> {
       amountPaid: 0,
       paidAt: null as Date | null,
       branches: new Set<string>(),
+      staffPlaced: false,
     };
     entry.amountPaid += counted;
+    // A daily line staff put on this member by hand (the "line:" bridge) is
+    // them saying whose deduction it pays, the same as cash — see below.
+    if (transfer.manualMemberNumber && transfer.fingerprint.startsWith("line:")) {
+      entry.staffPlaced = true;
+    }
     if (transfer.transferredAt && (!entry.paidAt || transfer.transferredAt > entry.paidAt)) {
       entry.paidAt = transfer.transferredAt;
     }
@@ -90,7 +98,7 @@ export async function recomputeRoundPayments(roundId: string): Promise<void> {
           // money they were never asked for.
           status:
             member.deductionResult === "awaiting"
-              ? paid?.branches.has("เงินสด")
+              ? paid?.branches.has("เงินสด") || paid?.staffPlaced
                 ? calcPaymentStatus(amountPaid, member.expectedAmount ?? 0).status
                 : "awaiting"
               : member.deductionResult === "collected"
