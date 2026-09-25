@@ -61,7 +61,7 @@ export default function Dashboard() {
     // The cooperative's today, not the device's — the dashboard opens on
     // today's transactions, and before seven in the morning the two differ.
     const today = cooperativeToday();
-    return { category: "All", from: today, to: today, verified: "" };
+    return { category: "All", from: today, to: today, verified: "", q: "" };
   });
 
   const buildParams = useCallback(
@@ -71,6 +71,9 @@ export default function Dashboard() {
       if (options?.includeDate !== false) {
         if (filters.from) params.set("from", filters.from);
         if (filters.to) params.set("to", filters.to);
+        // The search narrows the list, not the overall picture — the summary
+        // cards leave it out for the same reason they leave out the dates.
+        if (filters.q.trim()) params.set("q", filters.q.trim());
       }
       if (filters.verified) params.set("verified", filters.verified);
       if (extra) {

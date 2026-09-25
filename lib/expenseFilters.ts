@@ -21,6 +21,7 @@ export function buildExpenseWhere(
   const to = searchParams.get("to");
   const lineUserId = searchParams.get("lineUserId");
   const verified = searchParams.get("verified");
+  const q = searchParams.get("q");
 
   const where: Record<string, unknown> = {};
   if (category && category !== "All") {
@@ -59,5 +60,35 @@ export function buildExpenseWhere(
       ...(end ? { lt: end } : {}),
     };
   }
+  const search = searchConditions(q);
+  if (search) where.AND = search;
   return where;
+}
+
+// The search box: every word has to turn up somewhere in the row — name,
+// member number, the account the money came from, the reference, the
+// description — so "ศศิธร 30325" finds the one row with both. A word that
+// reads as a number also matches the amount exactly, commas and all
+// ("1,800" is how staff read it off a slip).
+const SEARCHED_FIELDS = [
+  "memberFullName",
+  "memberNumber",
+  "description",
+  "referenceNumber",
+  "depositAccountNumber",
+] as const;
+
+function searchConditions(q: string | null): Record<string, unknown>[] | null {
+  const words = (q ?? "").trim().split(/\s+/).filter(Boolean).slice(0, 8);
+  if (words.length === 0) return null;
+  return words.map((word) => {
+    const either: Record<string, unknown>[] = SEARCHED_FIELDS.map((field) => ({
+      [field]: { contains: word, mode: "insensitive" },
+    }));
+    const amount = Number(word.replace(/,/g, ""));
+    if (/^[\d,]+(\.\d+)?$/.test(word) && Number.isFinite(amount)) {
+      either.push({ amount });
+    }
+    return { OR: either };
+  });
 }
