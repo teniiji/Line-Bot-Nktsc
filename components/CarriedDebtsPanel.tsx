@@ -12,7 +12,6 @@ import { cooperativeToday } from "@/lib/cooperativeClock";
 import { stripHonorific } from "@/lib/nameMatch";
 import PanelHelp from "@/components/PanelHelp";
 import DateField from "@/components/DateField";
-import ConfirmDialog from "@/components/ConfirmDialog";
 
 // ชำระข้ามเดือน — what members still owed when each month's round was
 // closed, and what has been paid toward it since. One row per member per
@@ -74,6 +73,9 @@ export default function CarriedDebtsPanel() {
   const [planTotal, setPlanTotal] = useState(0);
   const [checking, setChecking] = useState(false);
   const [confirmPlan, setConfirmPlan] = useState(false);
+  // Planned payments staff unticked in the confirmation list, by planKey.
+  const [skipped, setSkipped] = useState<Set<string>>(new Set());
+  const [planSearch, setPlanSearch] = useState("");
   const [applyAmounts, setApplyAmounts] = useState<Record<string, string>>({});
 
   // Statement transfers that could be paying each open debt. Read-only; a
@@ -285,6 +287,16 @@ export default function CarriedDebtsPanel() {
     }
   };
 
+  const planKey = (p: CarriedDebtPlanRow) => `${p.debtId}|${p.source}`;
+  const chosenPlan = plan.filter((p) => !skipped.has(planKey(p)));
+  const chosenTotal = Math.round(chosenPlan.reduce((sum, p) => sum + p.amount, 0) * 100) / 100;
+  const planNeedle = planSearch.trim().toLowerCase();
+  const shownPlan = plan.filter((p) => {
+    if (!planNeedle) return true;
+    const debt = debtById.get(p.debtId);
+    return `${debt?.memberNumber ?? ""} ${debt?.name ?? ""}`.toLowerCase().includes(planNeedle);
+  });
+
   const applyPlan = async () => {
     setConfirmPlan(false);
     setBusy(true);
@@ -294,7 +306,7 @@ export default function CarriedDebtsPanel() {
       const res = await fetch("/api/carried-debts/candidates/apply", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ items: plan.map((p) => ({ debtId: p.debtId, source: p.source })) }),
+        body: JSON.stringify({ items: chosenPlan.map((p) => ({ debtId: p.debtId, source: p.source })) }),
       });
       const body = await res.json().catch(() => ({}));
       if (!res.ok) {
@@ -328,7 +340,7 @@ export default function CarriedDebtsPanel() {
             <strong>ตรวจจาก Statement</strong>: ระบบหายอดโอนจากบัญชีที่รู้ว่าเป็นของสมาชิกแต่ละคน ในทุกรอบที่อัป Statement
             ไว้ แล้วบอกว่ารอบนั้นต้องใช้ยอดนั้นหรือไม่ (💸 พบยอดโอน) — กดที่แถวเพื่อดูและกด &quot;ใช้ชำระหนี้นี้&quot; ·
             ปุ่ม &quot;✅ ใช้ยอดที่ชัดเจน&quot; ใช้ให้ทีเดียวเฉพาะรายที่ไม่ต้องเลือก (ค้างเดือนเดียว และรอบที่เงินเข้าไม่ต้องใช้ยอดนั้น)
-            โดยแสดงรายการให้ดูก่อนยืนยัน
+            โดยแสดงรายการให้ตรวจและติ๊กเลือกก่อนยืนยัน
           </p>
           <p>
             <strong>เงินสด</strong>: บันทึกได้ที่นี่เลย (กดที่แถวสมาชิก) · ลบรายการชำระที่บันทึกผิดได้ที่นี่ —
@@ -406,7 +418,11 @@ export default function CarriedDebtsPanel() {
           </button>
           {plan.length > 0 && (
             <button
-              onClick={() => setConfirmPlan(true)}
+              onClick={() => {
+                setSkipped(new Set());
+                setPlanSearch("");
+                setConfirmPlan(true);
+              }}
               disabled={checking || busy}
               className="text-xs text-white bg-emerald-700 rounded px-2.5 py-1 disabled:opacity-50 sm:ml-auto"
             >
@@ -416,41 +432,120 @@ export default function CarriedDebtsPanel() {
         </div>
       )}
 
-      <ConfirmDialog
-        open={confirmPlan}
-        tone="neutral"
-        title={`ใช้ยอดโอนชำระหนี้ข้ามเดือน ${plan.length} รายการ`}
-        description="เฉพาะรายการที่ชัดเจน: สมาชิกค้างหนี้เดือนเดียว บัญชีที่โอนไม่ใช่ของลูกหนี้คนอื่น และรอบที่เงินเข้าไม่ต้องใช้ยอดนี้ ยอดที่ใช้จะไม่นับในรอบนั้นแล้ว (ลบย้อนกลับได้ที่แถวสมาชิก)"
-        confirmLabel="ยืนยันใช้ยอด"
-        onConfirm={applyPlan}
-        onCancel={() => setConfirmPlan(false)}
-      >
-        <div className="max-h-72 overflow-auto text-xs border border-slate-200 rounded">
-          <table className="w-full">
-            <tbody>
-              {plan.map((p) => {
-                const debt = debtById.get(p.debtId);
-                const info = sourceInfo.get(`${p.debtId}|${p.source}`);
-                return (
-                  <tr key={`${p.debtId}|${p.source}`} className="border-t border-slate-100 align-top">
-                    <td className="px-2 py-1">
-                      <span className="num">{debt?.memberNumber}</span> {debt?.name}
-                      <div className="text-slate-500">หนี้ {debt?.sourceLabel}</div>
-                    </td>
-                    <td className="px-2 py-1">
-                      <span className="num">{info?.date ? formatStatementDate(info.date) : "—"}</span>
-                      <div className="text-slate-500">{info?.from}</div>
-                    </td>
-                    <td className="px-2 py-1 num text-right font-medium whitespace-nowrap">
-                      {formatAmount(p.amount)}
-                    </td>
+      {confirmPlan && (
+        <div
+          className="fixed inset-0 bg-black/40 flex items-center justify-center p-4 z-50"
+          onClick={() => setConfirmPlan(false)}
+        >
+          <div
+            className="bg-white rounded-lg shadow-lg p-5 max-w-3xl w-full space-y-3 max-h-[90vh] flex flex-col"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 className="font-semibold text-lg">ตรวจรายการก่อนใช้ยอด ({plan.length} รายการ)</h3>
+            <p className="text-sm text-slate-600">
+              เฉพาะรายการที่ชัดเจน: สมาชิกค้างหนี้เดือนเดียว บัญชีที่โอนไม่ใช่ของลูกหนี้คนอื่น
+              และรอบที่เงินเข้าไม่ต้องใช้ยอดนี้ — เอาเครื่องหมายถูกออกจากรายการที่ไม่ต้องการใช้
+              รายการที่ไม่เลือกจะยังอยู่ที่แถวสมาชิก ใช้เองทีละรายการได้ภายหลัง
+            </p>
+            <div className="flex flex-wrap items-center gap-2 text-sm">
+              <input
+                type="search"
+                value={planSearch}
+                onChange={(e) => setPlanSearch(e.target.value)}
+                placeholder="ค้นหา เลขสมาชิก ชื่อ"
+                className="border border-slate-300 rounded-md px-3 py-1.5 w-full sm:w-64"
+              />
+              <span className="sm:ml-auto text-slate-600">
+                เลือก <strong className="num">{chosenPlan.length}</strong> จาก{" "}
+                <span className="num">{plan.length}</span> รายการ ·{" "}
+                <strong className="num text-emerald-700">{formatAmount(chosenTotal)}</strong>
+              </span>
+            </div>
+            <div className="overflow-auto text-sm border border-slate-200 rounded min-h-0 flex-1">
+              <table className="w-full">
+                <thead className="bg-slate-50 text-slate-500 text-left text-xs sticky top-0">
+                  <tr>
+                    <th className="px-2 py-2 w-8">
+                      <input
+                        type="checkbox"
+                        aria-label="เลือกทั้งหมดที่แสดง"
+                        checked={shownPlan.length > 0 && shownPlan.every((p) => !skipped.has(planKey(p)))}
+                        onChange={(e) => {
+                          const next = new Set(skipped);
+                          for (const p of shownPlan) {
+                            if (e.target.checked) next.delete(planKey(p));
+                            else next.add(planKey(p));
+                          }
+                          setSkipped(next);
+                        }}
+                      />
+                    </th>
+                    <th className="px-2 py-2 font-semibold">สมาชิก · หนี้เดือน</th>
+                    <th className="px-2 py-2 font-semibold">ยอดโอน</th>
+                    <th className="px-2 py-2 font-semibold text-right">ยอดที่จะใช้</th>
                   </tr>
-                );
-              })}
-            </tbody>
-          </table>
+                </thead>
+                <tbody>
+                  {shownPlan.map((p) => {
+                    const key = planKey(p);
+                    const debt = debtById.get(p.debtId);
+                    const info = sourceInfo.get(key);
+                    const chosen = !skipped.has(key);
+                    return (
+                      <tr
+                        key={key}
+                        onClick={() => {
+                          const next = new Set(skipped);
+                          if (chosen) next.add(key);
+                          else next.delete(key);
+                          setSkipped(next);
+                        }}
+                        className={`border-t border-slate-100 align-top cursor-pointer ${
+                          chosen ? "" : "text-slate-400 bg-slate-50"
+                        }`}
+                      >
+                        <td className="px-2 py-1.5">
+                          <input type="checkbox" checked={chosen} readOnly aria-label={`เลือก ${debt?.memberNumber}`} />
+                        </td>
+                        <td className="px-2 py-1.5">
+                          <span className="num">{debt?.memberNumber}</span> {debt?.name}
+                          <div className="text-xs text-slate-500">
+                            หนี้ {debt?.sourceLabel} · ค้าง {debt ? formatAmount(outstandingOf(debt)) : "—"}
+                          </div>
+                        </td>
+                        <td className="px-2 py-1.5">
+                          <span className="num">{info?.date ? formatStatementDate(info.date) : "—"}</span>
+                          <div className="text-xs text-slate-500">{info?.from}</div>
+                        </td>
+                        <td className="px-2 py-1.5 num text-right font-medium whitespace-nowrap">
+                          {formatAmount(p.amount)}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+            <div className="flex justify-end gap-2 pt-1">
+              <button
+                type="button"
+                onClick={() => setConfirmPlan(false)}
+                className="border border-slate-300 rounded px-4 py-2 text-sm font-medium"
+              >
+                ยกเลิก
+              </button>
+              <button
+                type="button"
+                onClick={applyPlan}
+                disabled={chosenPlan.length === 0 || busy}
+                className="rounded px-4 py-2 text-sm font-medium text-white bg-emerald-700 disabled:opacity-50"
+              >
+                ยืนยันใช้ยอด {chosenPlan.length} รายการ
+              </button>
+            </div>
+          </div>
         </div>
-      </ConfirmDialog>
+      )}
 
       {notice && <p className="text-sm text-green-700 bg-green-50 px-4 py-2">{notice}</p>}
       {error && <p className="text-sm text-red-700 bg-red-50 px-4 py-2">{error}</p>}
