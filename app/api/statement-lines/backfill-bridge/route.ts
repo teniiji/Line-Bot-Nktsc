@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { DEDUCTION_CATEGORY } from "@/lib/statementSlipHints";
 import { canBridgeToRound, coveredByRealTransfer } from "@/lib/roundReach";
 import { recomputeRoundPayments } from "@/lib/statementRecompute";
+import { adoptLinePayments } from "@/lib/carriedDebtStore";
 import { memberNumberKey } from "@/lib/memberNumber";
 import { periodOfDate } from "@/lib/deductionPeriod";
 
@@ -189,6 +190,7 @@ export async function POST() {
   }
 
   for (const roundId of touchedRounds) {
+    await adoptLinePayments(roundId);
     await recomputeRoundPayments(roundId);
   }
 

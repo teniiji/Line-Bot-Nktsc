@@ -41,6 +41,7 @@ export async function POST() {
       accountNumber: true,
       amount: true,
       transferredAt: true,
+      carriedAmount: true,
     },
   });
 
@@ -96,6 +97,13 @@ export async function POST() {
 
   for (const candidate of candidates) {
     if (closedRoundIds.has(candidate.roundId)) {
+      alreadyCorrect += 1;
+      continue;
+    }
+    // Part of it pays a carried debt, and that payment finds its bank line
+    // by this row's round and fingerprint — moving or deleting the row would
+    // leave the payment pointing at nothing and the money counted twice.
+    if (candidate.carriedAmount > 0) {
       alreadyCorrect += 1;
       continue;
     }

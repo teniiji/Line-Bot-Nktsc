@@ -9,6 +9,7 @@ import {
   type RoundTransfer,
 } from "../lib/carriedDebtCandidates";
 import { frozenByClosedRound } from "../lib/carriedDebt";
+import { findLineCandidates, type DailyLine } from "../lib/carriedDebtCandidates";
 
 const debt = (over: Partial<OpenDebt> = {}): OpenDebt => ({
   id: "d1",
@@ -158,7 +159,7 @@ describe("spareByTransfer", () => {
 describe("planClearPayments", () => {
   it("pays up to what is owed and no more", () => {
     expect(planClearPayments([debt({ outstanding: 2500 })], [transfer()], [])).toEqual([
-      { debtId: "d1", transferId: "t1", amount: 2500 },
+      { debtId: "d1", source: "t:t1", amount: 2500 },
     ]);
   });
 
@@ -173,8 +174,8 @@ describe("planClearPayments", () => {
       []
     );
     expect(plan).toEqual([
-      { debtId: "d1", transferId: "a", amount: 2000 },
-      { debtId: "d1", transferId: "b", amount: 1000 },
+      { debtId: "d1", source: "t:a", amount: 2000 },
+      { debtId: "d1", source: "t:b", amount: 1000 },
     ]);
   });
 
@@ -211,5 +212,62 @@ describe("frozenByClosedRound", () => {
     expect(frozenByClosedRound(true, "29642")).toBe(true);
     expect(frozenByClosedRound(true, null)).toBe(false);
     expect(frozenByClosedRound(false, "29642")).toBe(false);
+  });
+});
+
+describe("daily lines no round holds", () => {
+  const line = (over: Partial<DailyLine> = {}): DailyLine => ({
+    id: "l1",
+    senderAccount: "4130000001",
+    available: 4700,
+    postedAt: new Date("2026-09-07T10:00:00Z"),
+    ...over,
+  });
+  const aug = new Date(Date.UTC(2026, 7, 1));
+
+  it("offers a line from the debtor's account, clear when nothing else claims it", () => {
+    const [c] = findLineCandidates([debt({ since: aug })], [line()], []);
+    expect(c).toMatchObject({ debtId: "d1", lineId: "l1", available: 4700, contested: false, clear: true });
+  });
+
+  it("leaves it to staff when the member still owes that month's open round", () => {
+    const [c] = findLineCandidates(
+      [debt()],
+      [line()],
+      [{ period: "0969", memberNumber: "29642", deductionResult: "uncollected", status: "unpaid" }]
+    );
+    expect(c).toMatchObject({ contested: true, clear: false });
+  });
+
+  it("is not contested by a month the member has already settled", () => {
+    const [c] = findLineCandidates(
+      [debt()],
+      [line()],
+      [{ period: "0969", memberNumber: "29642", deductionResult: "uncollected", status: "paid" }]
+    );
+    expect(c).toMatchObject({ contested: false, clear: true });
+  });
+
+  it("ignores lines from before the debt's own month and lines used up", () => {
+    expect(
+      findLineCandidates(
+        [debt({ since: aug })],
+        [line({ id: "old", postedAt: new Date("2026-07-20T10:00:00Z") }), line({ id: "used", available: 0 })],
+        []
+      )
+    ).toEqual([]);
+  });
+
+  it("plans round transfers and daily lines together, oldest money first", () => {
+    const plan = planClearPayments(
+      [debt({ outstanding: 5000 })],
+      [transfer({ id: "t-late", amount: 3000, transferredAt: new Date("2026-09-21T10:00:00Z") })],
+      [],
+      [line({ available: 4700 })]
+    );
+    expect(plan).toEqual([
+      { debtId: "d1", source: "l:l1", amount: 4700 },
+      { debtId: "d1", source: "t:t-late", amount: 300 },
+    ]);
   });
 });

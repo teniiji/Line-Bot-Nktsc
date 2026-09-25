@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { LINE_FINGERPRINT_PREFIX } from "@/lib/carriedDebt";
 import { planClearPayments } from "@/lib/carriedDebtCandidates";
 import { loadCandidateInputs } from "@/lib/carriedDebtCandidatesStore";
 import { recomputeCarriedDebt, syncTransferCarried } from "@/lib/carriedDebtStore";
@@ -19,57 +20,85 @@ export const dynamic = "force-dynamic";
 export async function POST(request: NextRequest) {
   const body = await request.json().catch(() => ({}) as Record<string, unknown>);
   const confirmed = new Set(
-    (Array.isArray(body.items) ? body.items : [])
-      .map((item: { debtId?: unknown; transferId?: unknown }) => `${item?.debtId}|${item?.transferId}`)
+    (Array.isArray(body.items) ? body.items : []).map(
+      (item: { debtId?: unknown; source?: unknown }) => `${item?.debtId}|${item?.source}`
+    )
   );
   if (confirmed.size === 0) {
     return NextResponse.json({ error: "ไม่มีรายการที่ยืนยัน" }, { status: 400 });
   }
 
-  const { debts, transfers, standings } = await loadCandidateInputs();
-  const plan = planClearPayments(debts, transfers, standings).filter((p) =>
-    confirmed.has(`${p.debtId}|${p.transferId}`)
+  const { debts, transfers, standings, lines, monthStandings } = await loadCandidateInputs();
+  const plan = planClearPayments(debts, transfers, standings, lines, monthStandings).filter((p) =>
+    confirmed.has(`${p.debtId}|${p.source}`)
   );
   if (plan.length === 0) {
-    return NextResponse.json({ applied: 0, amount: 0 });
+    return NextResponse.json({ applied: 0, debts: 0, amount: 0 });
   }
 
   const transferOf = new Map(transfers.map((t) => [t.id, t]));
-  const rows = await prisma.statementTransfer.findMany({
-    where: { id: { in: [...new Set(plan.map((p) => p.transferId))] } },
+  const transferRows = await prisma.statementTransfer.findMany({
+    where: {
+      id: {
+        in: plan.filter((p) => p.source.startsWith("t:")).map((p) => p.source.slice(2)),
+      },
+    },
     select: { id: true, fingerprint: true },
   });
-  const fingerprintOf = new Map(rows.map((r) => [r.id, r.fingerprint]));
+  const fingerprintOf = new Map(transferRows.map((r) => [r.id, r.fingerprint]));
+  const lineRows = await prisma.statementLine.findMany({
+    where: {
+      id: { in: plan.filter((p) => p.source.startsWith("l:")).map((p) => p.source.slice(2)) },
+    },
+    select: { id: true, fingerprint: true, senderAccount: true, postedAt: true },
+  });
+  const lineOf = new Map(lineRows.map((l) => [l.id, l]));
 
-  const written = plan.filter((p) => fingerprintOf.has(p.transferId));
-  await prisma.carriedDebtPayment.createMany({
-    data: written.map((p) => {
-      const t = transferOf.get(p.transferId)!;
-      return {
+  const data = [];
+  const synced: { roundId: string; fingerprint: string; closed: boolean }[] = [];
+  for (const p of plan) {
+    const id = p.source.slice(2);
+    if (p.source.startsWith("t:")) {
+      const t = transferOf.get(id);
+      const fingerprint = fingerprintOf.get(id);
+      if (!t || !fingerprint) continue;
+      data.push({
         debtId: p.debtId,
         amount: p.amount,
         paidAt: t.transferredAt ?? new Date(),
         method: "transfer",
         roundId: t.roundId,
-        fingerprint: fingerprintOf.get(p.transferId) as string,
+        fingerprint,
         accountNumber: t.accountNumber,
         note: "จับคู่จาก Statement",
-      };
-    }),
-  });
-
-  for (const p of written) {
-    await syncTransferCarried(transferOf.get(p.transferId)!.roundId, fingerprintOf.get(p.transferId)!);
+      });
+      synced.push({ roundId: t.roundId, fingerprint, closed: t.roundClosed });
+    } else {
+      const line = lineOf.get(id);
+      if (!line) continue;
+      data.push({
+        debtId: p.debtId,
+        amount: p.amount,
+        paidAt: line.postedAt ?? new Date(),
+        method: "transfer",
+        roundId: null,
+        fingerprint: `${LINE_FINGERPRINT_PREFIX}${line.fingerprint}`,
+        accountNumber: line.senderAccount,
+        note: null,
+      });
+    }
   }
-  const openRounds = new Set(
-    written.map((p) => transferOf.get(p.transferId)!).filter((t) => !t.roundClosed).map((t) => t.roundId)
-  );
+  await prisma.carriedDebtPayment.createMany({ data });
+
+  for (const s of synced) await syncTransferCarried(s.roundId, s.fingerprint);
+  const openRounds = new Set(synced.filter((s) => !s.closed).map((s) => s.roundId));
   for (const roundId of openRounds) await recomputeRoundPayments(roundId);
-  for (const debtId of new Set(written.map((p) => p.debtId))) await recomputeCarriedDebt(debtId);
+  const touchedDebts = new Set(data.map((d) => d.debtId));
+  for (const debtId of touchedDebts) await recomputeCarriedDebt(debtId);
 
   return NextResponse.json({
-    applied: written.length,
-    debts: new Set(written.map((p) => p.debtId)).size,
-    amount: Math.round(written.reduce((sum, p) => sum + p.amount, 0) * 100) / 100,
+    applied: data.length,
+    debts: touchedDebts.size,
+    amount: Math.round(data.reduce((sum, d) => sum + d.amount, 0) * 100) / 100,
   });
 }
