@@ -1,6 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { ROUND_CLOSED_ERROR, carryAmountProblem, countedAmount } from "@/lib/carriedDebt";
+import {
+  ROUND_CLOSED_ERROR,
+  carryAmountProblem,
+  countedAmount,
+  frozenByClosedRound,
+} from "@/lib/carriedDebt";
 import { recomputeCarriedDebt, syncTransferCarried } from "@/lib/carriedDebtStore";
 import { recomputeRoundPayments } from "@/lib/statementRecompute";
 
@@ -22,15 +27,14 @@ export async function POST(
   if (!round) {
     return NextResponse.json({ error: "ไม่พบรอบนี้" }, { status: 404 });
   }
-  if (round.closedAt) {
-    return NextResponse.json({ error: ROUND_CLOSED_ERROR }, { status: 409 });
-  }
-
   const transfer = await prisma.statementTransfer.findFirst({
     where: { id: params.transferId, roundId: round.id },
   });
   if (!transfer) {
     return NextResponse.json({ error: "ไม่พบรายการโอนนี้ในรอบนี้" }, { status: 404 });
+  }
+  if (frozenByClosedRound(!!round.closedAt, transfer.memberNumber)) {
+    return NextResponse.json({ error: ROUND_CLOSED_ERROR }, { status: 409 });
   }
   // Money already set aside as ซื้อหุ้น and the like is not this round's to
   // give away; put it back first if it was really a debt payment.
@@ -68,7 +72,7 @@ export async function POST(
     },
   });
   await syncTransferCarried(round.id, transfer.fingerprint);
-  await recomputeRoundPayments(round.id);
+  if (!round.closedAt) await recomputeRoundPayments(round.id);
   await recomputeCarriedDebt(debt.id);
 
   return NextResponse.json({ ok: true, debtId: debt.id, amount });
