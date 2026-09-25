@@ -68,7 +68,11 @@ export async function POST(
     );
   }
 
-  // Already in the round — bridged, or read from a file — is already counted.
+  // The line may already be in the round — bridged earlier, or read from a
+  // file. Then it is that row that has to count for this member: skipping
+  // it because "the round already has it" left the money sitting under
+  // somebody else, or set aside as ไม่เกี่ยวกับรอบนี้, while the member stayed
+  // on ⏳ รอผลการหัก and the button said it had worked.
   const inRound = await prisma.statementTransfer.findMany({
     where: {
       roundId: round.id,
@@ -77,14 +81,25 @@ export async function POST(
         ...(line.senderAccount ? [{ accountNumber: line.senderAccount, amount: line.amount }] : []),
       ],
     },
-    select: { fingerprint: true, accountNumber: true, amount: true, transferredAt: true },
+    select: {
+      id: true,
+      fingerprint: true,
+      accountNumber: true,
+      amount: true,
+      transferredAt: true,
+      memberNumber: true,
+      excludedReason: true,
+      carriedAmount: true,
+    },
   });
-  const held = inRound.some(
+  const held = inRound.find(
     (t) =>
       t.fingerprint === lineKey ||
       (line.senderAccount !== null &&
         coveredByRealTransfer([t], line.senderAccount, line.amount, line.postedAt as Date))
   );
+
+  let action: "created" | "reassigned" | "already";
   if (!held) {
     await prisma.statementTransfer.create({
       data: {
@@ -101,8 +116,25 @@ export async function POST(
         manualMemberNumber: true,
       },
     });
-    await recomputeRoundPayments(round.id);
+    action = "created";
+  } else if (held.carriedAmount > 0.01) {
+    return NextResponse.json(
+      {
+        error:
+          "ยอดนี้ในรอบถูกย้ายไปชำระหนี้ข้ามเดือนบางส่วนแล้ว — ลบรายการชำระนั้นที่แถบนี้ก่อน",
+      },
+      { status: 409 }
+    );
+  } else if (held.memberNumber !== member.memberNumber || held.excludedReason !== null) {
+    await prisma.statementTransfer.update({
+      where: { id: held.id },
+      data: { memberNumber: member.memberNumber, manualMemberNumber: true, excludedReason: null },
+    });
+    action = "reassigned";
+  } else {
+    action = "already";
   }
+  await recomputeRoundPayments(round.id);
 
   // Hidden both as the daily line it was and as the round row it now is.
   for (const sourceKey of [lineKey, transferSourceKey(round.id, lineKey)]) {
@@ -113,5 +145,18 @@ export async function POST(
     });
   }
 
-  return NextResponse.json({ ok: true, roundLabel: round.label, alreadyInRound: held });
+  // What the round now says about the member, so the page can show the
+  // result rather than a bare "done".
+  const after = await prisma.statementMember.findFirst({
+    where: { roundId: round.id, memberNumber: member.memberNumber },
+    select: { amountPaid: true, status: true },
+  });
+
+  return NextResponse.json({
+    ok: true,
+    roundLabel: round.label,
+    action,
+    amountPaid: after?.amountPaid ?? 0,
+    status: after?.status ?? null,
+  });
 }

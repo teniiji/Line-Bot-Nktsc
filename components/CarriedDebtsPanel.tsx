@@ -18,6 +18,15 @@ import DateField from "@/components/DateField";
 // month, as the cooperative's own books keep it: a payment says which
 // month it settled.
 
+// A round member's status, as the notice after "นับเป็นยอดรอบ …" reports it.
+const ROUND_STATUS_LABEL: Record<string, string> = {
+  paid: "✅ ชำระครบ",
+  overpaid: "⚠️ ชำระเกิน",
+  unpaid: "❌ ยังค้าง",
+  awaiting: "⏳ รอผลการหัก",
+  collected: "✅ หักได้ครบ",
+};
+
 const STATUS_LABEL: Record<string, string> = {
   unpaid: "❌ ยังค้าง",
   paid: "✅ ชำระครบ",
@@ -335,7 +344,9 @@ export default function CarriedDebtsPanel() {
 
   const lineToRound = (debt: CarriedDebtRow, l: CarriedDebtLineCandidateRow) =>
     act(`/api/carried-debts/${debt.id}/line-to-round`, "POST", { lineId: l.lineId }, (b) =>
-      `นับยอด ${formatAmount(l.amount)} เป็นยอดของรอบ ${b.roundLabel} ให้ ${debt.memberNumber} ${debt.name} แล้ว`
+      `นับยอด ${formatAmount(l.amount)} เป็นยอดของรอบ ${b.roundLabel} ให้ ${debt.memberNumber} ${debt.name} แล้ว` +
+      ` — ในรอบนั้นตอนนี้โอนมาแล้ว ${formatAmount(Number(b.amountPaid ?? 0))}` +
+      ` · สถานะ ${ROUND_STATUS_LABEL[String(b.status)] ?? b.status}`
     );
 
   const applyPlan = async () => {
