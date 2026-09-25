@@ -109,3 +109,36 @@ describe("buildExpenseWhere", () => {
     });
   });
 });
+
+describe("buildExpenseWhere search", () => {
+  const params = (q: string) => new URLSearchParams({ q });
+
+  it("adds nothing for an empty search", () => {
+    expect(buildExpenseWhere(params("   "))).toEqual({});
+  });
+
+  it("needs every word to match one of the searched fields", () => {
+    const where = buildExpenseWhere(params("ศศิธร พรมคำภา")) as { AND: { OR: unknown[] }[] };
+    expect(where.AND).toHaveLength(2);
+    expect(where.AND[0].OR).toContainEqual({ memberFullName: { contains: "ศศิธร", mode: "insensitive" } });
+    expect(where.AND[1].OR).toContainEqual({ description: { contains: "พรมคำภา", mode: "insensitive" } });
+    // Not a number, so no amount match.
+    expect(where.AND[0].OR).not.toContainEqual(expect.objectContaining({ amount: expect.anything() }));
+  });
+
+  it("also matches the amount for a word that is a number, commas allowed", () => {
+    const where = buildExpenseWhere(params("1,800")) as { AND: { OR: unknown[] }[] };
+    expect(where.AND[0].OR).toContainEqual({ amount: 1800 });
+    expect(where.AND[0].OR).toContainEqual({ memberNumber: { contains: "1,800", mode: "insensitive" } });
+  });
+
+  it("finds an account number inside the description", () => {
+    const where = buildExpenseWhere(params("7390238165")) as { AND: { OR: unknown[] }[] };
+    expect(where.AND[0].OR).toContainEqual({ description: { contains: "7390238165", mode: "insensitive" } });
+  });
+
+  it("keeps the other filters alongside the search", () => {
+    const where = buildExpenseWhere(new URLSearchParams({ q: "30325", category: "ซื้อหุ้น" }));
+    expect(where).toMatchObject({ category: "ซื้อหุ้น", AND: [expect.any(Object)] });
+  });
+});

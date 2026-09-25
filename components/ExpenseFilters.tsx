@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import { STAFF_CATEGORIES } from "@/lib/categories";
 import DateField from "@/components/DateField";
 import {
@@ -15,6 +16,9 @@ export interface Filters {
   to: string;
   // "" = ทั้งหมด, "false" = รอยืนยันตัวตน (คิวตรวจสอบ), "true" = ยืนยันแล้ว
   verified: string;
+  // Free text: name, member number, account, reference, amount — see
+  // searchConditions in lib/expenseFilters.ts.
+  q: string;
 }
 
 interface ExpenseFiltersProps {
@@ -66,10 +70,45 @@ export default function ExpenseFilters({
   onChange,
 }: ExpenseFiltersProps) {
   const hasActiveFilters =
-    filters.category !== "All" || filters.from || filters.to || filters.verified;
+    filters.category !== "All" || filters.from || filters.to || filters.verified || filters.q;
+
+  // Typed into locally and handed on once the typing pauses, so each
+  // keystroke is not a round trip for the list and its totals.
+  const [searchText, setSearchText] = useState(filters.q);
+  useEffect(() => {
+    setSearchText(filters.q);
+  }, [filters.q]);
+  useEffect(() => {
+    if (searchText === filters.q) return;
+    const timer = setTimeout(() => onChange({ ...filters, q: searchText }), 300);
+    return () => clearTimeout(timer);
+    // Only the typing starts the wait.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchText]);
 
   return (
     <div className="bg-white rounded-lg shadow p-4 space-y-3">
+      <div>
+        <input
+          type="search"
+          value={searchText}
+          onChange={(e) => setSearchText(e.target.value)}
+          placeholder="🔍 ค้นหา ชื่อ เลขสมาชิก เลขบัญชี เลขอ้างอิง จำนวนเงิน"
+          className="w-full border border-slate-300 rounded px-3 py-2"
+        />
+        {filters.q && (filters.from || filters.to) && (
+          <p className="text-xs text-slate-500 mt-1">
+            ค้นหาเฉพาะช่วงวันที่ที่เลือกด้านล่าง ·{" "}
+            <button
+              type="button"
+              onClick={() => onChange({ ...filters, from: "", to: "" })}
+              className="text-sky-700 underline"
+            >
+              ค้นทุกวันที่
+            </button>
+          </p>
+        )}
+      </div>
       <div className="flex flex-wrap gap-2">
         {DATE_PRESETS.map((preset) => (
           <button
@@ -142,7 +181,7 @@ export default function ExpenseFilters({
         {hasActiveFilters && (
           <button
             onClick={() =>
-              onChange({ category: "All", from: "", to: "", verified: "" })
+              onChange({ category: "All", from: "", to: "", verified: "", q: "" })
             }
             className="text-sm text-slate-600 underline px-2 py-2"
           >
