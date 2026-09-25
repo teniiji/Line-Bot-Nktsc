@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  collectedStatus,
   calcPaymentStatus,
   extractTransferAccount,
   hasTimeOfDay,
@@ -239,6 +240,12 @@ describe("parseMaiDaiSheet", () => {
     expect(Math.round(total * 100) / 100).toBe(2699.88);
     // Only the ones who owe become the list to chase.
     expect(sheet.rows.map((r) => r.memberNumber)).toEqual(["29387", "26221"]);
+  });
+
+  it("puts a หักเกิน member among ชำระเกิน, and everyone else deducted in full as collected", () => {
+    expect(collectedStatus(-70)).toBe("overpaid");
+    expect(collectedStatus(0)).toBe("collected");
+    expect(collectedStatus(-0.001)).toBe("collected");
   });
 
   it("treats a zero result as collected, not as awaiting", () => {

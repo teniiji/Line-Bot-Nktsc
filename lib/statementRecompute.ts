@@ -1,5 +1,5 @@
 import { prisma } from "@/lib/prisma";
-import { calcPaymentStatus } from "@/lib/statementReconcile";
+import { calcPaymentStatus, collectedStatus } from "@/lib/statementReconcile";
 import { fillAccounts } from "@/lib/accountHistory";
 import { countedAmount } from "@/lib/carriedDebt";
 
@@ -94,7 +94,7 @@ export async function recomputeRoundPayments(roundId: string): Promise<void> {
                 ? calcPaymentStatus(amountPaid, member.expectedAmount ?? 0).status
                 : "awaiting"
               : member.deductionResult === "collected"
-                ? "collected"
+                ? collectedStatus(member.amountDue)
                 : calcPaymentStatus(amountPaid, member.amountDue).status,
         },
       });
