@@ -1796,7 +1796,29 @@ export default function StatementReconcilePanel() {
                               )}
                             </td>
                             <td className="px-4 py-2.5 font-mono text-xs">
-                              {m.accountNumber ??
+                              {m.accountNumber ? (
+                                <>
+                                  {m.accountNumber}
+                                  {/* Other accounts the directory holds for
+                                      them — money from any of them still
+                                      finds this member. */}
+                                  {(m.knownAccounts ?? []).filter((a) => a !== m.accountNumber).length > 0 && (
+                                    <span
+                                      className="block font-sans text-[11px] text-slate-400"
+                                      title={(m.knownAccounts ?? []).join(" · ")}
+                                    >
+                                      + อีก{" "}
+                                      {(m.knownAccounts ?? []).filter((a) => a !== m.accountNumber).length}{" "}
+                                      บัญชี:{" "}
+                                      <span className="font-mono">
+                                        {(m.knownAccounts ?? [])
+                                          .filter((a) => a !== m.accountNumber)
+                                          .join(" · ")}
+                                      </span>
+                                    </span>
+                                  )}
+                                </>
+                              ) :
                                 // Blank because the cooperative holds more
                                 // than one account for this member and the
                                 // fill will not choose between them. Saying
