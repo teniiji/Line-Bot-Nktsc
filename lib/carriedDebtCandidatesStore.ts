@@ -1,9 +1,16 @@
 import { prisma } from "@/lib/prisma";
 import { normalizeAccountNumber } from "@/lib/statementReconcile";
-import { parseDeductionPeriod } from "@/lib/deductionPeriod";
+import { parseDeductionPeriod, periodOfDate } from "@/lib/deductionPeriod";
 import { isMemberDeposit } from "@/lib/statementLines";
 import { coveredByRealTransfer } from "@/lib/roundReach";
-import type { OpenDebt, RoundStanding, RoundTransfer } from "@/lib/carriedDebtCandidates";
+import { LINE_FINGERPRINT_PREFIX } from "@/lib/carriedDebt";
+import type {
+  DailyLine,
+  MonthStanding,
+  OpenDebt,
+  RoundStanding,
+  RoundTransfer,
+} from "@/lib/carriedDebtCandidates";
 
 // Database side of lib/carriedDebtCandidates.ts.
 
@@ -20,31 +27,31 @@ export interface CandidateTransferRow extends RoundTransfer {
   sourceFile: string | null;
 }
 
-// A bank line that came from a debtor's account but sits in no round at all —
-// only on the เงินเข้าประจำวัน page, which cannot pay anything. Shown so staff
-// know the money is there and which month's statement still has to go into a
-// round.
-export interface DailyOnlyLine {
-  debtId: string;
-  lineId: string;
+// A debtor's bank line that no round holds — only the เงินเข้าประจำวัน page
+// has it. What a round never received it cannot count, so the line can pay a
+// carried debt directly; see lib/carriedDebtStore.ts adoptLinePayments for
+// what happens if a round receives it later.
+export interface DailyLineRow extends DailyLine {
   account: string;
-  postedAt: Date | null;
   amount: number;
-  senderAccount: string;
+  sourceFile: string | null;
 }
 
 export interface CandidateInputs {
   debts: OpenDebt[];
   transfers: CandidateTransferRow[];
   standings: RoundStanding[];
-  dailyOnly: DailyOnlyLine[];
+  lines: DailyLineRow[];
+  monthStandings: MonthStanding[];
 }
 
 export async function loadCandidateInputs(debtIds?: string[]): Promise<CandidateInputs> {
   const rows = await prisma.carriedDebt.findMany({
     where: { status: "unpaid", ...(debtIds ? { id: { in: debtIds } } : {}) },
   });
-  if (rows.length === 0) return { debts: [], transfers: [], standings: [], dailyOnly: [] };
+  if (rows.length === 0) {
+    return { debts: [], transfers: [], standings: [], lines: [], monthStandings: [] };
+  }
 
   const numbers = [...new Set(rows.map((d) => d.memberNumber))];
   const bound: { memberNumber: string; accountNumber: string }[] = [];
@@ -67,17 +74,30 @@ export async function loadCandidateInputs(debtIds?: string[]): Promise<Candidate
   for (const row of rows) add(row.memberNumber, row.accountNumber);
   for (const row of bound) add(row.memberNumber, row.accountNumber);
 
+  // Where each debt's month begins, so a daily line from before it is not
+  // offered as a payment toward it.
+  const sourceRounds = await prisma.statementRound.findMany({
+    where: { id: { in: [...new Set(rows.map((d) => d.sourceRoundId))] } },
+    select: { id: true, period: true },
+  });
+  const startOf = new Map<string, Date | null>();
+  for (const round of sourceRounds) {
+    const parsed = parseDeductionPeriod(round.period);
+    startOf.set(round.id, parsed ? new Date(Date.UTC(parsed.year - 543, parsed.month - 1, 1)) : null);
+  }
+
   const debts: OpenDebt[] = rows.map((row) => ({
     id: row.id,
     memberNumber: row.memberNumber,
     outstanding: Math.max(0, Math.round((row.amount - row.amountPaid) * 100) / 100),
     accounts: [...(accountsOf.get(row.memberNumber) ?? [])],
+    since: startOf.get(row.sourceRoundId) ?? null,
   }));
   const accounts = [...new Set(debts.flatMap((d) => d.accounts))];
 
   // Every transfer from those accounts or already counted for those members,
   // in any round — excluded ones too, because they still say the bank line is
-  // in a round when judging what is only on the daily page.
+  // in a round when judging which daily lines no round holds.
   const found = new Map<string, Awaited<ReturnType<typeof prisma.statementTransfer.findMany>>[number]>();
   for (const slice of chunks(accounts)) {
     for (const t of await prisma.statementTransfer.findMany({ where: { accountNumber: { in: slice } } })) {
@@ -135,21 +155,10 @@ export async function loadCandidateInputs(debtIds?: string[]): Promise<Candidate
     );
   }
 
-  // Lines on the daily page from the same accounts that no round holds.
-  // Only from the first day of the debt's own month: anything earlier is an
-  // older month's business.
-  const sourceRounds = await prisma.statementRound.findMany({
-    where: { id: { in: [...new Set(rows.map((d) => d.sourceRoundId))] } },
-    select: { id: true, period: true },
-  });
-  const startOf = new Map<string, Date | null>();
-  for (const round of sourceRounds) {
-    const parsed = parseDeductionPeriod(round.period);
-    startOf.set(round.id, parsed ? new Date(Date.UTC(parsed.year - 543, parsed.month - 1, 1)) : null);
-  }
-  const lines: Awaited<ReturnType<typeof prisma.statementLine.findMany>> = [];
+  // Daily lines from the same accounts that no round holds.
+  const rawLines: Awaited<ReturnType<typeof prisma.statementLine.findMany>> = [];
   for (const slice of chunks(accounts)) {
-    lines.push(
+    rawLines.push(
       ...(await prisma.statementLine.findMany({
         where: { senderAccount: { in: slice }, amount: { gt: 0 } },
       }))
@@ -160,26 +169,66 @@ export async function loadCandidateInputs(debtIds?: string[]): Promise<Candidate
     amount: t.amount,
     transferredAt: t.transferredAt,
   }));
-  const dailyOnly: DailyOnlyLine[] = [];
-  for (const line of lines) {
-    if (!isMemberDeposit(line.channel) || !line.senderAccount) continue;
-    if (line.postedAt && coveredByRealTransfer(inRounds, line.senderAccount, line.amount, line.postedAt)) {
-      continue;
+  const loose = rawLines.filter(
+    (line) =>
+      isMemberDeposit(line.channel) &&
+      line.senderAccount &&
+      !(line.postedAt && coveredByRealTransfer(inRounds, line.senderAccount, line.amount, line.postedAt))
+  );
+
+  // What of each already went to carried debts.
+  const used = new Map<string, number>();
+  for (const slice of chunks(loose.map((l) => `${LINE_FINGERPRINT_PREFIX}${l.fingerprint}`))) {
+    const grouped = await prisma.carriedDebtPayment.groupBy({
+      by: ["fingerprint"],
+      where: { roundId: null, fingerprint: { in: slice } },
+      _sum: { amount: true },
+    });
+    for (const row of grouped) {
+      if (row.fingerprint) used.set(row.fingerprint, row._sum.amount ?? 0);
     }
-    for (const row of rows) {
-      if (!accountsOf.get(row.memberNumber)?.has(line.senderAccount)) continue;
-      const start = startOf.get(row.sourceRoundId);
-      if (start && line.postedAt && line.postedAt < start) continue;
-      dailyOnly.push({
-        debtId: row.id,
-        lineId: line.id,
-        account: line.account,
-        postedAt: line.postedAt,
-        amount: line.amount,
-        senderAccount: line.senderAccount,
+  }
+  const lines: DailyLineRow[] = loose.map((line) => ({
+    id: line.id,
+    senderAccount: line.senderAccount as string,
+    available:
+      Math.round(
+        (line.amount - (used.get(`${LINE_FINGERPRINT_PREFIX}${line.fingerprint}`) ?? 0)) * 100
+      ) / 100,
+    postedAt: line.postedAt,
+    account: line.account,
+    amount: line.amount,
+    sourceFile: line.sourceFile,
+  }));
+
+  // How the debtors stand on the open round for each line's own month.
+  const periods = [
+    ...new Set(lines.filter((l) => l.postedAt).map((l) => periodOfDate(l.postedAt as Date))),
+  ];
+  const monthRounds = periods.length
+    ? await prisma.statementRound.findMany({
+        where: { period: { in: periods }, closedAt: null },
+        select: { id: true, period: true },
+      })
+    : [];
+  const periodOfRound = new Map(monthRounds.map((r) => [r.id, r.period]));
+  const monthStandings: MonthStanding[] = [];
+  if (monthRounds.length) {
+    for (const slice of chunks(numbers)) {
+      const rowsInMonth = await prisma.statementMember.findMany({
+        where: { roundId: { in: monthRounds.map((r) => r.id) }, memberNumber: { in: slice } },
+        select: { roundId: true, memberNumber: true, deductionResult: true, status: true },
       });
+      for (const row of rowsInMonth) {
+        monthStandings.push({
+          period: periodOfRound.get(row.roundId) as string,
+          memberNumber: row.memberNumber,
+          deductionResult: row.deductionResult,
+          status: row.status,
+        });
+      }
     }
   }
 
-  return { debts, transfers, standings, dailyOnly };
+  return { debts, transfers, standings, lines, monthStandings };
 }

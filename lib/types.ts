@@ -477,12 +477,25 @@ export interface CarriedDebtCandidateRow {
   suggested: number;
 }
 
-// A debtor's bank line that is on the daily page but in no round.
-export interface CarriedDebtDailyOnlyRow {
+// A debtor's bank line that is on the daily page but in no round, which can
+// pay a carried debt directly — see app/api/carried-debts/[id]/from-line.
+export interface CarriedDebtLineCandidateRow {
   debtId: string;
   lineId: string;
   account: string;
-  postedAt: string | null;
-  amount: number;
   senderAccount: string;
+  amount: number;
+  postedAt: string | null;
+  available: number;
+  // The member still owes the open round for the line's own month.
+  contested: boolean;
+  clear: boolean;
+  suggested: number;
+}
+
+// "t:<transferId>" for a round's transfer, "l:<lineId>" for a daily line.
+export interface CarriedDebtPlanRow {
+  debtId: string;
+  source: string;
+  amount: number;
 }

@@ -11,6 +11,7 @@ import { memberNumberKey } from "@/lib/memberNumber";
 import { DEDUCTION_CATEGORY } from "@/lib/statementSlipHints";
 import { canBridgeToRound, coveredByRealTransfer } from "@/lib/roundReach";
 import { recomputeRoundPayments } from "@/lib/statementRecompute";
+import { adoptLinePayments } from "@/lib/carriedDebtStore";
 import { periodOfDate } from "@/lib/deductionPeriod";
 
 export const dynamic = "force-dynamic";
@@ -187,6 +188,9 @@ export async function POST(
               manualMemberNumber: true,
             },
           });
+          // Part of this line may already pay a carried debt (taken from the
+          // daily page while no round held it); the round leaves that out.
+          await adoptLinePayments(round.id);
           await recomputeRoundPayments(round.id);
           bridgedRound = { period: round.period, label: round.label };
         }

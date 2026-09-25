@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { ROUND_CLOSED_ERROR } from "@/lib/carriedDebt";
-import { carriedByFingerprint } from "@/lib/carriedDebtStore";
+import { adoptLinePayments, carriedByFingerprint } from "@/lib/carriedDebtStore";
 import {
   checkUploadedFile,
   describeReadError,
@@ -196,6 +196,10 @@ export async function POST(
 
   await applyDirectoryAccounts(round.id);
   await rematchRoundTransfers(round.id);
+  // A line that paid a carried debt straight from the daily page, before any
+  // round held it, has just arrived here — the payment moves onto this row
+  // so the round does not count the same money again.
+  await adoptLinePayments(round.id);
   await recomputeRoundPayments(round.id);
 
   // Counted from what was actually stored, so the numbers describe the round

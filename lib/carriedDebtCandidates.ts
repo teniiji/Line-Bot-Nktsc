@@ -12,6 +12,7 @@
 
 import { countedAmount } from "./carriedDebt";
 import { memberNumberKey } from "./memberNumber";
+import { periodOfDate } from "./deductionPeriod";
 
 const EPSILON = 0.01;
 const round2 = (value: number) => Math.round(value * 100) / 100;
@@ -23,6 +24,9 @@ export interface OpenDebt {
   outstanding: number;
   // Every account the member is known to transfer from.
   accounts: string[];
+  // First day of the debt's own month. A daily line from before it is an
+  // older month's business, not a payment toward this debt.
+  since?: Date | null;
 }
 
 export interface RoundTransfer {
@@ -71,9 +75,44 @@ export interface Candidate {
   clear: boolean;
 }
 
+// A bank line from the daily page (StatementLine) that no round holds. A
+// round only ever sees the files uploaded into it, so a debtor's payment can
+// sit here for good — and, unlike a round's transfer, nothing counts it for
+// anybody, so the whole of what is left of it is spare.
+export interface DailyLine {
+  id: string;
+  senderAccount: string;
+  // The line's amount less what already went to carried debts.
+  available: number;
+  postedAt: Date | null;
+}
+
+// Where a member stands on the open round for a given month, to tell whether
+// a daily line in that month may be that month's own payment.
+export interface MonthStanding {
+  period: string;
+  memberNumber: string;
+  deductionResult: string;
+  status: string;
+}
+
+export interface LineCandidate {
+  debtId: string;
+  lineId: string;
+  available: number;
+  // The member still owes the open round for the line's own month, so the
+  // money may well be for that month instead — staff decide.
+  contested: boolean;
+  clear: boolean;
+}
+
+// Where a planned payment's money comes from: "t:<transferId>" for a round's
+// transfer, "l:<lineId>" for a daily line no round holds.
+export type PaymentSource = `t:${string}` | `l:${string}`;
+
 export interface PlannedPayment {
   debtId: string;
-  transferId: string;
+  source: PaymentSource;
   amount: number;
 }
 
@@ -189,30 +228,98 @@ export function findCandidates(
 }
 
 /**
+ * Every daily line no round holds that could be paying each open debt: from
+ * one of the member's accounts, and not already used up.
+ */
+export function findLineCandidates(
+  debts: OpenDebt[],
+  lines: DailyLine[],
+  monthStandings: MonthStanding[]
+): LineCandidate[] {
+  const open = debts.filter((d) => d.outstanding > EPSILON);
+  const openDebtsOf = new Map<string, number>();
+  const debtorsOfAccount = new Map<string, Set<string>>();
+  for (const debt of open) {
+    const key = memberNumberKey(debt.memberNumber) ?? debt.memberNumber;
+    openDebtsOf.set(key, (openDebtsOf.get(key) ?? 0) + 1);
+    for (const account of debt.accounts) {
+      const set = debtorsOfAccount.get(account) ?? new Set<string>();
+      set.add(key);
+      debtorsOfAccount.set(account, set);
+    }
+  }
+  const stillOwing = new Set(
+    monthStandings
+      .filter((s) => s.deductionResult === "uncollected" && s.status === "unpaid")
+      .map((s) => `${s.period}|${memberNumberKey(s.memberNumber) ?? s.memberNumber}`)
+  );
+
+  const candidates: LineCandidate[] = [];
+  const byLineDate = (a: DailyLine, b: DailyLine) =>
+    (a.postedAt?.getTime() ?? 0) - (b.postedAt?.getTime() ?? 0) || a.id.localeCompare(b.id);
+  for (const line of [...lines].sort(byLineDate)) {
+    if (line.available <= EPSILON) continue;
+    for (const debt of open) {
+      if (!debt.accounts.includes(line.senderAccount)) continue;
+      if (debt.since && line.postedAt && line.postedAt < debt.since) continue;
+      const key = memberNumberKey(debt.memberNumber) ?? debt.memberNumber;
+      const contested = line.postedAt
+        ? stillOwing.has(`${periodOfDate(line.postedAt)}|${key}`)
+        : true;
+      candidates.push({
+        debtId: debt.id,
+        lineId: line.id,
+        available: line.available,
+        contested,
+        clear:
+          !contested &&
+          (openDebtsOf.get(key) ?? 0) === 1 &&
+          (debtorsOfAccount.get(line.senderAccount)?.size ?? 0) === 1,
+      });
+    }
+  }
+  return candidates;
+}
+
+/**
  * The payments to make for every candidate nobody needs to decide on: from
- * the oldest transfer first, as much as its round can spare, up to what the
- * debt still owes.
+ * the oldest money first — round transfers and daily lines alike — as much
+ * as can be spared, up to what the debt still owes.
  */
 export function planClearPayments(
   debts: OpenDebt[],
   transfers: RoundTransfer[],
-  standings: RoundStanding[]
+  standings: RoundStanding[],
+  lines: DailyLine[] = [],
+  monthStandings: MonthStanding[] = []
 ): PlannedPayment[] {
   const owed = new Map(debts.map((d) => [d.id, round2(d.outstanding)]));
   const left = new Map<string, number>();
   const plan: PlannedPayment[] = [];
 
-  for (const candidate of findCandidates(debts, transfers, standings)) {
-    if (!candidate.clear) continue;
-    const spare = left.has(candidate.transferId)
-      ? (left.get(candidate.transferId) as number)
-      : candidate.spare;
-    const due = owed.get(candidate.debtId) ?? 0;
+  const dateOf = new Map<string, number>();
+  for (const t of transfers) dateOf.set(`t:${t.id}`, t.transferredAt?.getTime() ?? 0);
+  for (const l of lines) dateOf.set(`l:${l.id}`, l.postedAt?.getTime() ?? 0);
+
+  const offers: { debtId: string; source: PaymentSource; spare: number }[] = [
+    ...findCandidates(debts, transfers, standings)
+      .filter((c) => c.clear)
+      .map((c) => ({ debtId: c.debtId, source: `t:${c.transferId}` as PaymentSource, spare: c.spare })),
+    ...findLineCandidates(debts, lines, monthStandings)
+      .filter((c) => c.clear)
+      .map((c) => ({ debtId: c.debtId, source: `l:${c.lineId}` as PaymentSource, spare: c.available })),
+  ].sort(
+    (a, b) => (dateOf.get(a.source) ?? 0) - (dateOf.get(b.source) ?? 0) || a.source.localeCompare(b.source)
+  );
+
+  for (const offer of offers) {
+    const spare = left.has(offer.source) ? (left.get(offer.source) as number) : offer.spare;
+    const due = owed.get(offer.debtId) ?? 0;
     const amount = round2(Math.min(spare, due));
     if (amount <= EPSILON) continue;
-    plan.push({ debtId: candidate.debtId, transferId: candidate.transferId, amount });
-    left.set(candidate.transferId, round2(spare - amount));
-    owed.set(candidate.debtId, round2(due - amount));
+    plan.push({ debtId: offer.debtId, source: offer.source, amount });
+    left.set(offer.source, round2(spare - amount));
+    owed.set(offer.debtId, round2(due - amount));
   }
   return plan;
 }

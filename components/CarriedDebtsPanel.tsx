@@ -3,7 +3,8 @@
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import type {
   CarriedDebtCandidateRow,
-  CarriedDebtDailyOnlyRow,
+  CarriedDebtLineCandidateRow,
+  CarriedDebtPlanRow,
   CarriedDebtRow,
 } from "@/lib/types";
 import { formatAmount, formatStatementDate } from "@/lib/format";
@@ -68,8 +69,8 @@ export default function CarriedDebtsPanel() {
   const [cashNote, setCashNote] = useState("");
 
   const [candidates, setCandidates] = useState<CarriedDebtCandidateRow[]>([]);
-  const [dailyOnly, setDailyOnly] = useState<CarriedDebtDailyOnlyRow[]>([]);
-  const [plan, setPlan] = useState<{ debtId: string; transferId: string; amount: number }[]>([]);
+  const [lineCandidates, setLineCandidates] = useState<CarriedDebtLineCandidateRow[]>([]);
+  const [plan, setPlan] = useState<CarriedDebtPlanRow[]>([]);
   const [planTotal, setPlanTotal] = useState(0);
   const [checking, setChecking] = useState(false);
   const [confirmPlan, setConfirmPlan] = useState(false);
@@ -84,7 +85,7 @@ export default function CarriedDebtsPanel() {
       const res = await fetch("/api/carried-debts/candidates");
       const body = await res.json().catch(() => ({}));
       setCandidates(body.candidates ?? []);
-      setDailyOnly(body.dailyOnly ?? []);
+      setLineCandidates(body.lineCandidates ?? []);
       setPlan(body.plan ?? []);
       setPlanTotal(body.planTotal ?? 0);
       setApplyAmounts({});
@@ -114,16 +115,23 @@ export default function CarriedDebtsPanel() {
     for (const c of candidates) map.set(c.debtId, [...(map.get(c.debtId) ?? []), c]);
     return map;
   }, [candidates]);
-  const dailyOnlyOf = useMemo(() => {
-    const map = new Map<string, CarriedDebtDailyOnlyRow[]>();
-    for (const l of dailyOnly) map.set(l.debtId, [...(map.get(l.debtId) ?? []), l]);
+  const linesOf = useMemo(() => {
+    const map = new Map<string, CarriedDebtLineCandidateRow[]>();
+    for (const l of lineCandidates) map.set(l.debtId, [...(map.get(l.debtId) ?? []), l]);
     return map;
-  }, [dailyOnly]);
+  }, [lineCandidates]);
   const debtById = useMemo(() => new Map(debts.map((d) => [d.id, d])), [debts]);
-  const candidateByKey = useMemo(
-    () => new Map(candidates.map((c) => [`${c.debtId}|${c.transferId}`, c])),
-    [candidates]
-  );
+  // What each planned payment's source was, for the confirmation list.
+  const sourceInfo = useMemo(() => {
+    const map = new Map<string, { date: string | null; from: string }>();
+    for (const c of candidates) {
+      map.set(`${c.debtId}|t:${c.transferId}`, { date: c.transferredAt, from: `จากรอบ ${c.roundLabel}` });
+    }
+    for (const l of lineCandidates) {
+      map.set(`${l.debtId}|l:${l.lineId}`, { date: l.postedAt, from: "จากเงินเข้าประจำวัน" });
+    }
+    return map;
+  }, [candidates, lineCandidates]);
 
   // The months on offer, newest first, from the debts themselves — a closed
   // round nobody owed anything on has nothing to show here.
@@ -135,7 +143,7 @@ export default function CarriedDebtsPanel() {
 
   const inMonth = debts.filter((d) => !month || d.sourceRoundId === month);
   const found = (d: CarriedDebtRow) =>
-    d.status === "unpaid" && ((candidatesOf.get(d.id)?.length ?? 0) > 0 || dailyOnlyOf.has(d.id));
+    d.status === "unpaid" && ((candidatesOf.get(d.id)?.length ?? 0) > 0 || linesOf.has(d.id));
   const counts = {
     all: inMonth.length,
     unpaid: inMonth.filter((d) => d.status === "unpaid").length,
@@ -225,7 +233,7 @@ export default function CarriedDebtsPanel() {
   // One candidate, by hand, through the round's own carry route — the same
   // one the "ชำระข้ามเดือน" button on the round page uses.
   const applyCandidate = async (debt: CarriedDebtRow, c: CarriedDebtCandidateRow) => {
-    const key = `${c.debtId}|${c.transferId}`;
+    const key = `${c.debtId}|t:${c.transferId}`;
     const amount = Number(applyAmounts[key] ?? c.suggested);
     setBusy(true);
     setError(null);
@@ -250,6 +258,33 @@ export default function CarriedDebtsPanel() {
     }
   };
 
+  // A daily line no round holds — see app/api/carried-debts/[id]/from-line.
+  const applyLine = async (debt: CarriedDebtRow, l: CarriedDebtLineCandidateRow) => {
+    const key = `${l.debtId}|l:${l.lineId}`;
+    const amount = Number(applyAmounts[key] ?? l.suggested);
+    setBusy(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const res = await fetch(`/api/carried-debts/${debt.id}/from-line`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ lineId: l.lineId, amount }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setError(body.error || "ใช้ยอดนี้ไม่สำเร็จ");
+        return;
+      }
+      setNotice(
+        `ใช้ยอดเงินเข้าวันที่ ${l.postedAt ? formatStatementDate(l.postedAt) : "—"} ${formatAmount(amount)} ชำระหนี้ ${debt.sourceLabel} ของ ${debt.memberNumber} ${debt.name} แล้ว`
+      );
+      await refresh();
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const applyPlan = async () => {
     setConfirmPlan(false);
     setBusy(true);
@@ -259,7 +294,7 @@ export default function CarriedDebtsPanel() {
       const res = await fetch("/api/carried-debts/candidates/apply", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ items: plan.map((p) => ({ debtId: p.debtId, transferId: p.transferId })) }),
+        body: JSON.stringify({ items: plan.map((p) => ({ debtId: p.debtId, source: p.source })) }),
       });
       const body = await res.json().catch(() => ({}));
       if (!res.ok) {
@@ -395,18 +430,16 @@ export default function CarriedDebtsPanel() {
             <tbody>
               {plan.map((p) => {
                 const debt = debtById.get(p.debtId);
-                const c = candidateByKey.get(`${p.debtId}|${p.transferId}`);
+                const info = sourceInfo.get(`${p.debtId}|${p.source}`);
                 return (
-                  <tr key={`${p.debtId}|${p.transferId}`} className="border-t border-slate-100 align-top">
+                  <tr key={`${p.debtId}|${p.source}`} className="border-t border-slate-100 align-top">
                     <td className="px-2 py-1">
                       <span className="num">{debt?.memberNumber}</span> {debt?.name}
                       <div className="text-slate-500">หนี้ {debt?.sourceLabel}</div>
                     </td>
                     <td className="px-2 py-1">
-                      <span className="num">
-                        {c?.transferredAt ? formatStatementDate(c.transferredAt) : "—"}
-                      </span>
-                      <div className="text-slate-500">จากรอบ {c?.roundLabel}</div>
+                      <span className="num">{info?.date ? formatStatementDate(info.date) : "—"}</span>
+                      <div className="text-slate-500">{info?.from}</div>
                     </td>
                     <td className="px-2 py-1 num text-right font-medium whitespace-nowrap">
                       {formatAmount(p.amount)}
@@ -501,7 +534,7 @@ export default function CarriedDebtsPanel() {
                                 <span className="text-xs text-sky-700">💵 เงินสด</span>
                               ) : (
                                 <span className="text-xs text-slate-500">
-                                  โอน · จากรอบ {p.roundLabel ?? "—"}
+                                  โอน · {p.roundLabel ? `จากรอบ ${p.roundLabel}` : "จากเงินเข้าประจำวัน"}
                                   {p.accountNumber && (
                                     <span className="font-mono text-slate-400"> · {p.accountNumber}</span>
                                   )}
@@ -519,13 +552,13 @@ export default function CarriedDebtsPanel() {
                           ))
                         )}
                         {debt.status === "unpaid" &&
-                          ((candidatesOf.get(debt.id)?.length ?? 0) > 0 || dailyOnlyOf.has(debt.id)) && (
+                          ((candidatesOf.get(debt.id)?.length ?? 0) > 0 || linesOf.has(debt.id)) && (
                             <div className="pt-2 mt-1 border-t border-slate-200">
                               <p className="text-xs text-sky-800 font-medium mb-1">
                                 💸 ยอดโอนจากบัญชีของสมาชิกที่พบใน Statement
                               </p>
                               {(candidatesOf.get(debt.id) ?? []).map((c) => {
-                                const key = `${c.debtId}|${c.transferId}`;
+                                const key = `${c.debtId}|t:${c.transferId}`;
                                 return (
                                   <div
                                     key={key}
@@ -574,25 +607,55 @@ export default function CarriedDebtsPanel() {
                                   </div>
                                 );
                               })}
-                              {(dailyOnlyOf.get(debt.id) ?? []).map((l) => (
-                                <div
-                                  key={l.lineId}
-                                  className="flex flex-wrap items-center gap-x-3 text-sm py-1 text-slate-500"
-                                >
-                                  <span className="num">
-                                    {l.postedAt ? formatStatementDate(l.postedAt) : "—"}
-                                  </span>
-                                  <span className="num font-medium">{formatAmount(l.amount)}</span>
-                                  <span className="text-xs">
-                                    บัญชี {l.account}
-                                    <span className="font-mono text-slate-400"> · {l.senderAccount}</span>
-                                  </span>
-                                  <span className="text-xs text-amber-700">
-                                    อยู่ในเงินเข้าประจำวันเท่านั้น ยังไม่อยู่ในรอบใด — อัป Statement ช่วงวันนี้เข้ารอบที่ยังเปิดอยู่ก่อน
-                                    แล้วกลับมาใช้ชำระที่นี่
-                                  </span>
-                                </div>
-                              ))}
+                              {(linesOf.get(debt.id) ?? []).map((l) => {
+                                const key = `${l.debtId}|l:${l.lineId}`;
+                                return (
+                                  <div
+                                    key={key}
+                                    className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm py-1"
+                                  >
+                                    <span className="num text-slate-500">
+                                      {l.postedAt ? formatStatementDate(l.postedAt) : "—"}
+                                    </span>
+                                    <span className="num font-medium">{formatAmount(l.amount)}</span>
+                                    {l.available < l.amount - 0.01 && (
+                                      <span className="text-xs text-slate-500">
+                                        (เหลือ {formatAmount(l.available)})
+                                      </span>
+                                    )}
+                                    <span className="text-xs text-slate-500">
+                                      เงินเข้าประจำวัน บัญชี {l.account}
+                                      <span className="font-mono text-slate-400"> · {l.senderAccount}</span>
+                                    </span>
+                                    <span
+                                      className={`text-xs ${l.contested ? "text-amber-700" : "text-emerald-700"}`}
+                                    >
+                                      {l.contested
+                                        ? "ยังไม่อยู่ในรอบใด — แต่สมาชิกยังค้างรอบของเดือนที่โอน อาจเป็นยอดของเดือนนั้น ใช้ก็ต่อเมื่อแน่ใจ"
+                                        : "ยังไม่อยู่ในรอบใด ไม่ได้นับให้ใคร"}
+                                    </span>
+                                    <span className="flex items-center gap-1.5 ml-auto">
+                                      <input
+                                        type="number"
+                                        inputMode="decimal"
+                                        step="0.01"
+                                        value={applyAmounts[key] ?? String(l.suggested)}
+                                        onChange={(e) =>
+                                          setApplyAmounts((prev) => ({ ...prev, [key]: e.target.value }))
+                                        }
+                                        className="border border-slate-300 rounded px-2 py-1 text-xs w-24"
+                                      />
+                                      <button
+                                        onClick={() => applyLine(debt, l)}
+                                        disabled={busy || !(Number(applyAmounts[key] ?? l.suggested) > 0)}
+                                        className="text-xs text-white bg-sky-700 rounded px-2.5 py-1 disabled:opacity-50 whitespace-nowrap"
+                                      >
+                                        ใช้ชำระหนี้นี้
+                                      </button>
+                                    </span>
+                                  </div>
+                                );
+                              })}
                             </div>
                           )}
                         <div className="flex flex-wrap items-center gap-2 pt-2 mt-1 border-t border-slate-200">

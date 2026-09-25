@@ -23,6 +23,11 @@ export const ROUND_CLOSED_ERROR =
 
 const round2 = (value: number) => Math.round(value * 100) / 100;
 
+// A payment taken from a daily bank line no round holds is keyed by the
+// line's own fingerprint under this prefix — the same one a bridged round
+// row carries (see the record route), so the two name the same line.
+export const LINE_FINGERPRINT_PREFIX = "line:";
+
 /**
  * What a transfer still counts toward its own round: the bank's amount less
  * whatever staff moved from it to a carried debt.
