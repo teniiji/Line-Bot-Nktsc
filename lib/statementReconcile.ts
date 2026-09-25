@@ -364,6 +364,15 @@ export function transferFingerprint(account: string, transfer: TransferRow): str
   ].join("|");
 }
 
+// Where a member payroll deducted from stands. Ordinarily they owe nothing
+// and are "collected" — but a sheet with a negative ยอดหักไม่ได้ is saying
+// payroll took more than was asked (หักเกิน), and that member belongs with
+// the ⚠️ ชำระเกิน people the cooperative owes money back to, not among the
+// ones it is simply done with.
+export function collectedStatus(amountDue: number): "collected" | "overpaid" {
+  return amountDue < -0.005 ? "overpaid" : "collected";
+}
+
 // The status rule staff already work to: compare what arrived against what
 // was owed. A member who paid nothing lands in the same "ยังค้าง" bucket as
 // one who paid too little, which is the point — both still owe money.
