@@ -72,6 +72,13 @@ function comparePaidAt(a: string | null, b: string | null): number {
 const byMemberNumber = (a: StatementMemberRow, b: StatementMemberRow) =>
   a.memberNumber.localeCompare(b.memberNumber, "th", { numeric: true });
 
+// Every distinct account a member is known by — the round's own and the
+// directory's — for "มีหลายเลขบัญชี", which counts everyone with more than
+// one, whether or not the sheet happened to name one of them.
+export function accountsOf(m: Pick<StatementMemberRow, "accountNumber" | "knownAccounts">): string[] {
+  return [...new Set([...(m.accountNumber ? [m.accountNumber] : []), ...(m.knownAccounts ?? [])])];
+}
+
 // A member's outstanding balance. Negative would mean they overpaid, which is
 // not "owing", so anything at or below zero is zero for ranking purposes.
 export function outstandingOf(m: StatementMemberRow): number {
@@ -127,7 +134,7 @@ export function matchesStatus(m: StatementMemberRow, status: string): boolean {
       m.deductionResult === "uncollected"
     );
   }
-  if (status === "many_accounts") return !m.accountNumber && (m.knownAccounts?.length ?? 0) > 1;
+  if (status === "many_accounts") return accountsOf(m).length > 1;
   // At least one payment counted toward this member came in as cash rather
   // than off a bank line — see app/api/statement-rounds/[id]/cash/route.ts.
   // includes() rather than equality: paidBranch reads "เงินสด + หนองคาย" for

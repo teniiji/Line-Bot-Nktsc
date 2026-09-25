@@ -459,6 +459,29 @@ describe("members the cooperative holds several accounts for", () => {
     expect(asked("no_account")).toHaveLength(0);
     expect(asked("many_accounts")).toHaveLength(0);
   });
+
+  it("counts a member whose sheet names one account but who is known by another", () => {
+    // After the 0969 sheet filled the เลขบัญชี column, "มีหลายเลขบัญชี" fell
+    // from 302 to 1 — the members still had several accounts, the sheet had
+    // just named one of them.
+    const sheetPlusDirectory = member({
+      memberNumber: "29387",
+      accountNumber: "4960495146",
+      knownAccounts: ["4960495146", "4131229706"],
+    });
+    const sameAccountTwice = member({
+      memberNumber: "29388",
+      accountNumber: "4131234567",
+      knownAccounts: ["4131234567"],
+    });
+    const shown = filterStatementMembers([sheetPlusDirectory, sameAccountTwice, ambiguous], {
+      search: "",
+      hCodes: [],
+      subUnits: [],
+      status: "many_accounts",
+    });
+    expect(shown.map((m) => m.memberNumber)).toEqual(["29387", "27019"]);
+  });
 });
 
 describe("ordering by รหัสสังกัด", () => {

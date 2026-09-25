@@ -82,34 +82,39 @@ export async function GET(
   );
   const unmatched = unknown;
 
-  // A member with no account number of their own is not necessarily somebody
-  // nobody has an account for. Where the directory knows more than one, the
-  // fill refuses to choose (lib/accountHistory.ts) and the column stays
-  // blank — which read on screen as "ไม่มีเลขบัญชี", the one thing it did
-  // not mean. The accounts are sent with the row so it can say which it is.
+  // Every account the cooperative knows a member by: the one this round's
+  // sheet gives, and every one the directory holds for them. A member with
+  // no account number of their own is not necessarily somebody nobody has an
+  // account for — where the directory knows more than one, the fill refuses
+  // to choose (lib/accountHistory.ts) and the column stays blank. And one
+  // whose sheet does give an account may well pay from another; staff asked
+  // to see everyone with more than one, not only the blanks.
   //
-  // Only for the blanks, and chunked, because a round seeded from the
-  // รายการหัก runs to thousands of members.
-  const blankMembers = members.filter((m) => !m.accountNumber).map((m) => m.memberNumber);
+  // Chunked, because a round seeded from the รายการหัก runs to thousands of
+  // members.
+  const allNumbers = members.map((m) => m.memberNumber);
   const CHUNK = 1000;
-  const knownForBlank = new Map<string, string[]>();
-  for (let i = 0; i < blankMembers.length; i += CHUNK) {
+  const directoryOf = new Map<string, string[]>();
+  for (let i = 0; i < allNumbers.length; i += CHUNK) {
     const found = await prisma.memberBankAccount.findMany({
-      where: { memberNumber: { in: blankMembers.slice(i, i + CHUNK) } },
+      where: { memberNumber: { in: allNumbers.slice(i, i + CHUNK) } },
       select: { memberNumber: true, accountNumber: true },
     });
     for (const entry of found) {
-      knownForBlank.set(entry.memberNumber, [
-        ...(knownForBlank.get(entry.memberNumber) ?? []),
+      directoryOf.set(entry.memberNumber, [
+        ...(directoryOf.get(entry.memberNumber) ?? []),
         entry.accountNumber,
       ]);
     }
   }
   const membersWithAccounts = members.map((member) => ({
     ...member,
-    knownAccounts: member.accountNumber
-      ? []
-      : (knownForBlank.get(member.memberNumber) ?? []).sort(),
+    knownAccounts: [
+      ...new Set([
+        ...(member.accountNumber ? [member.accountNumber] : []),
+        ...(directoryOf.get(member.memberNumber) ?? []),
+      ]),
+    ].sort(),
   }));
 
   // Still-owing first, then overpaid, then settled: a round runs to hundreds
