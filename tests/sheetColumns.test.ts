@@ -319,6 +319,24 @@ describe("readMappedSheet", () => {
     expect([read.awaiting, read.collected, read.uncollected]).toEqual([3, 1, 1]);
   });
 
+  it("keeps a negative หักไม่ได้ as หักเกิน rather than zeroing it", () => {
+    const read = readMappedSheet(
+      [
+        ["28826", "นายก ทดสอบ", 19220, 19290, -70],
+        ["29387", "นายข ทดสอบ", 23020, 20280.12, 2739.88],
+        ["26221", "นายค ทดสอบ", 28340, 28310, 30],
+      ],
+      0,
+      { memberNumber: 0, name: 1, expected: 2, collected: 3, uncollected: 4 }
+    );
+    expect(read.rows.map((r) => [r.result, r.amountDue])).toEqual([
+      ["collected", -70],
+      ["uncollected", 2739.88],
+      ["uncollected", 30],
+    ]);
+    expect(Math.round(read.rows.reduce((s, r) => s + r.amountDue, 0) * 100) / 100).toBe(2699.88);
+  });
+
   it("judges only the result columns the file actually has", () => {
     // A sheet of หักไม่ได้ only, no หักได้ column: its filled rows are
     // answers, not half-answers.
