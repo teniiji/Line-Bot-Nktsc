@@ -201,6 +201,28 @@ describe("parseMaiDaiSheet", () => {
     expect(sheet.awaitingUnits).toEqual(["2", "3"]);
   });
 
+  it("treats a blank in either result column as awaiting, whatever the other says", () => {
+    const partial: unknown[][] = [
+      // หักได้ blank, หักไม่ได้ filled
+      ["30001", "ว่างหักได้", 5000, null, 5000, "1", "ร.ร. ก", null, null, "1"],
+      // หักได้ filled, หักไม่ได้ blank
+      ["30002", "ว่างหักไม่ได้", 5000, 5000, null, "1", "ร.ร. ก", null, null, "1"],
+      // "-" is not a number either
+      ["30003", "ขีด", 5000, "-", 0, "1", "ร.ร. ก", null, null, "1"],
+      // Both filled — the unit has answered
+      ["30004", "ครบ", 5000, 0, 5000, "1", "ร.ร. ก", null, null, "1"],
+    ];
+    const sheet = parseMaiDaiSheet(partial);
+    expect(sheet.all.map((r) => [r.memberNumber, r.result])).toEqual([
+      ["30001", "awaiting"],
+      ["30002", "awaiting"],
+      ["30003", "awaiting"],
+      ["30004", "uncollected"],
+    ]);
+    expect(sheet.rows.map((r) => r.memberNumber)).toEqual(["30004"]);
+    expect(sheet.awaitingMembers).toBe(3);
+  });
+
   it("treats a zero result as collected, not as awaiting", () => {
     const zero: unknown[][] = [["001", "หักได้ครบ", 5000, 5000, 0, "1", "ร.ร. ก", null, null, "1"]];
     const sheet = parseMaiDaiSheet(zero);

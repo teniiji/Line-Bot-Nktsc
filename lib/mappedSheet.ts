@@ -65,9 +65,17 @@ export function readMappedSheet(
     // The three states, from the two result columns. A file with neither
     // column — the รายการหัก — leaves every row awaiting, which is what it
     // is: a list of deductions asked for, before anyone has answered.
+    //
+    // A blank in either result column the file does have is awaiting too,
+    // not a zero: the cooperative's rule is that a unit which has reported
+    // fills both columns (0 where nothing applies), so a row with one of them
+    // left empty has not been answered in full yet. A column the mapping
+    // leaves out is not blank, just absent, and says nothing either way.
+    const collectedBlank = mapping.collected !== undefined && collectedAmount === null;
+    const uncollectedBlank = mapping.uncollected !== undefined && uncollectedAmount === null;
     let result: DeductionSheetRow["result"];
     let amountDue = 0;
-    if (collectedAmount === null && uncollectedAmount === null) {
+    if ((collectedAmount === null && uncollectedAmount === null) || collectedBlank || uncollectedBlank) {
       result = "awaiting";
       awaiting += 1;
     } else if (uncollectedAmount !== null && uncollectedAmount > 0) {

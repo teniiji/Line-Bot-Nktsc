@@ -259,9 +259,11 @@ export function parseMaiDaiSheet(rows: unknown[][]): MaiDaiSheet {
       hCode: cell(row, 9),
     };
 
-    // Blank in both result columns is "no result yet" — distinct from a
-    // ยอดหักไม่ได้ of 0, which is a unit that reported and collected in full.
-    if (collected === null && amountDue === null) {
+    // A blank in either result column is "no result yet" — distinct from a
+    // 0, which is a unit that reported. A unit that has answered fills both
+    // columns (0 where nothing applies); one left empty has not answered in
+    // full, and reading it as หักได้ครบ or หักไม่ได้ would be a guess.
+    if (collected === null || amountDue === null) {
       awaitingMembers += 1;
       awaitingAmount += expectedAmount ?? 0;
       const unitKey = cell(row, 9) ?? unitName;
