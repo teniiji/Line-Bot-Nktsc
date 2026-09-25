@@ -76,6 +76,7 @@ export default function CarriedDebtsPanel() {
   // Planned payments staff unticked in the confirmation list, by planKey.
   const [skipped, setSkipped] = useState<Set<string>>(new Set());
   const [planSearch, setPlanSearch] = useState("");
+  const [dismissedCount, setDismissedCount] = useState<Record<string, number>>({});
   const [applyAmounts, setApplyAmounts] = useState<Record<string, string>>({});
 
   // Statement transfers that could be paying each open debt. Read-only; a
@@ -90,6 +91,7 @@ export default function CarriedDebtsPanel() {
       setLineCandidates(body.lineCandidates ?? []);
       setPlan(body.plan ?? []);
       setPlanTotal(body.planTotal ?? 0);
+      setDismissedCount(body.dismissedCount ?? {});
       setApplyAmounts({});
     } finally {
       setChecking(false);
@@ -296,6 +298,45 @@ export default function CarriedDebtsPanel() {
     const debt = debtById.get(p.debtId);
     return `${debt?.memberNumber ?? ""} ${debt?.name ?? ""}`.toLowerCase().includes(planNeedle);
   });
+
+  // Shared by the three answers staff can give a suggestion other than
+  // "use it": not this debt's, this month's own, or show the hidden ones.
+  const act = async (url: string, method: string, body: unknown, done: (b: Record<string, unknown>) => string) => {
+    setBusy(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const res = await fetch(url, {
+        method,
+        headers: { "Content-Type": "application/json" },
+        body: body === undefined ? undefined : JSON.stringify(body),
+      });
+      const result = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setError(result.error || "บันทึกไม่สำเร็จ");
+        return;
+      }
+      setNotice(done(result));
+      await refresh();
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const dismiss = (debt: CarriedDebtRow, source: string) =>
+    act(`/api/carried-debts/${debt.id}/dismiss`, "POST", { source }, () =>
+      `ซ่อนยอดนี้จากหนี้ ${debt.sourceLabel} ของ ${debt.memberNumber} แล้ว`
+    );
+
+  const restore = (debt: CarriedDebtRow) =>
+    act(`/api/carried-debts/${debt.id}/dismiss`, "DELETE", undefined, () =>
+      `แสดงยอดที่ซ่อนไว้ของหนี้ ${debt.sourceLabel} อีกครั้งแล้ว`
+    );
+
+  const lineToRound = (debt: CarriedDebtRow, l: CarriedDebtLineCandidateRow) =>
+    act(`/api/carried-debts/${debt.id}/line-to-round`, "POST", { lineId: l.lineId }, (b) =>
+      `นับยอด ${formatAmount(l.amount)} เป็นยอดของรอบ ${b.roundLabel} ให้ ${debt.memberNumber} ${debt.name} แล้ว`
+    );
 
   const applyPlan = async () => {
     setConfirmPlan(false);
@@ -680,6 +721,11 @@ export default function CarriedDebtsPanel() {
                                     >
                                       {reasonText(c)}
                                     </span>
+                                    {c.looksMonthly && (
+                                      <span className="text-xs text-amber-700">
+                                        · ยอดเท่ากับยอดแจ้งหักของรอบ {c.roundLabel} — อาจเป็นเงินของเดือนนั้น
+                                      </span>
+                                    )}
                                     <span className="flex items-center gap-1.5 ml-auto">
                                       <input
                                         type="number"
@@ -697,6 +743,13 @@ export default function CarriedDebtsPanel() {
                                         className="text-xs text-white bg-sky-700 rounded px-2.5 py-1 disabled:opacity-50 whitespace-nowrap"
                                       >
                                         ใช้ชำระหนี้นี้
+                                      </button>
+                                      <button
+                                        onClick={() => dismiss(debt, `t:${c.transferId}`)}
+                                        disabled={busy}
+                                        className="text-xs text-slate-600 border border-slate-300 rounded px-2 py-1 disabled:opacity-50 whitespace-nowrap"
+                                      >
+                                        ไม่ใช่ยอดของหนี้นี้
                                       </button>
                                     </span>
                                   </div>
@@ -730,9 +783,11 @@ export default function CarriedDebtsPanel() {
                                     <span
                                       className={`text-xs ${l.contested ? "text-amber-700" : "text-emerald-700"}`}
                                     >
-                                      {l.contested
-                                        ? "ยังไม่อยู่ในรอบใด — แต่รอบของเดือนที่โอนยังค้างหรือยังรอผลการหักของสมาชิกนี้ อาจเป็นยอดของเดือนนั้น ใช้ก็ต่อเมื่อแน่ใจ"
-                                        : "ยังไม่อยู่ในรอบใด ไม่ได้นับให้ใคร"}
+                                      {l.looksMonthly
+                                        ? `ยังไม่อยู่ในรอบใด — ยอดเท่ากับยอดแจ้งหักของ${l.monthRound?.label ? `รอบ ${l.monthRound.label}` : "เดือนที่โอน"} น่าจะเป็นเงินของเดือนนั้น`
+                                        : l.contested
+                                          ? "ยังไม่อยู่ในรอบใด — แต่รอบของเดือนที่โอนยังค้างหรือยังรอผลการหักของสมาชิกนี้ อาจเป็นยอดของเดือนนั้น ใช้ก็ต่อเมื่อแน่ใจ"
+                                          : "ยังไม่อยู่ในรอบใด ไม่ได้นับให้ใคร"}
                                     </span>
                                     <span className="flex items-center gap-1.5 ml-auto">
                                       <input
@@ -752,12 +807,41 @@ export default function CarriedDebtsPanel() {
                                       >
                                         ใช้ชำระหนี้นี้
                                       </button>
+                                      {l.monthRound?.label && (
+                                        <button
+                                          onClick={() => lineToRound(debt, l)}
+                                          disabled={busy}
+                                          className="text-xs text-white bg-emerald-700 rounded px-2.5 py-1 disabled:opacity-50 whitespace-nowrap"
+                                          title="เงินก้อนนี้เป็นยอดของเดือนที่โอน — นับในรอบนั้นให้สมาชิกคนนี้ และซ่อนจากหนี้นี้"
+                                        >
+                                          นับเป็นยอดรอบ {l.monthRound.label}
+                                        </button>
+                                      )}
+                                      <button
+                                        onClick={() => dismiss(debt, `l:${l.lineId}`)}
+                                        disabled={busy}
+                                        className="text-xs text-slate-600 border border-slate-300 rounded px-2 py-1 disabled:opacity-50 whitespace-nowrap"
+                                      >
+                                        ไม่ใช่ยอดของหนี้นี้
+                                      </button>
                                     </span>
                                   </div>
                                 );
                               })}
                             </div>
                           )}
+                        {(dismissedCount[debt.id] ?? 0) > 0 && (
+                          <p className="text-xs text-slate-500 pt-1">
+                            ซ่อนยอดที่ไม่ใช่ของหนี้นี้ไว้ {dismissedCount[debt.id]} รายการ ·{" "}
+                            <button
+                              onClick={() => restore(debt)}
+                              disabled={busy}
+                              className="text-sky-700 underline disabled:opacity-50"
+                            >
+                              แสดงอีกครั้ง
+                            </button>
+                          </p>
+                        )}
                         <div className="flex flex-wrap items-center gap-2 pt-2 mt-1 border-t border-slate-200">
                           <span className="text-xs text-slate-500">บันทึกชำระเงินสด ยอด</span>
                           <input

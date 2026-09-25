@@ -6,6 +6,7 @@ import {
   suggestedAmount,
 } from "@/lib/carriedDebtCandidates";
 import { loadCandidateInputs } from "@/lib/carriedDebtCandidatesStore";
+import { memberNumberKey } from "@/lib/memberNumber";
 
 export const dynamic = "force-dynamic";
 
@@ -15,7 +16,13 @@ export const dynamic = "force-dynamic";
 // daily line through ../[id]/from-line, and the clear ones in bulk through
 // ./apply.
 export async function GET() {
-  const { debts, transfers, standings, lines, monthStandings } = await loadCandidateInputs();
+  const { debts, transfers, standings, lines, monthStandings, monthRounds, dismissedCount } =
+    await loadCandidateInputs();
+  const roundOfPeriod = new Map(monthRounds.map((r) => [r.period, r]));
+  const onMonthRound = new Set(
+    monthStandings.map((s) => `${s.period}|${memberNumberKey(s.memberNumber) ?? s.memberNumber}`)
+  );
+  const memberOfDebt = new Map(debts.map((d) => [d.id, memberNumberKey(d.memberNumber) ?? d.memberNumber]));
   const outstandingOf = new Map(debts.map((d) => [d.id, d.outstanding]));
   const transferOf = new Map(transfers.map((t) => [t.id, t]));
   const lineOf = new Map(lines.map((l) => [l.id, l]));
@@ -35,6 +42,7 @@ export async function GET() {
       available: c.available,
       spare: c.spare,
       reason: c.reason,
+      looksMonthly: c.looksMonthly,
       clear: c.clear,
       suggested: suggestedAmount(c, outstandingOf.get(c.debtId) ?? 0),
     };
@@ -53,6 +61,13 @@ export async function GET() {
       available: c.available,
       contested: c.contested,
       bySlip: c.bySlip,
+      looksMonthly: c.looksMonthly,
+      // The open round of the month the money arrived in, when the member is
+      // on it — where "นับเป็นยอดรอบ …" would put it.
+      monthRound:
+        c.period && onMonthRound.has(`${c.period}|${memberOfDebt.get(c.debtId)}`)
+          ? { id: roundOfPeriod.get(c.period)?.id ?? null, label: roundOfPeriod.get(c.period)?.label ?? null }
+          : null,
       clear: c.clear,
       suggested: Math.round(Math.min(c.available, outstandingOf.get(c.debtId) ?? 0) * 100) / 100,
     };
@@ -64,6 +79,7 @@ export async function GET() {
     candidates,
     lineCandidates,
     plan,
+    dismissedCount,
     planTotal: Math.round(plan.reduce((sum, p) => sum + p.amount, 0) * 100) / 100,
   });
 }
