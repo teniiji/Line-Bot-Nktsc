@@ -162,6 +162,7 @@ export async function loadCandidateInputs(debtIds?: string[]): Promise<Candidate
       transferredAt: t.transferredAt,
       sourceFile: t.sourceFile,
       dismissedFor: dismissedBySource.get(transferSourceKey(t.roundId, t.fingerprint)) ?? [],
+      staffPlaced: t.manualMemberNumber && t.fingerprint.startsWith(LINE_FINGERPRINT_PREFIX),
     }));
 
   // The members transfers count for, and the debtors themselves — whose
