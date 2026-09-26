@@ -779,7 +779,19 @@ export default function CarriedDebtsPanel() {
                                     <span className="num font-medium">{formatAmount(l.amount)}</span>
                                     {l.available < l.amount - 0.01 && (
                                       <span className="text-xs text-slate-500">
-                                        (เหลือ {formatAmount(l.available)})
+                                        (เหลือ {formatAmount(l.available)}
+                                        {(l.usedBy ?? []).length > 0 && (
+                                          <>
+                                            {" "}— ใช้ไปแล้ว{" "}
+                                            {(l.usedBy ?? [])
+                                              .map(
+                                                (u) =>
+                                                  `${formatAmount(u.amount)} กับหนี้${u.sourceLabel ? `เดือน ${u.sourceLabel}` : ""} ของ ${u.memberNumber} ${u.name}`.trim()
+                                              )
+                                              .join(", ")}
+                                          </>
+                                        )}
+                                        )
                                       </span>
                                     )}
                                     <span className="text-xs text-slate-500">

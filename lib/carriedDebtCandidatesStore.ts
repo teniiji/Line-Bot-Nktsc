@@ -42,6 +42,18 @@ export interface DailyLineRow extends DailyLine {
   amount: number;
   description: string;
   sourceFile: string | null;
+  // Where the part already used went — any member's debt, not only the one
+  // the line is being offered for. "(เหลือ ฿390)" alone left staff hunting
+  // through 29000's own debts for a ฿9,316 payment that was on someone else's.
+  usedBy: LineUse[];
+}
+
+export interface LineUse {
+  debtId: string;
+  memberNumber: string;
+  name: string;
+  sourceLabel: string;
+  amount: number;
 }
 
 export interface CandidateInputs {
@@ -249,18 +261,39 @@ export async function loadCandidateInputs(debtIds?: string[]): Promise<Candidate
       )
   );
 
-  // What of each already went to carried debts.
+  // What of each already went to carried debts, and to whose.
   const used = new Map<string, number>();
+  const usesOf = new Map<string, { debtId: string; amount: number }[]>();
   for (const slice of chunks(loose.map((l) => `${LINE_FINGERPRINT_PREFIX}${l.fingerprint}`))) {
-    const grouped = await prisma.carriedDebtPayment.groupBy({
-      by: ["fingerprint"],
+    const payments = await prisma.carriedDebtPayment.findMany({
       where: { roundId: null, fingerprint: { in: slice } },
-      _sum: { amount: true },
+      select: { fingerprint: true, debtId: true, amount: true },
     });
-    for (const row of grouped) {
-      if (row.fingerprint) used.set(row.fingerprint, row._sum.amount ?? 0);
+    for (const row of payments) {
+      if (!row.fingerprint) continue;
+      used.set(row.fingerprint, (used.get(row.fingerprint) ?? 0) + row.amount);
+      usesOf.set(row.fingerprint, [...(usesOf.get(row.fingerprint) ?? []), { debtId: row.debtId, amount: row.amount }]);
     }
   }
+  const usedDebtIds = [...new Set([...usesOf.values()].flat().map((u) => u.debtId))];
+  const usedDebts = usedDebtIds.length
+    ? await prisma.carriedDebt.findMany({
+        where: { id: { in: usedDebtIds } },
+        select: { id: true, memberNumber: true, name: true, sourceLabel: true },
+      })
+    : [];
+  const usedDebtOf = new Map(usedDebts.map((d) => [d.id, d]));
+  const usedBy = (fingerprint: string): LineUse[] =>
+    (usesOf.get(fingerprint) ?? []).map((u) => {
+      const debt = usedDebtOf.get(u.debtId);
+      return {
+        debtId: u.debtId,
+        memberNumber: debt?.memberNumber ?? "",
+        name: debt?.name ?? "",
+        sourceLabel: debt?.sourceLabel ?? "",
+        amount: Math.round(u.amount * 100) / 100,
+      };
+    });
   const lines: DailyLineRow[] = loose.map((line) => ({
     id: line.id,
     dismissedFor: dismissedBySource.get(`${LINE_FINGERPRINT_PREFIX}${line.fingerprint}`) ?? [],
@@ -275,6 +308,7 @@ export async function loadCandidateInputs(debtIds?: string[]): Promise<Candidate
     account: line.account,
     amount: line.amount,
     sourceFile: line.sourceFile,
+    usedBy: usedBy(`${LINE_FINGERPRINT_PREFIX}${line.fingerprint}`),
   }));
 
   // How the debtors stand on the open round for each line's own month.
