@@ -21,7 +21,7 @@ export async function GET() {
     by: ["account", "branch", "sourceFile"],
     _count: { _all: true },
     _min: { postedAt: true },
-    _max: { postedAt: true },
+    _max: { postedAt: true, createdAt: true },
     _sum: { amount: true },
   });
 
@@ -34,6 +34,7 @@ export async function GET() {
       from: row._min.postedAt?.toISOString() ?? null,
       to: row._max.postedAt?.toISOString() ?? null,
       amount: Math.round((row._sum.amount ?? 0) * 100) / 100,
+      uploadedAt: row._max.createdAt?.toISOString() ?? null,
     }))
     .sort(
       (a, b) =>

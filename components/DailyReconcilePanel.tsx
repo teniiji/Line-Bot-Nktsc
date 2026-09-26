@@ -15,7 +15,7 @@ import { STATEMENT_ACCOUNTS } from "@/lib/statementReconcile";
 import { branchesIn, missingBranches, summariseByAccount } from "@/lib/dailyAccountSummary";
 import { dayTally, flowByAccount, flowTotal, inByCategory } from "@/lib/statementTotals";
 import { bankFromDescription } from "@/lib/thaiBanks";
-import { cooperativeToday, shiftDay } from "@/lib/cooperativeClock";
+import { cooperativeDateTime, cooperativeToday, shiftDay } from "@/lib/cooperativeClock";
 import { describeDeductionHint, type DeductionHint } from "@/lib/deductionMatch";
 import { overlapsAnotherAccount, type StatementUpload } from "@/lib/statementUploads";
 import {
@@ -1066,6 +1066,7 @@ export default function DailyReconcilePanel() {
                     <th className="px-2 py-1.5 font-semibold">ไฟล์</th>
                     <th className="px-2 py-1.5 font-semibold">ช่วงวันที่</th>
                     <th className="px-2 py-1.5 font-semibold text-right">บรรทัด</th>
+                    <th className="px-2 py-1.5 font-semibold">อัปเมื่อ</th>
                     <th className="px-2 py-1.5 font-semibold"></th>
                   </tr>
                 </thead>
@@ -1102,6 +1103,9 @@ export default function DailyReconcilePanel() {
                           {upload.from !== upload.to && ` – ${formatStatementDate(upload.to)}`}
                         </td>
                         <td className="px-2 py-1.5 num text-right">{upload.lines}</td>
+                        <td className="px-2 py-1.5 num whitespace-nowrap text-slate-500">
+                          {upload.uploadedAt ? cooperativeDateTime(new Date(upload.uploadedAt)) : "—"}
+                        </td>
                         <td className="px-2 py-1.5 whitespace-nowrap text-right">
                           <button
                             onClick={() => removeUpload(upload)}

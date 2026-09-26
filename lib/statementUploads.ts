@@ -19,6 +19,9 @@ export interface StatementUpload {
   from: string | null;
   to: string | null;
   amount: number;
+  // When the file's lines were last added. A re-upload of lines already
+  // stored adds none, so this is the upload that last brought something new.
+  uploadedAt: string | null;
 }
 
 // Why this upload cannot be removed. Null when it can.

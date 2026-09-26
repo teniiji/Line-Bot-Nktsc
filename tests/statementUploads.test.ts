@@ -13,6 +13,7 @@ const upload = (over: Partial<StatementUpload> = {}): StatementUpload => ({
   from: "2026-08-01T00:00:00.000Z",
   to: "2026-08-31T23:59:00.000Z",
   amount: 8579272.06,
+  uploadedAt: "2026-09-01T02:30:00.000Z",
   ...over,
 });
 
