@@ -26,6 +26,7 @@ export type SectionKey =
   | "slipsWithoutMoney"
   | "unknownPayer"
   | "knownPayer"
+  | "splitDeposits"
   | "otherLines";
 
 export const SECTION_KEYS: SectionKey[] = [
@@ -35,6 +36,7 @@ export const SECTION_KEYS: SectionKey[] = [
   "slipsWithoutMoney",
   "unknownPayer",
   "knownPayer",
+  "splitDeposits",
   "otherLines",
 ];
 
@@ -49,6 +51,9 @@ export const SECTION_OPEN_BY_DEFAULT: Record<SectionKey, boolean> = {
   slipsWithoutMoney: true,
   unknownPayer: true,
   knownPayer: false,
+  // Short, and where staff look to check who got what after dividing a
+  // unit's transfer.
+  splitDeposits: true,
   otherLines: false,
 };
 

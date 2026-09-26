@@ -62,7 +62,9 @@ export async function loadReconciliation(
       orderBy: { postedAt: "asc" },
     }),
     prisma.expense.findMany({
-      where: { date: { gte: slipWindowStart, lt: slipWindowEnd } },
+      // A share of a line staff divided among members is not a slip to pair:
+      // the line it came from is already accounted for, by its splits.
+      where: { date: { gte: slipWindowStart, lt: slipWindowEnd }, splitFromLineId: null },
       orderBy: { date: "asc" },
       select: {
         id: true,
@@ -85,8 +87,22 @@ export async function loadReconciliation(
   // returned separately rather than dropped. Staff seeing an unfamiliar code
   // sitting in อื่นๆ is how a channel that should have been counted gets
   // noticed.
+  // Lines staff divided among several members (lib/unitPayer.ts) are
+  // accounted for already, and stay out of the pairing — they are returned
+  // on their own so the page can show who got what.
+  const splitRows = lines.length
+    ? await prisma.statementLineSplit.findMany({
+        where: { lineId: { in: lines.map((line) => line.id) } },
+        orderBy: { createdAt: "asc" },
+      })
+    : [];
+  const splits = new Map<string, { memberNumber: string; amount: number }[]>();
+  for (const row of splitRows) {
+    splits.set(row.lineId, [...(splits.get(row.lineId) ?? []), { memberNumber: row.memberNumber, amount: row.amount }]);
+  }
+
   const deposits: DepositLine[] = lines
-    .filter((line) => line.channel !== OTHER_CHANNEL)
+    .filter((line) => line.channel !== OTHER_CHANNEL && !splits.has(line.id))
     .map((line) => ({
       id: line.id,
       amount: line.amount,
@@ -135,5 +151,5 @@ export async function loadReconciliation(
 
   const result = reconcileDay(deposits, slipRecords, accountOwners);
 
-  return { lines, slips, accountOwners, result };
+  return { lines, slips, accountOwners, result, splits };
 }
