@@ -2355,6 +2355,16 @@ const DepositTable = ({
               </td>
               <td className="px-2 py-1.5">
                 <Payer deposit={deposit} />
+                {!deposit.memberNumber && deposit.suggestion && (
+                  <span
+                    className="block text-xs text-sky-700"
+                    title="เดาจากยอด — สมาชิกคนเดียวในรอบที่ค้างยอดนี้พอดี ตรวจก่อนบันทึก บันทึกแล้วเดือนหน้าระบบจะจำยอดนี้ของหน่วยงานให้เอง"
+                  >
+                    💡 ยอดตรงกับ <span className="num">{deposit.suggestion.memberNumber}</span>{" "}
+                    {deposit.suggestion.name ?? ""} (ค้างรอบ {deposit.suggestion.roundLabel}{" "}
+                    {formatAmount(deposit.suggestion.owed)})
+                  </span>
+                )}
               </td>
               <td className="px-2 py-1.5 text-slate-500 whitespace-nowrap">
                 {CHANNEL_LABELS[deposit.channel] ?? deposit.channel}
@@ -2386,7 +2396,7 @@ const DepositTable = ({
                       onClick={() =>
                         actions.open(
                           { id: deposit.id, kind: "record", scope: "deposits" },
-                          deposit.memberNumber
+                          deposit.memberNumber ?? deposit.suggestion?.memberNumber ?? null
                         )
                       }
                       className="text-slate-900 hover:underline"

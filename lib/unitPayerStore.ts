@@ -1,6 +1,6 @@
 import { prisma } from "@/lib/prisma";
 import { memberNumberKey } from "@/lib/memberNumber";
-import { isUnitPayerLine, payerKey, suggestedPayerName } from "@/lib/unitPayer";
+import { isUnitPayerLine, matchUnitLines, payerKey, suggestedPayerName } from "@/lib/unitPayer";
 import { OTHER_CHANNEL, STAFF_CHANNEL } from "@/lib/statementLines";
 
 // A unit's payroll office (BSD02 "…/สำนักงานเลขาธิการสภาการศึกษา") names no
@@ -32,38 +32,43 @@ export async function rememberUnitMember(
   });
 }
 
-// line id → member, for each line from a unit known to pay for exactly one
-// member. Units paying for several are left to "แบ่งให้หลายคน".
+// line id → member, for each line of a known unit that can be told apart:
+// a unit paying for one member names them for its only line of the day, and
+// a unit paying for its people one transfer each names each line by the
+// amount it paid that member last time (matchUnitLines). Anything
+// ambiguous is left for staff.
 export async function loadUnitOwners(
-  lines: { id: string; senderAccount: string | null; description: string }[]
+  lines: { id: string; senderAccount: string | null; description: string; amount: number; postedAt: Date | null }[]
 ): Promise<Map<string, string>> {
   const owners = new Map<string, string>();
-  const keyOf = new Map<string, string>();
+  const byKey = new Map<string, { id: string; amount: number; day: string }[]>();
   for (const line of lines) {
     if (line.senderAccount || !isUnitPayerLine(line.description)) continue;
     const key = payerKey(line.description);
-    if (key) keyOf.set(line.id, key);
+    if (!key) continue;
+    const day = line.postedAt ? line.postedAt.toISOString().slice(0, 10) : "";
+    byKey.set(key, [...(byKey.get(key) ?? []), { id: line.id, amount: line.amount, day }]);
   }
-  const keys = [...new Set(keyOf.values())];
+  const keys = [...byKey.keys()];
   if (keys.length === 0) return owners;
   const payers = await prisma.unitPayer.findMany({ where: { key: { in: keys } }, select: { id: true, key: true } });
   if (payers.length === 0) return owners;
   const members = await prisma.unitPayerMember.findMany({
     where: { payerId: { in: payers.map((p) => p.id) } },
-    select: { payerId: true, memberNumber: true },
+    select: { payerId: true, memberNumber: true, lastAmount: true },
   });
-  const soleOf = new Map<string, string>();
   for (const payer of payers) {
+    // One row per member, however the number was written.
     const own = [
-      ...new Set(members.filter((m) => m.payerId === payer.id).map((m) => memberNumberKey(m.memberNumber) ?? m.memberNumber)),
+      ...new Map(
+        members
+          .filter((m) => m.payerId === payer.id)
+          .map((m) => [memberNumberKey(m.memberNumber) ?? m.memberNumber, m])
+      ).values(),
     ];
-    if (own.length === 1) {
-      soleOf.set(payer.key, members.find((m) => m.payerId === payer.id)!.memberNumber);
+    for (const [lineId, member] of matchUnitLines(byKey.get(payer.key) ?? [], own)) {
+      owners.set(lineId, member);
     }
-  }
-  for (const [lineId, key] of keyOf) {
-    const member = soleOf.get(key);
-    if (member) owners.set(lineId, member);
   }
   return owners;
 }

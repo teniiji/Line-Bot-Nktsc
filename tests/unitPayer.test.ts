@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
   isUnitPayerLine,
+  matchUnitLines,
   payerKey,
   splitFingerprint,
   splitProblem,
+  soleOwing,
   splitSourceOf,
   suggestedPayerName,
   unitMatchMode,
@@ -122,5 +124,90 @@ describe("unitMemberProblem", () => {
     expect(unitMemberProblem("abc", [])).not.toBeNull();
     expect(unitMemberProblem("031132", ["31132"])).toBe("สมาชิกคนนี้อยู่ในหน่วยงานนี้แล้ว");
     expect(unitMemberProblem("31133", ["31132"])).toBeNull();
+  });
+});
+
+describe("matchUnitLines", () => {
+  const day = "2026-09-24";
+  const line = (id: string, amount: number, d = day) => ({ id, amount, day: d });
+
+  it("tells a unit's one-per-member transfers apart by last month's amounts", () => {
+    // UdonThani Prim: seven lines at 10:40, one per member.
+    const out = matchUnitLines(
+      [line("a", 13220), line("b", 3020), line("c", 17700)],
+      [
+        { memberNumber: "29001", lastAmount: 13220 },
+        { memberNumber: "29002", lastAmount: 3020 },
+        { memberNumber: "29003", lastAmount: 99999 },
+      ]
+    );
+    expect(out.get("a")).toBe("29001");
+    expect(out.get("b")).toBe("29002");
+    expect(out.has("c")).toBe(false);
+  });
+
+  it("names nobody where the amount could be two members or two lines", () => {
+    const twoMembers = matchUnitLines(
+      [line("a", 13220)],
+      [
+        { memberNumber: "29001", lastAmount: 13220 },
+        { memberNumber: "29002", lastAmount: 13220 },
+      ]
+    );
+    expect(twoMembers.size).toBe(0);
+    const twoLines = matchUnitLines(
+      [line("a", 13220), line("b", 13220)],
+      [
+        { memberNumber: "29001", lastAmount: 13220 },
+        { memberNumber: "29002", lastAmount: 500 },
+      ]
+    );
+    expect(twoLines.size).toBe(0);
+  });
+
+  it("gives a one-member unit its only line of the day whatever the amount", () => {
+    const out = matchUnitLines([line("a", 750)], [{ memberNumber: "31132", lastAmount: 700 }]);
+    expect(out.get("a")).toBe("31132");
+  });
+
+  it("does not hand a one-member unit's several lines all to that member", () => {
+    // Once one of UdonThani's members is recorded, the other six lines that
+    // day must not all become theirs.
+    const out = matchUnitLines(
+      [line("a", 13220), line("b", 3020)],
+      [{ memberNumber: "29001", lastAmount: 13220 }]
+    );
+    expect(out.get("a")).toBe("29001");
+    expect(out.has("b")).toBe(false);
+  });
+
+  it("judges each day on its own across a date range", () => {
+    const out = matchUnitLines(
+      [line("sep", 700, "2026-09-10"), line("oct", 720, "2026-10-10")],
+      [{ memberNumber: "31132", lastAmount: 700 }]
+    );
+    expect(out.get("sep")).toBe("31132");
+    expect(out.get("oct")).toBe("31132");
+  });
+});
+
+describe("soleOwing", () => {
+  it("offers the one member owing exactly the amount", () => {
+    expect(
+      soleOwing(13934, [
+        { memberNumber: "29001", owed: 13934 },
+        { memberNumber: "29002", owed: 500 },
+      ])
+    ).toEqual({ memberNumber: "29001", owed: 13934 });
+  });
+
+  it("offers nobody when the amount fits several, or none", () => {
+    expect(
+      soleOwing(1000, [
+        { memberNumber: "29001", owed: 1000 },
+        { memberNumber: "29002", owed: 1000 },
+      ])
+    ).toBeNull();
+    expect(soleOwing(1000, [{ memberNumber: "29001", owed: 900 }])).toBeNull();
   });
 });

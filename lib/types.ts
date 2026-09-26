@@ -340,6 +340,9 @@ export interface DailyDepositRow {
   // The unit (payroll office) staff named for lines worded like this one,
   // when a line from it has been divided among its members before.
   payerName?: string | null;
+  // For a unit's line nothing names yet: the one member of the newest round
+  // owing exactly this amount — a guess for staff to check, not a match.
+  suggestion?: { memberNumber: string; name: string | null; owed: number; roundLabel: string } | null;
 }
 
 // A bank line staff divided among several members — one unit paying for its
