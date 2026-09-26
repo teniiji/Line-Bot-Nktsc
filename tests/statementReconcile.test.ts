@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   collectedStatus,
   calcPaymentStatus,
+  memberDifference,
   extractTransferAccount,
   hasTimeOfDay,
   matchTransfers,
@@ -473,5 +474,37 @@ describe("matchTransfers", () => {
       members
     );
     expect(unmatched).toHaveLength(1);
+  });
+});
+
+describe("memberDifference", () => {
+  const row = (over: Partial<Parameters<typeof memberDifference>[0]> = {}) => ({
+    amountPaid: 0,
+    amountDue: 0,
+    expectedAmount: null,
+    deductionResult: "uncollected",
+    status: "unpaid",
+    ...over,
+  });
+
+  it("is what came in against the หักไม่ได้ figure", () => {
+    expect(memberDifference(row({ amountDue: 1500, amountPaid: 1000 }))).toBe(-500);
+    expect(memberDifference(row({ amountDue: 1500, amountPaid: 1500 }))).toBe(0);
+  });
+
+  it("measures a รอผลการหัก member staff placed money on against what payroll was asked", () => {
+    // 29539: แจ้งหัก ฿20,000, a unit's transfer divided to give them ฿14,900,
+    // status ยังค้าง — the column read +฿14,900 as though overpaid.
+    expect(
+      memberDifference(
+        row({ deductionResult: "awaiting", status: "unpaid", expectedAmount: 20000, amountPaid: 14900 })
+      )
+    ).toBe(-5100);
+  });
+
+  it("leaves a รอผลการหัก member nobody has judged at nothing owed", () => {
+    expect(
+      memberDifference(row({ deductionResult: "awaiting", status: "awaiting", expectedAmount: 20000 }))
+    ).toBe(0);
   });
 });

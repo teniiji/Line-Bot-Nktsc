@@ -369,6 +369,28 @@ export function transferFingerprint(account: string, transfer: TransferRow): str
 // payroll took more than was asked (หักเกิน), and that member belongs with
 // the ⚠️ ชำระเกิน people the cooperative owes money back to, not among the
 // ones it is simply done with.
+// The ส่วนต่าง column: what came in against what this member was judged by.
+//
+// Normally that is amountDue — the หักไม่ได้ figure. But a member still on
+// รอผลการหัก has nothing due, and once staff have placed money on them (cash,
+// or a daily line put on them by hand — see recomputeRoundPayments) their
+// status is judged against what payroll was asked to take instead. The
+// difference has to be taken against the same figure, or a member shown as
+// ยังค้าง on ฿20,000 asked and ฿14,900 paid read +฿14,900, as though overpaid.
+// Everyone else still on รอผลการหัก keeps amountDue (nothing), so thousands
+// of members nobody has heard about do not all turn red.
+export function memberDifference(m: {
+  amountPaid: number;
+  amountDue: number;
+  expectedAmount: number | null;
+  deductionResult: string;
+  status: string;
+}): number {
+  const judgedByExpected = m.deductionResult === "awaiting" && m.status !== "awaiting";
+  const basis = judgedByExpected ? (m.expectedAmount ?? 0) : m.amountDue;
+  return Math.round((m.amountPaid - basis) * 100) / 100;
+}
+
 export function collectedStatus(amountDue: number): "collected" | "overpaid" {
   return amountDue < -0.005 ? "overpaid" : "collected";
 }

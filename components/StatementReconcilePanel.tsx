@@ -32,6 +32,7 @@ import { EXCLUDE_REASONS } from "@/lib/statementSlipHints";
 import { describeDoubleCount } from "@/lib/roundDoubleCount";
 import { cooperativeToday } from "@/lib/cooperativeClock";
 import { sectionOpen } from "@/lib/sections";
+import { memberDifference } from "@/lib/statementReconcile";
 import {
   UNMATCHED_SORT_OPTIONS,
   sortUnmatched,
@@ -1781,7 +1782,7 @@ export default function StatementReconcilePanel() {
                     </thead>
                     <tbody>
                       {shown.map((m) => {
-                        const diff = Math.round((m.amountPaid - m.amountDue) * 100) / 100;
+                        const diff = memberDifference(m);
                         return (
                           <Fragment key={m.id}>
                           <tr className="border-t border-slate-100 hover:bg-slate-50/75">
