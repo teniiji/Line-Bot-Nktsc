@@ -10,6 +10,7 @@ import {
   payerKey,
   splitFingerprint,
   splitProblem,
+  splitSourceOf,
   suggestedPayerName,
 } from "@/lib/unitPayer";
 
@@ -289,4 +290,91 @@ export async function undoSplit(lineId: string) {
   await prisma.expense.deleteMany({ where: { splitFromLineId: line.id } });
   await prisma.statementLineSplit.deleteMany({ where: { lineId: line.id } });
   for (const roundId of roundIds) await recomputeRoundPayments(roundId);
+}
+
+// For the round page: which unit a share came from, on every row that is only
+// a share of a bank line — the member's own row otherwise reads as money
+// arriving from nowhere, with no account and no name beside it.
+export interface SplitOrigin {
+  payerName: string | null;
+  total: number;
+  memberCount: number;
+  // The row it was split off, for a split made inside the round.
+  fromAccount: string | null;
+}
+
+export async function splitOriginsFor(
+  roundId: string,
+  transfers: { id: string; fingerprint: string; account: string }[]
+): Promise<Map<string, SplitOrigin>> {
+  const out = new Map<string, SplitOrigin>();
+  const sources = transfers
+    .map((t) => ({ t, source: splitSourceOf(t.fingerprint) }))
+    .filter((s): s is { t: (typeof transfers)[number]; source: NonNullable<ReturnType<typeof splitSourceOf>> } => !!s.source);
+  if (sources.length === 0) return out;
+
+  const payers = await prisma.unitPayer.findMany({ select: { id: true, key: true, name: true } });
+  const nameById = new Map(payers.map((p) => [p.id, p.name]));
+  const nameByKey = new Map(payers.map((p) => [p.key, p.name]));
+  const unitOf = (description: string | null) => {
+    const key = payerKey(description);
+    return key ? (nameByKey.get(key) ?? null) : null;
+  };
+
+  // Divided on the daily page: the bank line and the division recorded on it.
+  const lineFps = [
+    ...new Set(sources.flatMap(({ source }) => (source.kind === "line" ? [source.lineFingerprint] : []))),
+  ];
+  if (lineFps.length) {
+    const lines = await prisma.statementLine.findMany({
+      where: { fingerprint: { in: lineFps } },
+      select: { id: true, account: true, fingerprint: true, amount: true, description: true },
+    });
+    const parts = await prisma.statementLineSplit.findMany({
+      where: { lineId: { in: lines.map((l) => l.id) } },
+      select: { lineId: true, payerId: true },
+    });
+    const lineOf = new Map(lines.map((l) => [`${l.account}|${l.fingerprint}`, l]));
+    for (const { t, source } of sources) {
+      if (source.kind !== "line") continue;
+      const line = lineOf.get(`${t.account}|${source.lineFingerprint}`);
+      if (!line) continue;
+      const own = parts.filter((p) => p.lineId === line.id);
+      const payerId = own.find((p) => p.payerId)?.payerId ?? null;
+      out.set(t.id, {
+        payerName: (payerId ? nameById.get(payerId) : null) ?? unitOf(line.description),
+        total: line.amount,
+        memberCount: own.length,
+        fromAccount: null,
+      });
+    }
+  }
+
+  // Split off another row in this round: that row plus every share taken
+  // from it make up the line the bank recorded.
+  const parentFps = [
+    ...new Set(sources.flatMap(({ source }) => (source.kind === "round" ? [source.parentFingerprint] : []))),
+  ];
+  if (parentFps.length) {
+    const family = await prisma.statementTransfer.findMany({
+      where: {
+        roundId,
+        OR: parentFps.flatMap((fp) => [{ fingerprint: fp }, { fingerprint: { startsWith: `${fp}::split:` } }]),
+      },
+      select: { fingerprint: true, amount: true, accountNumber: true, description: true },
+    });
+    for (const { t, source } of sources) {
+      if (source.kind !== "round") continue;
+      const fp = source.parentFingerprint;
+      const parent = family.find((f) => f.fingerprint === fp) ?? null;
+      const rows = family.filter((f) => f.fingerprint === fp || f.fingerprint.startsWith(`${fp}::split:`));
+      out.set(t.id, {
+        payerName: parent ? unitOf(parent.description) : null,
+        total: Math.round(rows.reduce((s, r) => s + r.amount, 0) * 100) / 100,
+        memberCount: rows.length,
+        fromAccount: parent?.accountNumber || null,
+      });
+    }
+  }
+  return out;
 }

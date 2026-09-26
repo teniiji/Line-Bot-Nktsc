@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { payerKey, splitFingerprint, splitProblem, suggestedPayerName } from "../lib/unitPayer";
+import { payerKey, splitFingerprint, splitProblem, splitSourceOf, suggestedPayerName } from "../lib/unitPayer";
 
 describe("payerKey", () => {
   it("keeps the payer and drops the per-transfer reference", () => {
@@ -64,5 +64,23 @@ describe("splitProblem", () => {
 describe("splitFingerprint", () => {
   it("names the line and the member, one row per member", () => {
     expect(splitFingerprint("413|abc", "011111")).toBe("line:413|abc#11111");
+  });
+});
+
+describe("splitSourceOf", () => {
+  it("reads a share divided on the daily page back to its bank line", () => {
+    expect(splitSourceOf(splitFingerprint("abc123", "029427"))).toEqual({
+      kind: "line",
+      lineFingerprint: "abc123",
+    });
+  });
+
+  it("reads a share split off inside the round back to the row it came from", () => {
+    expect(splitSourceOf("fp-9::split:1b2c")).toEqual({ kind: "round", parentFingerprint: "fp-9" });
+  });
+
+  it("leaves whole lines alone, bridged ones included", () => {
+    expect(splitSourceOf("fp-9")).toBeNull();
+    expect(splitSourceOf("line:abc123")).toBeNull();
   });
 });

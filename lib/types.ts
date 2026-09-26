@@ -281,6 +281,15 @@ export interface StatementTransferRow {
   // Empty on nearly every transfer; where it is not, one payment is settling
   // two months at once — see lib/roundDoubleCount.ts.
   alsoCountedIn: string[];
+  // Set when this row is only one member's share of a bank line: the unit
+  // that paid it, the line's whole amount, and how many members shared it —
+  // see splitOriginsFor in lib/lineSplitStore.ts.
+  splitFrom?: {
+    payerName: string | null;
+    total: number;
+    memberCount: number;
+    fromAccount: string | null;
+  } | null;
 }
 
 // A transfer that matched nobody on the round's list — money that arrived

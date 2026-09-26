@@ -5,6 +5,7 @@ import { countedElsewhere } from "@/lib/roundDoubleCount";
 import { recordedOwnersForAccounts } from "@/lib/roundRecordings";
 import { splitByBinding } from "@/lib/boundTransfers";
 import { ROUND_CLOSED_ERROR, countedAmount } from "@/lib/carriedDebt";
+import { splitOriginsFor } from "@/lib/lineSplitStore";
 
 export const dynamic = "force-dynamic";
 
@@ -204,6 +205,9 @@ export async function GET(
     }))
   );
 
+  // Which unit a share came from, on rows that are only part of a bank line.
+  const origins = await splitOriginsFor(round.id, transfers);
+
   const withHints = transfers.map((t) => ({
     id: t.id,
     memberNumber: t.memberNumber,
@@ -218,6 +222,7 @@ export async function GET(
     slipHint: hints.get(t.id) ?? null,
     // Empty on all but the few lines being counted more than once.
     alsoCountedIn: doubles.get(t.id) ?? [],
+    splitFrom: origins.get(t.id) ?? null,
   }));
 
   const excluded = withHints.filter((t) => t.excludedReason);

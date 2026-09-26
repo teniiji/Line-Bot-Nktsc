@@ -73,3 +73,20 @@ export function splitProblem(total: number, parts: SplitPart[]): string | null {
 /** The part of a round row's fingerprint that says which member of a split it is. */
 export const splitFingerprint = (lineFingerprint: string, memberNumber: string) =>
   `line:${lineFingerprint}#${memberNumberKey(memberNumber) ?? memberNumber}`;
+
+// Where a round row that is only a share of a bank line came from, read off
+// its fingerprint:
+//   - "line"  — divided on the daily page (splitFingerprint above); the key is
+//     the bank line's own fingerprint.
+//   - "round" — split off another row of the round by "แบ่งให้สมาชิกอื่น"
+//     ("<parent>::split:<uuid>"); the key is that row's fingerprint.
+// null for every row that is a whole line of its own.
+export type SplitSource = { kind: "line"; lineFingerprint: string } | { kind: "round"; parentFingerprint: string };
+
+export function splitSourceOf(fingerprint: string): SplitSource | null {
+  const piece = fingerprint.indexOf("::split:");
+  if (piece > 0) return { kind: "round", parentFingerprint: fingerprint.slice(0, piece) };
+  const line = /^line:(.+)#[^#]+$/.exec(fingerprint);
+  if (line) return { kind: "line", lineFingerprint: line[1] };
+  return null;
+}
