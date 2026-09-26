@@ -1991,7 +1991,22 @@ export default function StatementReconcilePanel() {
                                         a whole transfer moved outright, or a
                                         cash payment that was never a bank
                                         line to begin with. */}
-                                    {t.manualMemberNumber && t.accountNumber === "เงินสด" ? (
+                                    {t.splitFrom ? (
+                                      // A share of one bank line: say whose
+                                      // line, so it does not read as money
+                                      // arriving from nowhere.
+                                      <span
+                                        className="text-xs text-sky-700"
+                                        title={`ส่วนของสมาชิกคนนี้จากยอดที่โอนมาก้อนเดียว ${formatAmount(t.splitFrom.total)} ซึ่งเจ้าหน้าที่แบ่งให้ ${t.splitFrom.memberCount} คน`}
+                                      >
+                                        🏢 แบ่งจาก{" "}
+                                        <strong>
+                                          {t.splitFrom.payerName ??
+                                            (t.splitFrom.fromAccount ? `บัญชี ${t.splitFrom.fromAccount}` : "ยอดโอนก้อนเดียว")}
+                                        </strong>{" "}
+                                        · ยอดรวม {formatAmount(t.splitFrom.total)} ({t.splitFrom.memberCount} คน)
+                                      </span>
+                                    ) : t.manualMemberNumber && t.accountNumber === "เงินสด" ? (
                                       <span className="text-xs text-sky-700" title="ไม่มีบรรทัดในสเตทเมนต์ธนาคาร — บันทึกตรงจากหน้านี้">
                                         💵 เงินสด
                                       </span>
