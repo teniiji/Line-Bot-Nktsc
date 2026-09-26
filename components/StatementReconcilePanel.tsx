@@ -32,7 +32,7 @@ import { downloadStatementMembersCsv } from "@/lib/csv";
 import { EXCLUDE_REASONS } from "@/lib/statementSlipHints";
 import { SET_ASIDE_CATEGORIES } from "@/lib/transferSetAside";
 import { describeDoubleCount } from "@/lib/roundDoubleCount";
-import { cooperativeToday } from "@/lib/cooperativeClock";
+import { cooperativeDateTime, cooperativeToday } from "@/lib/cooperativeClock";
 import { sectionOpen } from "@/lib/sections";
 import { memberDifference } from "@/lib/statementReconcile";
 import {
@@ -1507,6 +1507,7 @@ export default function StatementReconcilePanel() {
                               <th className="px-2 py-1.5 font-semibold">ช่วงวันที่</th>
                               <th className="px-2 py-1.5 font-semibold text-right">รายการ</th>
                               <th className="px-2 py-1.5 font-semibold text-right">ยอดรวม</th>
+                              <th className="px-2 py-1.5 font-semibold">อัปเมื่อ</th>
                               <th className="px-2 py-1.5 font-semibold"></th>
                             </tr>
                           </thead>
@@ -1537,6 +1538,9 @@ export default function StatementReconcilePanel() {
                                 </td>
                                 <td className="px-2 py-1.5 num text-right">{s.transfers}</td>
                                 <td className="px-2 py-1.5 num text-right">{formatAmount(s.amount)}</td>
+                                <td className="px-2 py-1.5 num whitespace-nowrap text-slate-500">
+                                  {s.uploadedAt ? cooperativeDateTime(new Date(s.uploadedAt)) : "—"}
+                                </td>
                                 <td className="px-2 py-1.5 whitespace-nowrap text-right">
                                   {!s.bridged && (
                                     <button

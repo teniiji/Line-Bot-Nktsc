@@ -59,6 +59,18 @@ describe("summarizeStatementFiles", () => {
     ]);
   });
 
+  it("gives when the file's rows were last added", () => {
+    const [file] = summarizeStatementFiles([
+      row({ createdAt: new Date("2026-09-25T02:15:00Z") }),
+      row({ createdAt: new Date("2026-09-26T07:40:00Z") }),
+    ]);
+    expect(file.uploadedAt).toBe("2026-09-26T07:40:00.000Z");
+  });
+
+  it("has no upload time when the rows carry none", () => {
+    expect(summarizeStatementFiles([row()])[0].uploadedAt).toBeNull();
+  });
+
   it("leaves cash out — it was never a file", () => {
     expect(summarizeStatementFiles([row({ account: "cash", sourceFile: null })])).toEqual([]);
   });

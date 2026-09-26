@@ -258,6 +258,7 @@ export interface StatementFileSummary {
   amount: number;
   from: string | null;
   to: string | null;
+  uploadedAt: string | null;
 }
 
 // One line read out of a bank statement, with everything the tab needs to

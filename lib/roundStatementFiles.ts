@@ -15,6 +15,7 @@ export interface FileTransfer {
   fingerprint: string;
   amount: number;
   transferredAt: Date | string | null;
+  createdAt?: Date | string | null;
 }
 
 export interface RoundStatementFile {
@@ -28,6 +29,9 @@ export interface RoundStatementFile {
   amount: number;
   from: string | null;
   to: string | null;
+  // When the file's rows were last added — the most recent upload that
+  // brought anything new in (a re-upload of rows already there adds none).
+  uploadedAt: string | null;
 }
 
 export const isBridgedFingerprint = (fingerprint: string) => fingerprint.startsWith("line:");
@@ -58,6 +62,7 @@ export function summarizeStatementFiles(transfers: FileTransfer[]): RoundStateme
         amount: 0,
         from: null,
         to: null,
+        uploadedAt: null,
       } satisfies RoundStatementFile);
     if (!isPiece(t.fingerprint)) file.transfers += 1;
     file.amount = Math.round((file.amount + t.amount) * 100) / 100;
@@ -65,6 +70,11 @@ export function summarizeStatementFiles(transfers: FileTransfer[]): RoundStateme
     if (day) {
       if (!file.from || day < file.from) file.from = day;
       if (!file.to || day > file.to) file.to = day;
+    }
+    const added = t.createdAt ? new Date(t.createdAt) : null;
+    if (added && !Number.isNaN(added.getTime())) {
+      const iso = added.toISOString();
+      if (!file.uploadedAt || iso > file.uploadedAt) file.uploadedAt = iso;
     }
     files.set(key, file);
   }
