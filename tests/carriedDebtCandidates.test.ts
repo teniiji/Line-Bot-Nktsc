@@ -341,6 +341,16 @@ describe("daily lines no round holds", () => {
     ).toEqual([]);
   });
 
+  it("does not offer a line staff placed in a round for the member back to an old debt", () => {
+    expect(
+      findCandidates(
+        [debt()],
+        [transfer({ memberNumber: "29642", staffPlaced: true })],
+        [standing()]
+      )
+    ).toEqual([]);
+  });
+
   it("plans round transfers and daily lines together, oldest money first", () => {
     const plan = planClearPayments(
       [debt({ outstanding: 5000 })],

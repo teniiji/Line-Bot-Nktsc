@@ -2,6 +2,7 @@ import { prisma } from "@/lib/prisma";
 import { calcPaymentStatus, collectedStatus } from "@/lib/statementReconcile";
 import { fillAccounts } from "@/lib/accountHistory";
 import { countedAmount } from "@/lib/carriedDebt";
+import { sameStanding } from "@/lib/roundStanding";
 
 // Recomputes every member's payment total for a round from the transfer rows
 // that are currently stored.
@@ -21,6 +22,10 @@ export async function recomputeRoundPayments(roundId: string): Promise<void> {
         amountDue: true,
         expectedAmount: true,
         deductionResult: true,
+        amountPaid: true,
+        paidAt: true,
+        paidBranch: true,
+        status: true,
       },
     }),
     // Transfers staff have marked as being for something else (ซื้อหุ้น,
@@ -69,45 +74,58 @@ export async function recomputeRoundPayments(roundId: string): Promise<void> {
     byMember.set(key, entry);
   }
 
-  await Promise.all(
-    members.map((member) => {
+  const changed = members
+    .map((member) => {
       const paid = byMember.get(member.memberNumber);
       const amountPaid = paid?.amountPaid ?? 0;
-      return prisma.statementMember.update({
-        where: { id: member.id },
-        data: {
-          amountPaid,
-          paidAt: paid?.paidAt ?? null,
-          // Someone who paid into both accounts gets both named rather than
-          // an arbitrary one of the two.
-          paidBranch: paid ? Array.from(paid.branches).sort().join(" + ") : null,
-          // Nobody has said yet whether payroll could deduct from this
-          // member, so they are not short of anything — and calling a row
-          // with nothing due "✅ ชำระครบ" would put a whole unit that has not
-          // even replied among the people who have settled. That silence
-          // stops applying the moment staff record a cash payment for them,
-          // though: unlike a bank transfer (which could be for anything —
-          // see the awaiting rule it does not override), the "บันทึกว่าจ่าย
-          // เงินสดแล้ว" button is staff saying this specific member settled
-          // this specific round, so it is judged against what was declared
-          // (expectedAmount) rather than left stuck on ⏳ รอผลการหัก.
-          //
-          // A member payroll did deduct from is "collected" for the same
-          // reason: they owe this round nothing, and counting them among
-          // ✅ ชำระครบ would read as a thousand people having transferred
-          // money they were never asked for.
-          status:
-            member.deductionResult === "awaiting"
-              ? paid?.branches.has("เงินสด") || paid?.staffPlaced
-                ? calcPaymentStatus(amountPaid, member.expectedAmount ?? 0).status
-                : "awaiting"
-              : member.deductionResult === "collected"
-                ? collectedStatus(member.amountDue)
-                : calcPaymentStatus(amountPaid, member.amountDue).status,
-        },
-      });
+      const data = {
+        amountPaid,
+        paidAt: paid?.paidAt ?? null,
+        // Someone who paid into both accounts gets both named rather than
+        // an arbitrary one of the two.
+        paidBranch: paid ? Array.from(paid.branches).sort().join(" + ") : null,
+        // Nobody has said yet whether payroll could deduct from this
+        // member, so they are not short of anything — and calling a row
+        // with nothing due "✅ ชำระครบ" would put a whole unit that has not
+        // even replied among the people who have settled. That silence
+        // stops applying the moment staff record a cash payment for them,
+        // though: unlike a bank transfer (which could be for anything —
+        // see the awaiting rule it does not override), the "บันทึกว่าจ่าย
+        // เงินสดแล้ว" button is staff saying this specific member settled
+        // this specific round, so it is judged against what was declared
+        // (expectedAmount) rather than left stuck on ⏳ รอผลการหัก.
+        //
+        // A member payroll did deduct from is "collected" for the same
+        // reason: they owe this round nothing, and counting them among
+        // ✅ ชำระครบ would read as a thousand people having transferred
+        // money they were never asked for.
+        status:
+          member.deductionResult === "awaiting"
+            ? paid?.branches.has("เงินสด") || paid?.staffPlaced
+              ? calcPaymentStatus(amountPaid, member.expectedAmount ?? 0).status
+              : "awaiting"
+            : member.deductionResult === "collected"
+              ? collectedStatus(member.amountDue)
+              : calcPaymentStatus(amountPaid, member.amountDue).status,
+      };
+      return sameStanding(member, data) ? null : { id: member.id, data };
     })
-  );
+    .filter((row): row is NonNullable<typeof row> => row !== null);
+
+  // Only the members whose figures moved are written. Writing all of them —
+  // 7,383 on a round seeded from the รายการหัก — on every upload, cash entry
+  // and carried payment ran the request out of time on the server partway
+  // through, after the transfer it was recomputing for had been saved: the
+  // money was in the round and the member's row still said "—". In chunks,
+  // so a large change (a new statement) is still a handful of round trips.
+  const CHUNK = 200;
+  for (let i = 0; i < changed.length; i += CHUNK) {
+    await prisma.$transaction(
+      changed
+        .slice(i, i + CHUNK)
+        .map((row) => prisma.statementMember.update({ where: { id: row.id }, data: row.data }))
+    );
+  }
 }
 
 // Re-points transfers at members after the member list changes: an account

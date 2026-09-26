@@ -42,6 +42,10 @@ export interface RoundTransfer {
   transferredAt: Date | null;
   // Debts staff have said this money is not for ("ไม่ใช่ยอดของหนี้นี้").
   dismissedFor?: string[];
+  // A daily line staff placed in this round for this member by hand
+  // ("นับเป็นยอดรอบ …", or the daily page's bridge) — their answer to which
+  // month it pays, so it is not offered to an old debt again.
+  staffPlaced?: boolean;
 }
 
 // Where the member the transfer counts for stands in that round.
@@ -248,6 +252,7 @@ export function findCandidates(
         : debt.accounts.includes(transfer.accountNumber);
       if (!mine) continue;
       if (transfer.dismissedFor?.includes(debt.id)) continue;
+      if (transfer.staffPlaced && countedFor === key) continue;
       const sharedAccount = !countedFor && (debtorsOfAccount.get(transfer.accountNumber)?.size ?? 0) > 1;
       const looksMonthly = matchesExpected(
         standingOf.get(standingKey(transfer.roundId, debt.memberNumber))?.expectedAmount,

@@ -997,6 +997,27 @@ export default function StatementReconcilePanel() {
     }
   };
 
+  // Rebuilds members' figures from the transfers the round already holds —
+  // see app/api/statement-rounds/[id]/recompute.
+  const recomputeRound = async () => {
+    if (!selectedId) return;
+    setBusy(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const res = await fetch(`/api/statement-rounds/${selectedId}/recompute`, { method: "POST" });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setError(body.error || "คำนวณยอดใหม่ไม่สำเร็จ");
+        return;
+      }
+      setNotice("คำนวณยอดของรอบนี้ใหม่จากรายการโอนแล้ว");
+      await Promise.all([fetchRound(selectedId), fetchRounds()]);
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const afterCarry = async () => {
     setCarryingTransfer(null);
     if (selectedId) await Promise.all([fetchRound(selectedId), fetchRounds()]);
@@ -1325,10 +1346,18 @@ export default function StatementReconcilePanel() {
                   อัปโหลด Statement
                 </button>
                 <button
+                  onClick={recomputeRound}
+                  disabled={busy}
+                  title="คำนวณยอดโอนมาแล้วและสถานะของทุกคนใหม่ จากรายการโอนที่รอบนี้มีอยู่ — ใช้เมื่อยอดในตารางดูไม่ตรงกับรายการโอน"
+                  className="ml-auto px-3 py-1.5 border border-slate-300 rounded disabled:opacity-50"
+                >
+                  🔄 คำนวณยอดใหม่
+                </button>
+                <button
                   onClick={() => setPendingClose(true)}
                   disabled={busy || selected.populationMembers === 0}
                   title="สิ้นเดือน: ล็อกรอบนี้ แล้วยกยอดที่ยังค้างไปตั้งเป็นหนี้ที่แถบชำระข้ามเดือน"
-                  className="ml-auto px-3 py-1.5 border border-slate-300 rounded disabled:opacity-50"
+                  className="px-3 py-1.5 border border-slate-300 rounded disabled:opacity-50"
                 >
                   🔒 ปิดรอบ
                 </button>
