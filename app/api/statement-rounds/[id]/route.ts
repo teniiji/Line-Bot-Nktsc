@@ -4,7 +4,7 @@ import { matchSlipHints } from "@/lib/statementSlipHints";
 import { countedElsewhere } from "@/lib/roundDoubleCount";
 import { recordedOwnersForAccounts } from "@/lib/roundRecordings";
 import { splitByBinding } from "@/lib/boundTransfers";
-import { ROUND_CLOSED_ERROR, countedAmount } from "@/lib/carriedDebt";
+import { LINE_FINGERPRINT_PREFIX, ROUND_CLOSED_ERROR, countedAmount } from "@/lib/carriedDebt";
 import { splitOriginsFor } from "@/lib/lineSplitStore";
 import { isSetAsidePiece } from "@/lib/transferSetAside";
 import { DEDUCTION_CATEGORY } from "@/lib/statementSlipHints";
@@ -258,6 +258,23 @@ export async function GET(
       })
     : [];
   const lineById = new Map(recordedLines.map((l) => [l.id, l]));
+  // What of each line already pays a carried debt from the daily page — the
+  // usual answer for a member already settled here who still owes an
+  // earlier month (31132: ⚠️ ค้างข้ามเดือน ฿700 beside a ✅ หักได้ครบ row).
+  const carriedOfLine = new Map<string, number>();
+  if (recordedLines.length) {
+    const payments = await prisma.carriedDebtPayment.groupBy({
+      by: ["fingerprint"],
+      where: {
+        roundId: null,
+        fingerprint: { in: recordedLines.map((l) => `${LINE_FINGERPRINT_PREFIX}${l.fingerprint}`) },
+      },
+      _sum: { amount: true },
+    });
+    for (const p of payments) {
+      if (p.fingerprint) carriedOfLine.set(p.fingerprint, p._sum.amount ?? 0);
+    }
+  }
   const recordedOutside = unbridgedRecordings(
     recordings.flatMap((r) => {
       const line = lineById.get(r.statementLineId as string);
@@ -275,6 +292,8 @@ export async function GET(
           createdAt: r.createdAt,
           lineFingerprint: line.fingerprint,
           senderAccount: line.senderAccount,
+          lineId: line.id,
+          carried: carriedOfLine.get(`${LINE_FINGERPRINT_PREFIX}${line.fingerprint}`) ?? 0,
         },
       ];
     }),

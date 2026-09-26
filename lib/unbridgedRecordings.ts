@@ -29,6 +29,9 @@ export interface RecordedLine {
   // already covers it.
   lineFingerprint: string;
   senderAccount: string | null;
+  lineId: string;
+  // How much of the line already pays carried debts (ชำระข้ามเดือน).
+  carried: number;
 }
 
 export interface RoundTransferRef extends RealTransferCandidate {
@@ -40,6 +43,10 @@ export interface UnbridgedRecording {
   memberNumber: string;
   amount: number;
   date: Date;
+  lineId: string;
+  carried: number;
+  // What is left of the line for a carried debt to take.
+  available: number;
 }
 
 // A recording is already on screen the ordinary way when the round holds its
@@ -65,5 +72,8 @@ export function unbridgedRecordings(
       memberNumber: r.memberNumber,
       amount: Math.round(r.amount * 100) / 100,
       date: r.postedAt ?? r.createdAt,
+      lineId: r.lineId,
+      carried: Math.round(r.carried * 100) / 100,
+      available: Math.max(0, Math.round((r.amount - r.carried) * 100) / 100),
     }));
 }

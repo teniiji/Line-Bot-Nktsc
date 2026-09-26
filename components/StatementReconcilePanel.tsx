@@ -953,6 +953,34 @@ export default function StatementReconcilePanel() {
     }
   };
 
+  // A daily-page recording the round did not take in, put on an earlier
+  // month's debt instead — see the from-line route.
+  const payDebtFromRecording = async (debt: CarriedDebtRow, lineId: string, amount: number) => {
+    if (!selectedId) return;
+    setBusy(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const res = await fetch(`/api/carried-debts/${debt.id}/from-line`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ lineId, amount }),
+      });
+      const body = await res.json();
+      if (!res.ok) {
+        setError(body.error || "บันทึกชำระข้ามเดือนไม่สำเร็จ");
+        return;
+      }
+      setNotice(
+        `บันทึกยอด ${formatAmount(amount)} เป็นการชำระค้างข้ามเดือนรอบ ${debt.sourceLabel} ` +
+          `ของ ${debt.name || debt.memberNumber} แล้ว — ย้อนกลับได้ที่แถบ "ชำระข้ามเดือน"`
+      );
+      await Promise.all([fetchRound(selectedId), fetchOpenDebts()]);
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const confirmClearAccount = async () => {
     if (!pendingClear || !selectedId) return;
     const { account: acct, branch, file } = pendingClear;
@@ -2078,7 +2106,32 @@ export default function StatementReconcilePanel() {
                               {diff === 0 ? "0" : formatAmount(diff)}
                             </td>
                             <td className="px-4 py-2.5 whitespace-nowrap text-slate-500">
-                              {m.paidAt ? <DateTimeCell iso={m.paidAt} suffix={m.paidBranch} /> : "—"}
+                              {m.paidAt ? (
+                                <DateTimeCell iso={m.paidAt} suffix={m.paidBranch} />
+                              ) : recordedOutsideOf(m.memberNumber).length > 0 ? (
+                                // Recorded on the daily page but not counted
+                                // here — see the expanded row for why.
+                                (() => {
+                                  const latest = recordedOutsideOf(m.memberNumber).reduce((a, b) =>
+                                    b.date > a.date ? b : a
+                                  );
+                                  return (
+                                    <button
+                                      type="button"
+                                      onClick={() => setExpandedMember(m.memberNumber)}
+                                      className="text-left hover:underline"
+                                      title="บันทึกจากหน้าเงินเข้าประจำวัน แต่ไม่นับในรอบนี้ — กดเพื่อดูรายละเอียด"
+                                    >
+                                      <DateTimeCell iso={latest.date} />
+                                      <span className="block text-[11px] text-slate-400">
+                                        {latest.carried > 0 ? "↪ ชำระค้างข้ามเดือน" : "📒 ไม่นับในรอบนี้"}
+                                      </span>
+                                    </button>
+                                  );
+                                })()
+                              ) : (
+                                "—"
+                              )}
                             </td>
                             <td className="px-4 py-2.5 whitespace-nowrap">
                               <span
@@ -2367,6 +2420,30 @@ export default function StatementReconcilePanel() {
                                         ? " (หักเงินเดือนได้ครบแล้ว)"
                                         : " (ยอดครบแล้วตอนบันทึก)"}
                                     </span>
+                                    {r.carried > 0 && (
+                                      <span className="text-xs text-amber-700">
+                                        ↪ ใช้ชำระค้างข้ามเดือนแล้ว {formatAmount(r.carried)}
+                                      </span>
+                                    )}
+                                    {r.available > 0 &&
+                                      debtsOf(m.memberNumber)
+                                        .filter((d) => d.amount - d.amountPaid > 0.005)
+                                        .map((d) => {
+                                          const pay =
+                                            Math.round(Math.min(r.available, d.amount - d.amountPaid) * 100) / 100;
+                                          return (
+                                            <button
+                                              key={d.id}
+                                              type="button"
+                                              onClick={() => payDebtFromRecording(d, r.lineId, pay)}
+                                              disabled={busy}
+                                              className="ml-auto text-xs text-amber-800 border border-amber-300 bg-amber-50 rounded px-2 py-1 hover:bg-amber-100 disabled:opacity-50"
+                                              title={`สมาชิกคนนี้ยังค้างรอบ ${d.sourceLabel} — ถ้ายอดนี้โอนมาจ่ายค่าค้างเดือนนั้น กดเพื่อบันทึกเป็นการชำระข้ามเดือน (ย้อนกลับได้ที่แถบ "ชำระข้ามเดือน")`}
+                                            >
+                                              ↪ ใช้ชำระค้างข้ามเดือน {d.sourceLabel} {formatAmount(pay)}
+                                            </button>
+                                          );
+                                        })}
                                   </div>
                                 ))}
                                 {transfersOf(m.memberNumber).length === 0 &&
