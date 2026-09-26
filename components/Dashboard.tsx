@@ -30,6 +30,7 @@ import StatementReconcilePanel from "@/components/StatementReconcilePanel";
 import CarriedDebtsPanel from "@/components/CarriedDebtsPanel";
 import DailyReconcilePanel from "@/components/DailyReconcilePanel";
 import UnitPayersPanel from "@/components/UnitPayersPanel";
+import OutOfProvincePanel from "@/components/OutOfProvincePanel";
 import LineGroupsPanel from "@/components/LineGroupsPanel";
 import MemberBankAccountsPanel from "@/components/MemberBankAccountsPanel";
 
@@ -309,6 +310,7 @@ export default function Dashboard() {
               <div className="space-y-6">
                 <DailyReconcilePanel />
                 <UnitPayersPanel />
+                <OutOfProvincePanel />
               </div>
             ),
           },

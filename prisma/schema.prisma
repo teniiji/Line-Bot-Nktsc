@@ -786,6 +786,28 @@ model UnitPayerMember {
 }
 
 // One member's share of a bank line staff divided among several members.
+// A member who moved to a post in another province, and the office there
+// that now deducts from their pay (หน่วยงานหักเงิน — "อุดรธานี 1",
+// "ศธจ.นนทบุรี" …). That office sends the money on to the cooperative in one
+// transfer, with its own name in the statement, so knowing which office holds
+// whom is what lets such a transfer be put against the right members.
+// Imported from the cooperative's own out-of-province list; one office per
+// member at a time.
+model OutOfProvinceMember {
+  id            String   @id @default(cuid())
+  memberNumber  String   @unique
+  // As the file had it — the roster's spelling is preferred for display.
+  memberName    String?
+  deductingUnit String
+  // สังกัดเดิม: ต.1 / ต.2 / ต.3 / ต.4 — the district the member left.
+  originalUnit  String?
+  note          String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([deductingUnit])
+}
+
 model StatementLineSplit {
   id           String   @id @default(cuid())
   lineId       String
