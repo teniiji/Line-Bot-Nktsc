@@ -86,6 +86,9 @@ export interface Candidate {
   // other way (a unit transferring for a member who moved away). Never
   // applied in bulk; staff decide.
   looksMonthly: boolean;
+  // Staff put this line on the member in its round themselves. Offered only
+  // when that round has more than it needs from it, and never in bulk.
+  staffPlaced: boolean;
 }
 
 // A bank line from the daily page (StatementLine) that no round holds. A
@@ -252,7 +255,13 @@ export function findCandidates(
         : debt.accounts.includes(transfer.accountNumber);
       if (!mine) continue;
       if (transfer.dismissedFor?.includes(debt.id)) continue;
-      if (transfer.staffPlaced && countedFor === key) continue;
+      // A line staff put on this member in its round is their answer to which
+      // month it pays — unless the round has more than it needs from it.
+      // 29000: ฿9,706 recorded on the daily page and bridged into September,
+      // where ฿6,672 was due; the line was really paying August's debt and
+      // could not be found from the debt's side at all.
+      const placedHere = !!transfer.staffPlaced && countedFor === key;
+      if (placedHere && info.spare <= EPSILON) continue;
       const sharedAccount = !countedFor && (debtorsOfAccount.get(transfer.accountNumber)?.size ?? 0) > 1;
       const looksMonthly = matchesExpected(
         standingOf.get(standingKey(transfer.roundId, debt.memberNumber))?.expectedAmount,
@@ -265,7 +274,9 @@ export function findCandidates(
         spare: info.spare,
         reason: info.reason,
         looksMonthly,
+        staffPlaced: placedHere,
         clear:
+          !placedHere &&
           info.spare > EPSILON &&
           (openDebtsOf.get(key) ?? 0) === 1 &&
           !sharedAccount &&

@@ -737,6 +737,12 @@ export default function CarriedDebtsPanel() {
                                         · ยอดเท่ากับยอดแจ้งหักของรอบ {c.roundLabel} — อาจเป็นเงินของเดือนนั้น
                                       </span>
                                     )}
+                                    {c.staffPlaced && (
+                                      <span className="text-xs text-amber-700">
+                                        · เจ้าหน้าที่นับยอดนี้เข้ารอบ {c.roundLabel} ไว้ — ถ้าทั้งก้อนเป็นเงินชำระหนี้เก่า
+                                        ใส่ยอดได้ถึง {formatAmount(c.available)} (รอบ {c.roundLabel} จะกลับไปค้างส่วนที่ย้ายออก)
+                                      </span>
+                                    )}
                                     <span className="flex items-center gap-1.5 ml-auto">
                                       <input
                                         type="number"

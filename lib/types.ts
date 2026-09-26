@@ -502,6 +502,8 @@ export interface CarriedDebtCandidateRow {
   reason: "unplaced" | "collected" | "surplus" | "needed" | "awaiting";
   // Exactly that month's ยอดแจ้งหัก — possibly that month's own money.
   looksMonthly: boolean;
+  // Staff put this line on the member in its round themselves.
+  staffPlaced?: boolean;
   clear: boolean;
   suggested: number;
 }
