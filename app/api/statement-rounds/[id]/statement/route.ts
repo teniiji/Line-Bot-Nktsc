@@ -15,6 +15,7 @@ import {
 } from "@/lib/statementReconcile";
 import { storeStatementLines } from "@/lib/statementLineStore";
 import { findAccountMixup, mixupError } from "@/lib/statementAccountMixup";
+import { fileRemovalProblem, rowsOfFile } from "@/lib/roundStatementFiles";
 import {
   applyDirectoryAccounts,
   recomputeRoundPayments,
@@ -238,8 +239,8 @@ export async function POST(
   });
 }
 
-// Drops every transfer read from one of the two accounts, leaving the other
-// account and the member list alone. The way out of a statement uploaded
+// Drops the transfers read from one uploaded file, or from one of the two
+// accounts altogether, leaving the rest and the member list alone. The way out of a statement uploaded
 // against the wrong account — without it, since uploads now accumulate, those
 // rows would have no way out short of deleting the whole round.
 export async function DELETE(
@@ -260,10 +261,46 @@ export async function DELETE(
     return NextResponse.json({ error: ROUND_CLOSED_ERROR }, { status: 409 });
   }
 
-  const removed = await prisma.statementTransfer.deleteMany({
+  // With "file", only that file's lines (see lib/roundStatementFiles.ts);
+  // without, the whole account as before. An empty name is a file uploaded
+  // before names were kept.
+  const byFile = searchParams.has("file");
+  const sourceFile = searchParams.get("file") || null;
+  const accountRows = await prisma.statementTransfer.findMany({
     where: { roundId: params.id, account },
+    select: {
+      id: true,
+      account: true,
+      branch: true,
+      sourceFile: true,
+      fingerprint: true,
+      amount: true,
+      transferredAt: true,
+    },
+  });
+  const target = byFile ? rowsOfFile(accountRows, account, sourceFile) : accountRows;
+  if (target.length === 0) {
+    return NextResponse.json({ removed: 0, lines: 0 });
+  }
+
+  const [carried, setAside] = await Promise.all([
+    prisma.carriedDebtPayment.count({
+      where: { roundId: params.id, fingerprint: { in: target.map((t) => t.fingerprint) } },
+    }),
+    prisma.expense.count({ where: { setAsideFromId: { in: target.map((t) => t.id) } } }),
+  ]);
+  const problem = fileRemovalProblem({ carried, setAside });
+  if (problem) {
+    return NextResponse.json({ error: problem }, { status: 409 });
+  }
+
+  const removed = await prisma.statementTransfer.deleteMany({
+    where: { id: { in: target.map((t) => t.id) } },
   });
   await recomputeRoundPayments(params.id);
 
-  return NextResponse.json({ removed: removed.count });
+  return NextResponse.json({
+    removed: removed.count,
+    lines: target.filter((t) => !t.fingerprint.includes("::")).length,
+  });
 }

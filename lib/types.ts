@@ -251,8 +251,13 @@ export interface StatementFileSummary {
   account: string;
   branch: string;
   sourceFile: string | null;
+  // Brought in from the เงินเข้าประจำวัน page, not uploaded into the round —
+  // see lib/roundStatementFiles.ts.
+  bridged: boolean;
   transfers: number;
   amount: number;
+  from: string | null;
+  to: string | null;
 }
 
 // One line read out of a bank statement, with everything the tab needs to
