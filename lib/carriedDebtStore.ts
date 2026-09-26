@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/prisma";
 import { LINE_FINGERPRINT_PREFIX, summarizeDebt } from "@/lib/carriedDebt";
 import { coveredByRealTransfer } from "@/lib/roundReach";
+import { recomputeRoundPayments } from "@/lib/statementRecompute";
 
 // Database side of lib/carriedDebt.ts. Both figures below are rebuilt from
 // the payment rows rather than adjusted in place, for the same reason
@@ -26,19 +27,26 @@ export async function recomputeCarriedDebt(debtId: string): Promise<void> {
 }
 
 /**
- * How much of one statement line, in one round, has gone to carried debts —
- * written onto whichever transfer row carries that line right now. Looked up
- * by fingerprint because that is the line's identity across re-uploads; the
- * row's own id is not.
+ * How much of each statement line has gone to carried debts, from whichever
+ * round it was taken — the figure written onto every transfer row carrying
+ * that line. Looked up by fingerprint because that is the line's identity
+ * across re-uploads, and across rounds: one export loaded into two rounds
+ * (August's late payers and September) is one payment in two places, and
+ * money handed to a debt from one of them is gone from both. Counting it by
+ * round left the other round counting it in full — 29000 paid August from
+ * the August round's copy and showed ชำระเกิน on September's.
+ *
+ * The roundId is kept in the signature for the callers' sake; the answer no
+ * longer depends on it.
  */
 export async function carriedByFingerprint(
-  roundId: string,
+  _roundId: string,
   fingerprints: string[]
 ): Promise<Map<string, number>> {
   if (fingerprints.length === 0) return new Map();
   const grouped = await prisma.carriedDebtPayment.groupBy({
     by: ["fingerprint"],
-    where: { roundId, fingerprint: { in: fingerprints } },
+    where: { roundId: { not: null }, fingerprint: { in: fingerprints } },
     _sum: { amount: true },
   });
   return new Map(
@@ -122,8 +130,24 @@ export async function adoptLinePayments(roundId: string): Promise<number> {
 
 export async function syncTransferCarried(roundId: string, fingerprint: string): Promise<void> {
   const carried = (await carriedByFingerprint(roundId, [fingerprint])).get(fingerprint) ?? 0;
+  // Every round holding the line, not only the one the payment was taken
+  // from; the others are recomputed here, since their callers only know about
+  // their own round.
+  const twins = await prisma.statementTransfer.findMany({
+    where: { fingerprint, roundId: { not: roundId } },
+    select: { roundId: true, carriedAmount: true },
+  });
   await prisma.statementTransfer.updateMany({
-    where: { roundId, fingerprint },
+    where: { fingerprint },
     data: { carriedAmount: carried },
   });
+  const others = [
+    ...new Set(twins.filter((t) => Math.abs(t.carriedAmount - carried) >= 0.005).map((t) => t.roundId)),
+  ];
+  if (others.length === 0) return;
+  const open = await prisma.statementRound.findMany({
+    where: { id: { in: others }, closedAt: null },
+    select: { id: true },
+  });
+  for (const round of open) await recomputeRoundPayments(round.id);
 }

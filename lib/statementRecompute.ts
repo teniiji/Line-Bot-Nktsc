@@ -45,6 +45,33 @@ export async function recomputeRoundPayments(roundId: string): Promise<void> {
     }),
   ]);
 
+  // What went to carried debts from each line, from whichever round it was
+  // taken (see carriedByFingerprint). Rows written before that counted by
+  // round are brought into line here, so "🔄 คำนวณยอดใหม่" mends them.
+  const fingerprints = [...new Set(transfers.map((t) => t.fingerprint))];
+  const carriedOf = new Map<string, number>();
+  for (let i = 0; i < fingerprints.length; i += 1000) {
+    const grouped = await prisma.carriedDebtPayment.groupBy({
+      by: ["fingerprint"],
+      where: { roundId: { not: null }, fingerprint: { in: fingerprints.slice(i, i + 1000) } },
+      _sum: { amount: true },
+    });
+    for (const row of grouped) {
+      if (row.fingerprint) carriedOf.set(row.fingerprint, Math.round((row._sum.amount ?? 0) * 100) / 100);
+    }
+  }
+  const stale = transfers.filter(
+    (t) => Math.abs((carriedOf.get(t.fingerprint) ?? 0) - t.carriedAmount) >= 0.005
+  );
+  for (const t of stale) {
+    const carried = carriedOf.get(t.fingerprint) ?? 0;
+    await prisma.statementTransfer.updateMany({
+      where: { roundId, fingerprint: t.fingerprint },
+      data: { carriedAmount: carried },
+    });
+    t.carriedAmount = carried;
+  }
+
   const byMember = new Map<
     string,
     { amountPaid: number; paidAt: Date | null; branches: Set<string>; staffPlaced: boolean }
