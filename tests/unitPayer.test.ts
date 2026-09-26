@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { payerKey, splitFingerprint, splitProblem, splitSourceOf, suggestedPayerName } from "../lib/unitPayer";
+import {
+  isUnitPayerLine,
+  payerKey,
+  splitFingerprint,
+  splitProblem,
+  splitSourceOf,
+  suggestedPayerName,
+} from "../lib/unitPayer";
 
 describe("payerKey", () => {
   it("keeps the payer and drops the per-transfer reference", () => {
@@ -82,5 +89,20 @@ describe("splitSourceOf", () => {
   it("leaves whole lines alone, bridged ones included", () => {
     expect(splitSourceOf("fp-9")).toBeNull();
     expect(splitSourceOf("line:abc123")).toBeNull();
+  });
+});
+
+describe("isUnitPayerLine", () => {
+  it("recognises an office named between slashes", () => {
+    expect(isUnitPayerLine("Education Coun/สำนักงานเลขาธิการสภาการศึกษา")).toBe(true);
+    expect(isUnitPayerLine("KHON KAEN CM TA/เทศบาลนครขอนแก่น/200405")).toBe(true);
+  });
+
+  it("does not take a QR code, a cheque's writer or an account for a unit", () => {
+    expect(isUnitPayerLine("010753700088205-BU0994005S00999915K")).toBe(false);
+    expect(isUnitPayerLine("วิจิตร พุกาธร 0817396469")).toBe(false);
+    expect(isUnitPayerLine("TR fr 4131150565")).toBe(false);
+    expect(isUnitPayerLine("0012/345")).toBe(false);
+    expect(isUnitPayerLine("")).toBe(false);
   });
 });

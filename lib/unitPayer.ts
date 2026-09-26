@@ -90,3 +90,18 @@ export function splitSourceOf(fingerprint: string): SplitSource | null {
   if (line) return { kind: "line", lineFingerprint: line[1] };
   return null;
 }
+
+// Whether a line reads like a unit's payroll office paying — the only kind
+// recording it for a member may teach the system to recognise again. Those
+// name the office between slashes ("Education Coun/สำนักงานเลขาธิการสภา
+// การศึกษา", "KHON KAEN CM TA/เทศบาลนครขอนแก่น/200405"). A QR payment's
+// description is the cooperative's own merchant code, the same on every one
+// of them, and a cheque's is whoever wrote it: remembering either would hand
+// every later QR payment, or every later cheque, to one member.
+export function isUnitPayerLine(description: string | null | undefined): boolean {
+  if (!description || !description.includes("/")) return false;
+  return description
+    .split("/")
+    .map((part) => part.trim())
+    .some((part) => part.length >= 3 && !/^[\d\s-]+$/.test(part) && /[A-Za-z฀-๿]/.test(part));
+}

@@ -173,12 +173,17 @@ export function reconcileDay(
   deposits: DepositLine[],
   slips: SlipRecord[],
   // accountNumber → memberNumber, from the MemberBankAccount directory.
-  accountOwners: Map<string, string>
+  accountOwners: Map<string, string>,
+  // deposit id → memberNumber, for a line naming no account that comes from
+  // a unit known to pay for exactly one member (lib/unitPayerStore.ts).
+  unitOwners: Map<string, string> = new Map()
 ): DayReconciliation {
   const candidates: Candidate[] = [];
 
   for (const deposit of deposits) {
-    const owner = deposit.senderAccount ? accountOwners.get(deposit.senderAccount) : undefined;
+    const owner = deposit.senderAccount
+      ? accountOwners.get(deposit.senderAccount)
+      : unitOwners.get(deposit.id);
 
     for (const slip of slips) {
       // A transaction a person recorded from a bank line belongs to that line

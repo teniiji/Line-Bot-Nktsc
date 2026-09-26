@@ -126,7 +126,14 @@ const StatementDetail = ({ description }: { description: string }) => {
 const Payer = ({ deposit }: { deposit: DailyDepositRow }) => (
   <span>
     {deposit.memberNumber ? (
-      <span className="num">{deposit.memberNumber}</span>
+      <span>
+        <span className="num">{deposit.memberNumber}</span>
+        {deposit.payerName && !deposit.senderAccount && (
+          <span className="text-xs text-slate-500" title="รู้จากหน่วยงานที่โอน — เคยบันทึกยอดของหน่วยงานนี้ให้สมาชิกคนนี้">
+            {" "}· 🏢 {deposit.payerName}
+          </span>
+        )}
+      </span>
     ) : deposit.payerName ? (
       // A unit staff named when dividing an earlier line worded the same way.
       <span className="text-slate-700" title="หน่วยงานที่เคยแบ่งยอดให้สมาชิกไว้ — กด &quot;แบ่งให้หลายคน&quot; รายชื่อเดิมจะขึ้นให้">
@@ -2353,7 +2360,7 @@ const DepositTable = ({
                     >
                       บันทึกรายการ
                     </button>
-                    {actions.onSplit && !deposit.memberNumber && (
+                    {actions.onSplit && (!deposit.memberNumber || (!deposit.senderAccount && deposit.payerName)) && (
                       <button
                         onClick={() => actions.onSplit?.(deposit.id)}
                         className="text-slate-900 hover:underline"

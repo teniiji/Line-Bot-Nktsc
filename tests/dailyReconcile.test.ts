@@ -467,3 +467,35 @@ describe("honourLiveLinks", () => {
     expect(honourLiveLinks([plain], new Set())[0]).toBe(plain);
   });
 });
+
+describe("reconcileDay, a unit paying for one member", () => {
+  // An office's transfer names no paying account; once staff have recorded
+  // one of its lines for a member, the unit is known to pay for them.
+  const unitLine = deposit({
+    id: "unit-700",
+    amount: 700,
+    senderAccount: null,
+    description: "Education Coun/สำนักงานเลขาธิการสภาการศึกษา/0012",
+  });
+
+  it("pairs the unit's line with that member's slip on the member, not a bare amount", () => {
+    const result = reconcileDay(
+      [unitLine],
+      [slip({ amount: 700, memberNumber: "31132" })],
+      new Map(),
+      new Map([["unit-700", "31132"]])
+    );
+    expect(result.matched).toHaveLength(1);
+    expect(result.matched[0].basis).toBe("account");
+  });
+
+  it("refuses another member's slip of the same amount", () => {
+    const result = reconcileDay(
+      [unitLine],
+      [slip({ amount: 700, memberNumber: "40000" })],
+      new Map(),
+      new Map([["unit-700", "31132"]])
+    );
+    expect(result.matched).toHaveLength(0);
+  });
+});

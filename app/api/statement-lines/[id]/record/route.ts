@@ -13,6 +13,8 @@ import { canBridgeToRound, coveredByRealTransfer } from "@/lib/roundReach";
 import { recomputeRoundPayments } from "@/lib/statementRecompute";
 import { adoptLinePayments } from "@/lib/carriedDebtStore";
 import { periodOfDate } from "@/lib/deductionPeriod";
+import { isUnitPayerLine } from "@/lib/unitPayer";
+import { rememberUnitMember } from "@/lib/unitPayerStore";
 
 export const dynamic = "force-dynamic";
 
@@ -142,8 +144,22 @@ export async function POST(
   // Best-effort and never fatal to the recording above: the transaction just
   // filed is the thing staff came here for, and is real whether or not a
   // round happens to be watching this member right now.
+  // A line naming no paying account is a unit's office paying for its
+  // people; recording it for this member is remembered against the unit, so
+  // next month's transfer from it is recognised (lib/unitPayerStore.ts).
+  if (!line.senderAccount && memberNumber) {
+    try {
+      await rememberUnitMember(line.description, expense.memberNumber ?? memberNumber, line.amount);
+    } catch (err) {
+      console.error("unit payer not remembered", err);
+    }
+  }
+
   let bridgedRound: { period: string; label: string } | null = null;
-  if (category === DEDUCTION_CATEGORY && line.senderAccount) {
+  // A unit's line names no account but is still this member's deduction
+  // paid: it is bridged too. The round's own uploads only ever read "TR fr"
+  // lines, which always name one, so there is no file copy for it to double.
+  if (category === DEDUCTION_CATEGORY && (line.senderAccount || isUnitPayerLine(line.description))) {
     try {
       const round = await prisma.statementRound.findUnique({
         where: { period: periodOfDate(line.postedAt) },
@@ -163,7 +179,7 @@ export async function POST(
         // for. If the round's own statement already carries a real transfer
         // for the same account, amount and day, this line is that transfer
         // read a second way, and writing it again would double it.
-        const realTransfers = member
+        const realTransfers = member && line.senderAccount
           ? await prisma.statementTransfer.findMany({
               where: {
                 roundId: round.id,
@@ -176,13 +192,13 @@ export async function POST(
           : [];
         if (
           canBridgeToRound(member) &&
-          !coveredByRealTransfer(realTransfers, line.senderAccount, line.amount, line.postedAt)
+          !(line.senderAccount && coveredByRealTransfer(realTransfers, line.senderAccount, line.amount, line.postedAt))
         ) {
           await prisma.statementTransfer.create({
             data: {
               roundId: round.id,
               memberNumber: member!.memberNumber,
-              accountNumber: line.senderAccount,
+              accountNumber: line.senderAccount ?? "",
               amount: line.amount,
               transferredAt: line.postedAt,
               account: line.account,
