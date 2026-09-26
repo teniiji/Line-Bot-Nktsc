@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import type { DepositLine, SlipRecord } from "@/lib/dailyReconcile";
 import { loadReconciliation } from "@/lib/dailyReconcileStore";
-import { payerKey } from "@/lib/unitPayer";
+import { isUnitPayerLine, payerKey } from "@/lib/unitPayer";
 import { OTHER_CHANNEL } from "@/lib/statementLines";
 import { statementLineStatus } from "@/lib/statementDayView";
 import { memberNumberKey } from "@/lib/memberNumber";
@@ -340,6 +340,10 @@ export async function GET(request: NextRequest) {
         txnCode: line.txnCode,
         description: line.description,
         branch: line.branch,
+        // A unit's line, which staff can put on the unit list from here
+        // (lib/unitPayerStore.ts) — money in only, named between slashes.
+        unitLine: line.amount > 0 && isUnitPayerLine(line.description),
+        payerName: payerOf(line.description),
       })),
     totals: {
       ...result.totals,

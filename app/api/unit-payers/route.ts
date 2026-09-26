@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { memberNumberKey } from "@/lib/memberNumber";
 import { isUnitPayerLine, payerKey, suggestedPayerName, unitMatchMode } from "@/lib/unitPayer";
+import { markUnitLines } from "@/lib/unitPayerStore";
 
 export const dynamic = "force-dynamic";
 
@@ -73,5 +74,8 @@ export async function POST(request: NextRequest) {
   }
   const name = String(body.name ?? "").trim() || suggestedPayerName(description) || "หน่วยงาน";
   const payer = await prisma.unitPayer.create({ data: { key, name } });
-  return NextResponse.json({ id: payer.id, name: payer.name }, { status: 201 });
+  // Its lines already on record move into the member-money lists now; later
+  // ones as their statements arrive.
+  const moved = await markUnitLines([key]);
+  return NextResponse.json({ id: payer.id, name: payer.name, moved }, { status: 201 });
 }

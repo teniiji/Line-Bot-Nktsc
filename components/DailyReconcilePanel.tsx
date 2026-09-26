@@ -33,6 +33,7 @@ import {
 import PanelHelp from "@/components/PanelHelp";
 import DateField from "@/components/DateField";
 import LineSplitDialog from "@/components/LineSplitDialog";
+import { suggestedPayerName } from "@/lib/unitPayer";
 import {
   depositHaystack,
   filterBy,
@@ -678,6 +679,36 @@ export default function DailyReconcilePanel() {
       setActionNotice(
         `ย้าย ${formatAmount(body.amount)} ไปอยู่ใน "เงินเข้าที่ไม่รู้ว่าใครโอน" แล้ว — ` +
           'บันทึกเป็นรายการของสมาชิกได้ที่นั่น · ถ้าระบุผิด กด "ไม่ใช่เงินสมาชิก" ที่แถวนั้นเพื่อย้อนกลับ'
+      );
+      await fetchDay(from, to);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  // "🏢 เพิ่มเป็นหน่วยงาน" on a unit's line under รายการอื่น: the unit goes on
+  // the list (components/UnitPayersPanel.tsx) and every line of it moves into
+  // the member-money lists, this one included — see lib/unitPayerStore.ts.
+  const [unitForm, setUnitForm] = useState<{ lineId: string; name: string } | null>(null);
+  const addUnitFromLine = async (line: DailyOtherLineRow, name: string) => {
+    setSaving(true);
+    setError(null);
+    setActionNotice(null);
+    try {
+      const res = await fetch("/api/unit-payers", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ description: line.description, name }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setError(body.error || "เพิ่มหน่วยงานไม่สำเร็จ");
+        return;
+      }
+      setUnitForm(null);
+      setActionNotice(
+        `เพิ่มหน่วยงาน "${body.name}" แล้ว — ย้ายยอดของหน่วยงานนี้ ${body.moved ?? 0} รายการไปอยู่ใน ` +
+          '"เงินเข้าที่ไม่รู้ว่าใครโอน" ให้บันทึกหรือแบ่งให้สมาชิกต่อ · ยอดเดือนต่อไปของหน่วยงานนี้จะย้ายไปให้เอง'
       );
       await fetchDay(from, to);
     } finally {
@@ -1653,6 +1684,9 @@ export default function DailyReconcilePanel() {
                 showDate={from !== to}
                 onMark={markMemberMoney}
                 saving={saving}
+                unitForm={unitForm}
+                setUnitForm={setUnitForm}
+                onAddUnit={addUnitFromLine}
               />
             </Section>
           )}
@@ -2420,11 +2454,17 @@ const OtherTable = ({
   showDate = false,
   onMark,
   saving = false,
+  unitForm,
+  setUnitForm,
+  onAddUnit,
 }: {
   lines: DailyOtherLineRow[];
   showDate?: boolean;
   onMark: (lineId: string) => void;
   saving?: boolean;
+  unitForm?: { lineId: string; name: string } | null;
+  setUnitForm?: (form: { lineId: string; name: string } | null) => void;
+  onAddUnit?: (line: DailyOtherLineRow, name: string) => void;
 }) => (
   /* No scroll wrapper of its own: Section provides one, and nesting two
      makes the horizontal scroll fight itself. */
@@ -2454,9 +2494,53 @@ const OtherTable = ({
             <td className="px-2 py-1.5 font-mono text-xs">{line.txnCode}</td>
             <td className="px-2 py-1.5">
               <StatementDetail description={line.description} />
+              {line.payerName && (
+                <span className="block text-xs text-slate-600">🏢 {line.payerName}</span>
+              )}
+              {unitForm?.lineId === line.id && setUnitForm && onAddUnit && (
+                <span className="flex flex-wrap items-center gap-2 mt-1">
+                  <input
+                    value={unitForm.name}
+                    onChange={(e) => setUnitForm({ lineId: line.id, name: e.target.value })}
+                    placeholder="ชื่อหน่วยงาน"
+                    className="border border-slate-300 rounded px-2 py-1 text-xs w-64"
+                    autoFocus
+                  />
+                  <button
+                    onClick={() => onAddUnit(line, unitForm.name)}
+                    disabled={saving}
+                    className="text-xs text-white bg-slate-900 rounded px-2.5 py-1 disabled:opacity-50"
+                  >
+                    เพิ่มหน่วยงาน
+                  </button>
+                  <button onClick={() => setUnitForm(null)} className="text-xs text-slate-500">
+                    ยกเลิก
+                  </button>
+                  <span className="w-full text-xs text-slate-400">
+                    ยอดของหน่วยงานนี้ทุกรายการจะย้ายไปอยู่ใน "เงินเข้าที่ไม่รู้ว่าใครโอน" ให้บันทึกหรือแบ่งให้สมาชิก
+                    · จัดการรายชื่อสมาชิกของหน่วยงานได้ที่กล่อง "หน่วยงานที่โอนแทนสมาชิก" ด้านล่าง
+                  </span>
+                </span>
+              )}
             </td>
             <td className="px-2 py-1.5 text-slate-500 whitespace-nowrap">{line.branch}</td>
             <td className="px-2 py-1.5 whitespace-nowrap">
+              {line.unitLine && !line.payerName && setUnitForm && (
+                <button
+                  onClick={() =>
+                    setUnitForm(
+                      unitForm?.lineId === line.id
+                        ? null
+                        : { lineId: line.id, name: suggestedPayerName(line.description) }
+                    )
+                  }
+                  disabled={saving}
+                  className="text-xs text-slate-900 hover:underline disabled:opacity-40 mr-3"
+                  title="หน่วยงานนี้โอนเงินแทนสมาชิก — เพิ่มไว้ในรายชื่อหน่วยงาน ยอดของหน่วยงานนี้จะนับเป็นเงินสมาชิกทุกครั้ง"
+                >
+                  🏢 เพิ่มเป็นหน่วยงาน
+                </button>
+              )}
               {/* Only on money coming in. Nothing a person knows makes an
                   outward transfer or a fee into a member's payment, so the
                   button is not offered rather than offered and refused. */}

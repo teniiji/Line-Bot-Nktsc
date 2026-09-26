@@ -383,6 +383,10 @@ export interface DailyOtherLineRow {
   txnCode: string;
   description: string;
   branch: string;
+  // Reads like a unit's payroll office paying in — offered "เพิ่มเป็นหน่วยงาน".
+  unitLine?: boolean;
+  // The unit's name, when it is already on the list.
+  payerName?: string | null;
 }
 
 // One line of the bank's statement, as the bank wrote it, plus the

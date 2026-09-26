@@ -111,7 +111,7 @@ export default function UnitPayersPanel() {
     const body = await call(
       "/api/unit-payers",
       { method: "POST", body: JSON.stringify({ description: newDescription, name: newName }) },
-      "เพิ่มหน่วยงานแล้ว — เพิ่มสมาชิกที่หน่วยงานนี้โอนให้ได้เลย"
+      "เพิ่มหน่วยงานแล้ว — ยอดของหน่วยงานนี้จะอยู่ใน \"เงินเข้าที่ไม่รู้ว่าใครโอน\" ให้บันทึกหรือแบ่ง · เพิ่มสมาชิกที่หน่วยงานนี้โอนให้ได้เลย"
     );
     if (body) {
       setNewDescription("");
@@ -445,7 +445,7 @@ export default function UnitPayersPanel() {
         description={
           pendingDelete
             ? `${pendingDelete.name} และรายชื่อสมาชิก ${pendingDelete.members.length} คนของหน่วยงานนี้ — ` +
-              "รายการที่บันทึกไปแล้วและยอดที่นับในรอบไม่ถูกแตะต้อง แต่ยอดครั้งต่อไปของหน่วยงานนี้จะกลับไปเป็น \"ไม่รู้ว่าใคร\""
+              "รายการที่บันทึกไปแล้วและยอดที่นับในรอบไม่ถูกแตะต้อง แต่ยอดครั้งต่อไปของหน่วยงานนี้ระบบจะไม่จำแล้ว"
             : undefined
         }
         confirmLabel="ลบ"
