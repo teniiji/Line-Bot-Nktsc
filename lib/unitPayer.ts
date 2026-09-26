@@ -140,11 +140,19 @@ export interface UnitLine {
   id: string;
   amount: number;
   day: string;
+  // The line's month (MMYY), for this month's amounts below.
+  period?: string;
 }
 
 export interface KnownMember {
   memberNumber: string;
   lastAmount: number | null;
+  // What the round for each month says this member's unit should send for
+  // them — the ยอดแจ้งหัก, and the หักไม่ได้ balance where the deduction
+  // failed. A salary deduction changes month to month; this month's figure
+  // is the better guide when it does, last month's the fallback when the
+  // round does not know the member.
+  current?: Record<string, number[]>;
 }
 
 const sameMoney = (a: number, b: number) => Math.abs(a - b) < 0.01;
@@ -160,10 +168,25 @@ export function matchUnitLines(lines: UnitLine[], members: KnownMember[]): Map<s
       out.set(dayLines[0].id, members[0].memberNumber);
       continue;
     }
-    for (const line of dayLines) {
-      const sameLines = dayLines.filter((l) => sameMoney(l.amount, line.amount));
-      const who = members.filter((m) => m.lastAmount !== null && sameMoney(m.lastAmount, line.amount));
-      if (sameLines.length === 1 && who.length === 1) out.set(line.id, who[0].memberNumber);
+    // Two passes: this month's amounts first, then last month's for what is
+    // left. A member named in the first is not offered again in the second.
+    const taken = new Set<string>();
+    const passes: ((m: KnownMember, line: UnitLine) => boolean)[] = [
+      (m, line) => (m.current?.[line.period ?? ""] ?? []).some((a) => sameMoney(a, line.amount)),
+      (m, line) => m.lastAmount !== null && sameMoney(m.lastAmount, line.amount),
+    ];
+    for (const fits of passes) {
+      const open = dayLines.filter((l) => !out.has(l.id));
+      for (const line of open) {
+        const who = members.filter((m) => !taken.has(m.memberNumber) && fits(m, line));
+        if (who.length !== 1) continue;
+        // Another open line of the day this member would fit just as well
+        // makes it a coin toss between the two lines.
+        const rivals = open.filter((l) => l.id !== line.id && fits(who[0], l));
+        if (rivals.length > 0) continue;
+        out.set(line.id, who[0].memberNumber);
+        taken.add(who[0].memberNumber);
+      }
     }
   }
   return out;

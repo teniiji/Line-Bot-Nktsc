@@ -59,7 +59,7 @@ export async function GET(request: NextRequest) {
   }
   const end = new Date(lastDay.getTime() + DAY_MS);
 
-  const { lines, slips, accountOwners, unitOwners, result, splits } = await loadReconciliation(start, end);
+  const { lines, slips, accountOwners, unitOwners, unitPicks, result, splits } = await loadReconciliation(start, end);
   // Whose a line is, as far as anything knows: the paying account's owner,
   // or, for a unit's line naming no account, the one member it pays for.
   const ownerOf = (line: { id: string; senderAccount: string | null }) =>
@@ -384,6 +384,8 @@ export async function GET(request: NextRequest) {
     depositsWithoutSlip: result.depositsWithoutSlip.map((d) => ({
       ...describeDeposit(d),
       suggestion: suggestionOf.get(d.id) ?? null,
+      // The unit's members to pick from, for a unit line nothing could name.
+      unitPicks: unitPicks.get(d.id) ?? null,
     })),
     splitDeposits,
     otherLines: lines

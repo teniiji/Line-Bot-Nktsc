@@ -343,6 +343,9 @@ export interface DailyDepositRow {
   // For a unit's line nothing names yet: the one member of the newest round
   // owing exactly this amount — a guess for staff to check, not a match.
   suggestion?: { memberNumber: string; name: string | null; owed: number; roundLabel: string } | null;
+  // A known unit's members, for a line of it the amount could not name —
+  // each with this month's ยอดแจ้งหัก (or last month's amount) to pick by.
+  unitPicks?: { memberNumber: string; name: string | null; amount: number | null }[] | null;
 }
 
 // A bank line staff divided among several members — one unit paying for its

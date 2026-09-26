@@ -211,3 +211,43 @@ describe("soleOwing", () => {
     expect(soleOwing(1000, [{ memberNumber: "29001", owed: 900 }])).toBeNull();
   });
 });
+
+describe("matchUnitLines, amounts that change month to month", () => {
+  const line = (id: string, amount: number) => ({ id, amount, day: "2026-10-24", period: "1069" });
+
+  it("names a member by this month's ยอดแจ้งหัก when last month's no longer fits", () => {
+    const out = matchUnitLines(
+      [line("a", 13500), line("b", 3020)],
+      [
+        { memberNumber: "29001", lastAmount: 13220, current: { "1069": [13500] } },
+        { memberNumber: "29002", lastAmount: 3020, current: { "1069": [3100] } },
+      ]
+    );
+    expect(out.get("a")).toBe("29001");
+    // Not this month's figure, but still last month's — and nobody else's.
+    expect(out.get("b")).toBe("29002");
+  });
+
+  it("does not give one member two lines", () => {
+    const out = matchUnitLines(
+      [line("a", 13500), line("b", 13220)],
+      [
+        { memberNumber: "29001", lastAmount: 13220, current: { "1069": [13500] } },
+        { memberNumber: "29002", lastAmount: 700 },
+      ]
+    );
+    expect(out.get("a")).toBe("29001");
+    expect(out.has("b")).toBe(false);
+  });
+
+  it("leaves a line alone when this month's figure fits two members", () => {
+    const out = matchUnitLines(
+      [line("a", 5000)],
+      [
+        { memberNumber: "29001", lastAmount: null, current: { "1069": [5000] } },
+        { memberNumber: "29002", lastAmount: null, current: { "1069": [5000] } },
+      ]
+    );
+    expect(out.size).toBe(0);
+  });
+});
