@@ -70,6 +70,7 @@ export async function GET() {
           : null,
       clear: c.clear,
       suggested: Math.round(Math.min(c.available, outstandingOf.get(c.debtId) ?? 0) * 100) / 100,
+      usedBy: l.usedBy,
     };
   });
 

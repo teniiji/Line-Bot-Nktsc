@@ -527,6 +527,9 @@ export interface CarriedDebtLineCandidateRow {
   monthRound: { id: string | null; label: string | null } | null;
   clear: boolean;
   suggested: number;
+  // Where the part of the line already used went — possibly another
+  // member's debt entirely.
+  usedBy?: { debtId: string; memberNumber: string; name: string; sourceLabel: string; amount: number }[];
 }
 
 // "t:<transferId>" for a round's transfer, "l:<lineId>" for a daily line.
