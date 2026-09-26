@@ -11,6 +11,7 @@ import { DEDUCTION_CATEGORY } from "@/lib/statementSlipHints";
 import { memberNumberKey } from "@/lib/memberNumber";
 import { periodOfDate } from "@/lib/deductionPeriod";
 import { unbridgedRecordings } from "@/lib/unbridgedRecordings";
+import { summarizeStatementFiles } from "@/lib/roundStatementFiles";
 
 export const dynamic = "force-dynamic";
 
@@ -148,12 +149,7 @@ export async function GET(
   // second half of the month. Cash entries excluded: "account: cash" was
   // never a file, and belongs beside the transfers it sits among (see the
   // 💵 tag on the row itself), not in a list of Statement uploads.
-  const loaded = await prisma.statementTransfer.groupBy({
-    by: ["account", "branch", "sourceFile"],
-    where: { roundId: round.id, account: { not: "cash" } },
-    _count: { _all: true },
-    _sum: { amount: true },
-  });
+  const loaded = summarizeStatementFiles(transfers);
 
   // Which of these transfers look like they were for something other than a
   // deduction, judged against the slips members filed through the bot.
@@ -305,19 +301,7 @@ export async function GET(
     excluded,
     excludedTotal:
       Math.round(excluded.reduce((sum, t) => sum + t.amount, 0) * 100) / 100,
-    statements: loaded
-      .map((row) => ({
-        account: row.account,
-        branch: row.branch,
-        sourceFile: row.sourceFile,
-        transfers: row._count._all,
-        amount: Math.round((row._sum.amount ?? 0) * 100) / 100,
-      }))
-      .sort(
-        (a, b) =>
-          a.account.localeCompare(b.account) ||
-          (a.sourceFile ?? "").localeCompare(b.sourceFile ?? "", "th")
-      ),
+    statements: loaded,
     totals: {
       ...totals,
       outstanding: Math.round((totals.due - totals.paid) * 100) / 100,

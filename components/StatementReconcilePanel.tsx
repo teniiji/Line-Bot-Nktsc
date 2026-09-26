@@ -209,9 +209,13 @@ export default function StatementReconcilePanel() {
   const [cashAmount, setCashAmount] = useState("");
   const [cashDate, setCashDate] = useState(cooperativeToday());
   const [cashError, setCashError] = useState<string | null>(null);
-  const [pendingClear, setPendingClear] = useState<{ account: string; branch: string } | null>(
-    null
-  );
+  // Without "file", the whole account.
+  const [pendingClear, setPendingClear] = useState<{
+    account: string;
+    branch: string;
+    file?: { name: string | null; transfers: number };
+  } | null>(null);
+  const [showStatementFiles, setShowStatementFiles] = useState(false);
   const [totals, setTotals] = useState({ due: 0, paid: 0, outstanding: 0 });
   const [loadingRounds, setLoadingRounds] = useState(true);
   const [loadingRound, setLoadingRound] = useState(false);
@@ -951,22 +955,28 @@ export default function StatementReconcilePanel() {
 
   const confirmClearAccount = async () => {
     if (!pendingClear || !selectedId) return;
-    const { account: acct, branch } = pendingClear;
+    const { account: acct, branch, file } = pendingClear;
     setPendingClear(null);
     setBusy(true);
     setError(null);
     setNotice(null);
     try {
-      const res = await fetch(
-        `/api/statement-rounds/${selectedId}/statement?account=${encodeURIComponent(acct)}`,
-        { method: "DELETE" }
-      );
+      const query = new URLSearchParams({ account: acct });
+      if (file) query.set("file", file.name ?? "");
+      const res = await fetch(`/api/statement-rounds/${selectedId}/statement?${query}`, {
+        method: "DELETE",
+      });
       const body = await res.json();
       if (!res.ok) {
-        setError(body.error || "ล้างรายการไม่สำเร็จ");
+        setError(body.error || (file ? "ลบไฟล์ไม่สำเร็จ" : "ล้างรายการไม่สำเร็จ"));
         return;
       }
-      setNotice(`ล้างรายการโอนของบัญชี ${acct} ${branch} แล้ว ${body.removed} รายการ`);
+      setNotice(
+        file
+          ? `ลบ ${body.lines} รายการของไฟล์ ${file.name ?? "(ไม่ทราบชื่อไฟล์)"} ` +
+              `ออกจากบัญชี ${acct} ${branch} ในรอบนี้แล้ว`
+          : `ล้างรายการโอนของบัญชี ${acct} ${branch} แล้ว ${body.removed} รายการ`
+      );
       await Promise.all([fetchRound(selectedId), fetchRounds()]);
     } finally {
       setBusy(false);
@@ -1469,38 +1479,110 @@ export default function StatementReconcilePanel() {
 
               {statements.length > 0 && (
                 <div className="px-4 py-2 border-b border-slate-100 text-xs text-slate-600">
-                  <span className="text-slate-500">Statement ที่โหลดไว้แล้ว:</span>{" "}
-                  {statements.map((s, i) => (
-                    <span key={`${s.account}-${s.sourceFile ?? i}`}>
-                      {i > 0 && <span className="text-slate-300"> · </span>}
-                      <span className="font-mono">{s.account}</span> {s.sourceFile ?? "(ไม่ทราบชื่อไฟล์)"}{" "}
-                      <span className="text-slate-400">
-                        ({s.transfers} รายการ {formatAmount(s.amount)})
-                      </span>
-                    </span>
-                  ))}
+                  <button
+                    type="button"
+                    onClick={() => setShowStatementFiles((v) => !v)}
+                    className="text-slate-600 hover:underline"
+                  >
+                    {showStatementFiles ? "▾" : "▸"} ไฟล์ Statement ที่อัปไว้ในรอบนี้ (
+                    {statements.filter((s) => !s.bridged).length} ไฟล์)
+                  </button>
                   <span className="text-slate-400">
                     {" "}
                     — อัปโหลดเพิ่มได้เรื่อยๆ รายการที่มีอยู่แล้วจะไม่ถูกนับซ้ำ
                   </span>
-                  <span className="ml-2">
-                    {ACCOUNTS.filter((a) => statements.some((s) => s.account === a.value)).map(
-                      (a) => (
-                        <button
-                          key={a.value}
-                          onClick={() =>
-                            setPendingClear({
-                              account: a.value,
-                              branch: STATEMENT_BRANCH[a.value] ?? "",
-                            })
-                          }
-                          className="text-red-600 hover:underline ml-2"
-                        >
-                          ล้าง {a.value}
-                        </button>
-                      )
-                    )}
-                  </span>
+                  {showStatementFiles && (
+                    <div className="mt-2 bg-slate-50 rounded px-2 py-2">
+                      <p className="text-xs text-slate-500 mb-2">
+                        ทุกไฟล์ที่อัปเข้ารอบนี้ แยกตามบัญชี — ลบได้ถ้าอัปผิดไฟล์หรือผิดบัญชี
+                        (ลบเฉพาะรายการโอนที่อ่านจากไฟล์นั้นในรอบนี้ ไม่กระทบไฟล์อื่น
+                        และไม่ลบบรรทัดในหน้าเงินเข้าประจำวัน) · อัปไฟล์เดิมกลับเข้าไปได้เสมอ
+                      </p>
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-sm">
+                          <thead className="text-slate-500 text-left text-xs uppercase tracking-wide">
+                            <tr>
+                              <th className="px-2 py-1.5 font-semibold">บัญชี</th>
+                              <th className="px-2 py-1.5 font-semibold">ไฟล์</th>
+                              <th className="px-2 py-1.5 font-semibold">ช่วงวันที่</th>
+                              <th className="px-2 py-1.5 font-semibold text-right">รายการ</th>
+                              <th className="px-2 py-1.5 font-semibold text-right">ยอดรวม</th>
+                              <th className="px-2 py-1.5 font-semibold"></th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {statements.map((s) => (
+                              <tr
+                                key={`${s.account}-${s.sourceFile ?? ""}-${s.bridged}`}
+                                className="border-t border-slate-200"
+                              >
+                                <td className="px-2 py-1.5 whitespace-nowrap">
+                                  <span className="num">{s.account}</span> {s.branch}
+                                </td>
+                                <td className="px-2 py-1.5">
+                                  {s.bridged ? (
+                                    <span
+                                      className="text-sky-700"
+                                      title="รายการที่บันทึกจากหน้าเงินเข้าประจำวันแล้วเชื่อมเข้ารอบ — ไม่ได้อัปเข้ารอบนี้โดยตรง ถ้าจะเอาออกให้ลบรายการที่บันทึกไว้ที่หน้านั้น"
+                                    >
+                                      🔗 เชื่อมจากหน้าเงินเข้าประจำวัน
+                                    </span>
+                                  ) : (
+                                    s.sourceFile ?? <span className="text-slate-400">(ไม่ทราบชื่อไฟล์)</span>
+                                  )}
+                                </td>
+                                <td className="px-2 py-1.5 whitespace-nowrap text-slate-500">
+                                  {s.from ? formatStatementDate(s.from) : "—"}
+                                  {s.to && s.from !== s.to && ` – ${formatStatementDate(s.to)}`}
+                                </td>
+                                <td className="px-2 py-1.5 num text-right">{s.transfers}</td>
+                                <td className="px-2 py-1.5 num text-right">{formatAmount(s.amount)}</td>
+                                <td className="px-2 py-1.5 whitespace-nowrap text-right">
+                                  {!s.bridged && (
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        setPendingClear({
+                                          account: s.account,
+                                          branch: s.branch || (STATEMENT_BRANCH[s.account] ?? ""),
+                                          file: { name: s.sourceFile, transfers: s.transfers },
+                                        })
+                                      }
+                                      disabled={busy || frozen}
+                                      className="text-xs text-red-700 hover:underline disabled:opacity-40"
+                                    >
+                                      ลบไฟล์นี้
+                                    </button>
+                                  )}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                      <p className="mt-2 text-xs text-slate-400">
+                        ล้างทั้งบัญชี (ทุกไฟล์):
+                        {ACCOUNTS.filter((a) => statements.some((s) => s.account === a.value)).map(
+                          (a) => (
+                            <button
+                              key={a.value}
+                              type="button"
+                              onClick={() =>
+                                setPendingClear({
+                                  account: a.value,
+                                  branch: STATEMENT_BRANCH[a.value] ?? "",
+                                })
+                              }
+                              disabled={busy || frozen}
+                              className="text-red-600 hover:underline ml-2 disabled:opacity-40"
+                            >
+                              ล้าง {a.value}
+                            </button>
+                          )
+                        )}
+                      </p>
+                    </div>
+                  )}
                 </div>
               )}
 
@@ -2829,15 +2911,24 @@ export default function StatementReconcilePanel() {
 
       <ConfirmDialog
         open={pendingClear !== null}
-        title={`ล้างรายการโอนของบัญชี ${pendingClear?.account ?? ""}?`}
-        description={
-          pendingClear
-            ? `จะลบรายการโอนทุกรายการที่อ่านมาจาก Statement ของบัญชี ${pendingClear.account} ` +
-              `${pendingClear.branch} ในรอบนี้ (ทุกไฟล์) — อีกบัญชีและรายชื่อหักไม่ได้ไม่ถูกแตะต้อง ` +
-              `ใช้เมื่ออัปโหลดผิดบัญชีหรืออยากเริ่มอ่านใหม่ อัปโหลดไฟล์เดิมกลับเข้าไปได้เสมอ`
-            : undefined
+        title={
+          pendingClear?.file
+            ? `ลบไฟล์ ${pendingClear.file.name ?? "(ไม่ทราบชื่อไฟล์)"} ออกจากรอบนี้?`
+            : `ล้างรายการโอนของบัญชี ${pendingClear?.account ?? ""}?`
         }
-        confirmLabel="ล้างรายการ"
+        description={
+          pendingClear?.file
+            ? `จะลบรายการโอน ${pendingClear.file.transfers} รายการที่อ่านมาจากไฟล์นี้ ` +
+              `(บัญชี ${pendingClear.account} ${pendingClear.branch}) ในรอบนี้ — ไฟล์อื่น รายชื่อหักไม่ได้ ` +
+              `และบรรทัดในหน้าเงินเข้าประจำวันไม่ถูกแตะต้อง ยอดชำระของสมาชิกจะคำนวณใหม่ให้ ` +
+              `อัปโหลดไฟล์เดิมกลับเข้าไปได้เสมอ`
+            : pendingClear
+              ? `จะลบรายการโอนทุกรายการที่อ่านมาจาก Statement ของบัญชี ${pendingClear.account} ` +
+                `${pendingClear.branch} ในรอบนี้ (ทุกไฟล์) — อีกบัญชีและรายชื่อหักไม่ได้ไม่ถูกแตะต้อง ` +
+                `ใช้เมื่ออัปโหลดผิดบัญชีหรืออยากเริ่มอ่านใหม่ อัปโหลดไฟล์เดิมกลับเข้าไปได้เสมอ`
+              : undefined
+        }
+        confirmLabel={pendingClear?.file ? "ลบไฟล์นี้" : "ล้างรายการ"}
         onConfirm={confirmClearAccount}
         onCancel={() => setPendingClear(null)}
       />
