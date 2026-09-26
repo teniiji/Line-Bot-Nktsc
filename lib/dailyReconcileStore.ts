@@ -64,7 +64,7 @@ export async function loadReconciliation(
     prisma.expense.findMany({
       // A share of a line staff divided among members is not a slip to pair:
       // the line it came from is already accounted for, by its splits.
-      where: { date: { gte: slipWindowStart, lt: slipWindowEnd }, splitFromLineId: null },
+      where: { date: { gte: slipWindowStart, lt: slipWindowEnd }, splitFromLineId: null, setAsideFromId: null },
       orderBy: { date: "asc" },
       select: {
         id: true,

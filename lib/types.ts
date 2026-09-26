@@ -290,6 +290,9 @@ export interface StatementTransferRow {
     memberCount: number;
     fromAccount: string | null;
   } | null;
+  // The part staff cut out of another row ("ตัดยอดออก" — see
+  // lib/transferSetAside.ts), left out of the round under what it was for.
+  setAside?: boolean;
 }
 
 // A transfer that matched nobody on the round's list — money that arrived

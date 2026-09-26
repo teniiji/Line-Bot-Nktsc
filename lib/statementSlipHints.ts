@@ -33,6 +33,13 @@ export const EXCLUDE_REASONS = [
   "ฝากเงิน",
   "ชำระประกัน",
   "ชำระฌาปนกิจ",
+  // The funeral-welfare associations members pay into alongside the
+  // deduction — most often cut out of a transfer in part (lib/transferSetAside.ts).
+  "สสค",
+  "สสอค",
+  "สสชสอ",
+  "สสสก",
+  "สสสท",
   // Not a purpose like the ones above: this money really was a deduction
   // payment, just not this round's. A round counts whatever statement was
   // uploaded into it, and nothing on a transfer says which month it was
