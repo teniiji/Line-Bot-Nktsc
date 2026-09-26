@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { ROUND_CLOSED_ERROR } from "@/lib/carriedDebt";
 import { recomputeRoundPayments } from "@/lib/statementRecompute";
+import { absorbCoveredStandIns } from "@/lib/bridgeDedupeStore";
 
 export const dynamic = "force-dynamic";
 
@@ -25,6 +26,10 @@ export async function POST(
   if (round.closedAt) {
     return NextResponse.json({ error: ROUND_CLOSED_ERROR }, { status: 409 });
   }
+  // Also mends a line counted twice: put on a member from the daily page,
+  // then uploaded into the round with the statement (see
+  // lib/bridgeDedupe.ts).
+  const merged = await absorbCoveredStandIns(params.id);
   await recomputeRoundPayments(params.id);
-  return NextResponse.json({ ok: true });
+  return NextResponse.json({ ok: true, merged });
 }

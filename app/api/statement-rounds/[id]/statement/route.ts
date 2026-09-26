@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { ROUND_CLOSED_ERROR } from "@/lib/carriedDebt";
 import { adoptLinePayments, carriedByFingerprint } from "@/lib/carriedDebtStore";
+import { absorbCoveredStandIns } from "@/lib/bridgeDedupeStore";
 import {
   checkUploadedFile,
   describeReadError,
@@ -200,6 +201,10 @@ export async function POST(
   // round held it, has just arrived here — the payment moves onto this row
   // so the round does not count the same money again.
   await adoptLinePayments(round.id);
+  // A line staff already put on a member from the daily page has just
+  // arrived a second time from the file — keep the file's row, with what
+  // staff said about it, and drop the stand-in.
+  await absorbCoveredStandIns(round.id);
   await recomputeRoundPayments(round.id);
 
   // Counted from what was actually stored, so the numbers describe the round
