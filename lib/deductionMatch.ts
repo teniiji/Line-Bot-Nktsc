@@ -85,10 +85,11 @@ export function describeDeductionHint(hint: DeductionHint): string {
     // this member — true for "settled" above, not for these two: 25823 was
     // still on รอผลการหัก with a real ฿30,000 transfer the round had already
     // matched by account and amount, and the label read "เก็บไม่ได้ … ชำระแล้ว"
-    // as though that had been decided.
-    if (hint.deductionResult === "awaiting") return `ยอดนี้นับในรอบ ${month} แล้ว — สมาชิกยังรอผลการหัก`;
-    if (hint.deductionResult === "collected") return `ยอดนี้นับในรอบ ${month} แล้ว — หน่วยงานหักเงินเดือนได้`;
-    return `ยอดนี้นับในรอบ ${month} แล้ว`;
+    // as though that had been decided. Kept short — this sits in a table
+    // column, and the full reason is still in the row's title tooltip.
+    if (hint.deductionResult === "awaiting") return `นับในรอบ ${month} แล้ว (รอผลการหัก)`;
+    if (hint.deductionResult === "collected") return `นับในรอบ ${month} แล้ว (หักเงินเดือนได้)`;
+    return `นับในรอบ ${month} แล้ว`;
   }
   if (hint.match === "short") return `เก็บไม่ได้ ${month} ยังไม่ครบ`;
   return `เก็บไม่ได้ ${month} เกินยอด`;
