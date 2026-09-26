@@ -13,6 +13,7 @@ import {
   StatementMemberRow,
   StatementRoundSummary,
   StatementTransferRow,
+  RecordedOutsideRow,
   StatementOutsideRoundRow,
   StatementUnmatchedRow,
 } from "@/lib/types";
@@ -179,6 +180,7 @@ export default function StatementReconcilePanel() {
   } | null>(null);
   const [statements, setStatements] = useState<StatementFileSummary[]>([]);
   const [transfers, setTransfers] = useState<StatementTransferRow[]>([]);
+  const [recordedOutside, setRecordedOutside] = useState<RecordedOutsideRow[]>([]);
   const [excludedTotal, setExcludedTotal] = useState(0);
   const [expandedMember, setExpandedMember] = useState<string | null>(null);
   // The one transfer row currently offering its "แบ่งให้สมาชิกอื่น" form, and
@@ -288,6 +290,7 @@ export default function StatementReconcilePanel() {
     setOutsideRoundTotal(body.outsideRoundTotal ?? 0);
     setStatements(body.statements ?? []);
     setTransfers(body.transfers ?? []);
+    setRecordedOutside(body.recordedOutside ?? []);
     setExcludedTotal(body.excludedTotal ?? 0);
     setTotals(body.totals ?? { due: 0, paid: 0, outstanding: 0 });
     setLoadingRound(false);
@@ -1129,6 +1132,8 @@ export default function StatementReconcilePanel() {
 
   const transfersOf = (memberNumber: string) =>
     transfers.filter((t) => t.memberNumber === memberNumber);
+  const recordedOutsideOf = (memberNumber: string) =>
+    recordedOutside.filter((r) => r.memberNumber === memberNumber);
   // Earlier months this member still owes (ชำระข้ามเดือน), leaving out this
   // round's own debts when it is the closed one being looked at.
   const debtsOf = (memberNumber: string) => {
@@ -2255,6 +2260,35 @@ export default function StatementReconcilePanel() {
                                     )}
                                   </div>
                                 ))}
+                                {/* Recorded on the daily page but not taken
+                                    into the round: the member was already
+                                    settled when it was filed. Read-only. */}
+                                {recordedOutsideOf(m.memberNumber).map((r) => (
+                                  <div
+                                    key={r.id}
+                                    className="flex flex-wrap items-center gap-3 text-sm py-1 border-t border-slate-200 text-slate-500"
+                                    title="บันทึกเป็นชำระเก็บไม่ได้รายเดือนที่หน้าเงินเข้าประจำวันแล้ว แต่ตอนบันทึกสมาชิกคนนี้มีสถานะครบในรอบนี้อยู่แล้ว จึงไม่นับซ้ำในรอบ — ดู/แก้รายการได้ที่หน้าเงินเข้าประจำวันหรือแถบธุรกรรม"
+                                  >
+                                    <span className="num whitespace-nowrap font-medium">
+                                      {formatAmount(r.amount)}
+                                    </span>
+                                    <span className="num whitespace-nowrap">
+                                      {formatStatementDateTime(r.date)}
+                                    </span>
+                                    <span className="text-xs text-slate-500">
+                                      📒 บันทึกจากหน้าเงินเข้าประจำวัน · ไม่นับในรอบนี้
+                                      {m.deductionResult === "collected"
+                                        ? " (หักเงินเดือนได้ครบแล้ว)"
+                                        : " (ยอดครบแล้วตอนบันทึก)"}
+                                    </span>
+                                  </div>
+                                ))}
+                                {transfersOf(m.memberNumber).length === 0 &&
+                                  recordedOutsideOf(m.memberNumber).length === 0 && (
+                                    <p className="text-xs text-slate-400 py-1 border-t border-slate-200">
+                                      ไม่มีรายการโอนของสมาชิกคนนี้ในรอบนี้
+                                    </p>
+                                  )}
                                 <div className="pt-2 mt-1 border-t border-slate-200">
                                   <button
                                     type="button"
