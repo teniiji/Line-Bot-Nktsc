@@ -1900,11 +1900,16 @@ const StatementTable = ({
           {/* From the slip this line was paired with — the bank says an
               amount arrived, never what for. Failing that, what the month's
               หักไม่ได้ round already knows about this line: either its own
-              matching already counted this exact transfer (match === "settled",
-              looked up directly — see the route), or, failing that, what this
+              matching already counted this exact transfer — settled if that
+              member's deduction has actually failed (match === "settled"),
+              merely counted if the round has not decided yet or payroll
+              succeeded (match === "counted", so as not to call something
+              "เก็บไม่ได้ … ชำระแล้ว" that was never เก็บไม่ได้ to begin with —
+              looked up directly, see the route) — or, failing both, what this
               member still owes, offered as a suggestion to check rather than a
-              statement from the member. The two read differently on purpose:
-              settled is done, exact is a job still to do. */}
+              statement from the member. The three read differently on
+              purpose: settled is done, counted is only recorded, exact is a
+              job still to do. */}
           <td className="px-2 py-1.5 whitespace-nowrap text-slate-600">
             {row.category ? (
               row.category
@@ -1913,32 +1918,42 @@ const StatementTable = ({
                 className={
                   row.deduction.match === "settled"
                     ? "text-emerald-700"
-                    : row.deduction.match === "exact"
-                      ? "text-amber-700"
-                      : "text-slate-500"
+                    : row.deduction.match === "counted"
+                      ? "text-sky-700"
+                      : row.deduction.match === "exact"
+                        ? "text-amber-700"
+                        : "text-slate-500"
                 }
                 title={
                   row.deduction.match === "settled"
                     ? `รอบเก็บไม่ได้ ${row.deduction.label} นับเงินก้อนนี้เป็นการชำระของสมาชิกแล้ว — ` +
                       "จับคู่จากเลขบัญชีและยอดใน Statement โดยอัตโนมัติ ไม่ต้องโทรตาม"
-                    : `ค้างเก็บไม่ได้รอบ ${row.deduction.label}: ${formatAmount(
-                        row.deduction.outstanding
-                      )}` +
-                      (row.deduction.match === "exact"
-                        ? " — ยอดที่โอนมาตรงพอดี น่าจะเป็นการชำระเก็บไม่ได้รายเดือน"
-                        : row.deduction.match === "short"
-                          ? " — ยอดที่โอนมาน้อยกว่าที่ค้าง"
-                          : " — ยอดที่โอนมามากกว่าที่ค้าง") +
-                      "\nเป็นข้อสังเกตให้ตรวจสอบ ไม่ใช่การบันทึก"
+                    : row.deduction.match === "counted"
+                      ? `รอบ ${row.deduction.label} นับเงินก้อนนี้ไว้กับสมาชิกแล้ว จากเลขบัญชีและยอดใน Statement — ` +
+                        (row.deduction.deductionResult === "awaiting"
+                          ? "แต่ยังไม่รู้ผลว่าหน่วยงานหักเงินเดือนได้ไหม จึงยังไม่เรียกว่าเก็บไม่ได้"
+                          : "แต่หน่วยงานหักเงินเดือนได้แล้ว จึงไม่ใช่เก็บไม่ได้") +
+                        "\nเป็นข้อสังเกตให้ตรวจสอบ ไม่ใช่การบันทึก"
+                      : `ค้างเก็บไม่ได้รอบ ${row.deduction.label}: ${formatAmount(
+                          row.deduction.outstanding
+                        )}` +
+                        (row.deduction.match === "exact"
+                          ? " — ยอดที่โอนมาตรงพอดี น่าจะเป็นการชำระเก็บไม่ได้รายเดือน"
+                          : row.deduction.match === "short"
+                            ? " — ยอดที่โอนมาน้อยกว่าที่ค้าง"
+                            : " — ยอดที่โอนมามากกว่าที่ค้าง") +
+                        "\nเป็นข้อสังเกตให้ตรวจสอบ ไม่ใช่การบันทึก"
                 }
               >
                 {describeDeductionHint(row.deduction)}
-                {row.deduction.match !== "exact" && row.deduction.match !== "settled" && (
-                  <span className="text-slate-400">
-                    {" "}
-                    ({formatAmount(row.deduction.outstanding)})
-                  </span>
-                )}
+                {row.deduction.match !== "exact" &&
+                  row.deduction.match !== "settled" &&
+                  row.deduction.match !== "counted" && (
+                    <span className="text-slate-400">
+                      {" "}
+                      ({formatAmount(row.deduction.outstanding)})
+                    </span>
+                  )}
               </span>
             ) : (
               <span className="text-slate-300">—</span>

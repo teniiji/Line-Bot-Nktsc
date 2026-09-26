@@ -77,21 +77,54 @@ describe("deductionSettled", () => {
   // from a balance. A member's outstanding figure can reach zero from a
   // transfer that is not this one, and reporting that as "this line settled
   // it" would be wrong even though the member really is settled.
-  it("carries the round's own month, not a balance", () => {
-    expect(deductionSettled({ period: "0669", label: "มิ.ย. 2569" })).toEqual({
+  it("carries the round's own month for a member payroll actually failed to deduct", () => {
+    expect(deductionSettled({ period: "0669", label: "มิ.ย. 2569" }, "uncollected")).toEqual({
       match: "settled",
       outstanding: 0,
       period: "0669",
       label: "มิ.ย. 2569",
     });
   });
+
+  it("does not call it settled for a member still รอผลการหัก, or one payroll collected", () => {
+    // 25823: still awaiting, with a real ฿30,000 transfer the round had
+    // already matched by account and amount — the label read
+    // "เก็บไม่ได้ กันยายน 2569 ชำระแล้ว" as though the deduction had already
+    // failed, when nothing had been decided yet.
+    expect(deductionSettled({ period: "0969", label: "ก.ย. 2569" }, "awaiting")).toEqual({
+      match: "counted",
+      outstanding: 0,
+      period: "0969",
+      label: "ก.ย. 2569",
+      deductionResult: "awaiting",
+    });
+    expect(deductionSettled({ period: "0969", label: "ก.ย. 2569" }, "collected")).toMatchObject({
+      match: "counted",
+      deductionResult: "collected",
+    });
+  });
 });
 
 describe("describeDeductionHint", () => {
   it("says a settled line was already paid, not what is outstanding", () => {
-    const text = describeDeductionHint(deductionSettled({ period: "0669", label: "มิ.ย. 2569" }));
+    const text = describeDeductionHint(deductionSettled({ period: "0669", label: "มิ.ย. 2569" }, "uncollected"));
     expect(text).toContain("มิ.ย. 2569");
     expect(text).toContain("ชำระแล้ว");
+  });
+
+  it("says a counted line is only counted, not settled, and names why", () => {
+    const awaiting = describeDeductionHint(
+      deductionSettled({ period: "0969", label: "ก.ย. 2569" }, "awaiting")
+    );
+    expect(awaiting).toContain("ก.ย. 2569");
+    expect(awaiting).toContain("รอผลการหัก");
+    expect(awaiting).not.toContain("เก็บไม่ได้");
+
+    const collected = describeDeductionHint(
+      deductionSettled({ period: "0969", label: "ก.ย. 2569" }, "collected")
+    );
+    expect(collected).toContain("หักเงินเดือนได้");
+    expect(collected).not.toContain("เก็บไม่ได้");
   });
 
 

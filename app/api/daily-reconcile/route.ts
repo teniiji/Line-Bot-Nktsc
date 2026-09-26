@@ -201,7 +201,7 @@ export async function GET(request: NextRequest) {
         latestRound
           ? prisma.statementMember.findMany({
               where: { roundId: latestRound.id, memberNumber: { in: numbersOnPage } },
-              select: { memberNumber: true, amountDue: true, amountPaid: true },
+              select: { memberNumber: true, amountDue: true, amountPaid: true, deductionResult: true },
             })
           : Promise.resolve([]),
       ])
@@ -266,7 +266,7 @@ export async function GET(request: NextRequest) {
       deduction:
         latestRound && !slip
           ? isSettledByRound(line.senderAccount, line.amount)
-            ? deductionSettled(latestRound)
+            ? deductionSettled(latestRound, owedByNumber.get(key)?.deductionResult ?? "uncollected")
             : deductionHint(line.amount, (() => {
                 const owed = owedByNumber.get(key);
                 return owed

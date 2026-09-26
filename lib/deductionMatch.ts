@@ -28,16 +28,19 @@ export interface OutstandingDeduction {
   amountPaid: number;
 }
 
-export type DeductionMatch = "exact" | "short" | "over" | "settled";
+export type DeductionMatch = "exact" | "short" | "over" | "settled" | "counted";
 
 export interface DeductionHint {
   match: DeductionMatch;
   // What was still owed when the round was last updated. Always 0 for
-  // "settled" — there is nothing left to compare.
+  // "settled" and "counted" — there is nothing left to compare.
   outstanding: number;
   // The round it belongs to, so the column can name the month.
   period: string;
   label: string;
+  // Only set for "counted": what the round currently makes of this member,
+  // so the label can say why this is not — or not yet — "เก็บไม่ได้ … ชำระแล้ว".
+  deductionResult?: string;
 }
 
 // Money is equal when it is equal to the satang. Two figures a rounding error
@@ -77,6 +80,16 @@ export function describeDeductionHint(hint: DeductionHint): string {
   const month = hint.label || hint.period;
   if (hint.match === "exact") return `ตรงยอดเก็บไม่ได้ ${month}`;
   if (hint.match === "settled") return `เก็บไม่ได้ ${month} ชำระแล้ว`;
+  if (hint.match === "counted") {
+    // "เก็บไม่ได้ … ชำระแล้ว" presupposes payroll already failed to deduct
+    // this member — true for "settled" above, not for these two: 25823 was
+    // still on รอผลการหัก with a real ฿30,000 transfer the round had already
+    // matched by account and amount, and the label read "เก็บไม่ได้ … ชำระแล้ว"
+    // as though that had been decided.
+    if (hint.deductionResult === "awaiting") return `ยอดนี้นับในรอบ ${month} แล้ว — สมาชิกยังรอผลการหัก`;
+    if (hint.deductionResult === "collected") return `ยอดนี้นับในรอบ ${month} แล้ว — หน่วยงานหักเงินเดือนได้`;
+    return `ยอดนี้นับในรอบ ${month} แล้ว`;
+  }
   if (hint.match === "short") return `เก็บไม่ได้ ${month} ยังไม่ครบ`;
   return `เก็บไม่ได้ ${month} เกินยอด`;
 }
@@ -95,6 +108,19 @@ export function describeDeductionHint(hint: DeductionHint): string {
 // already counted" — because a coincidence (a member's balance happens to
 // reach zero the same day from some other, unrelated transfer) must not be
 // reported as this line having been the one that paid it.
-export function deductionSettled(round: { period: string; label: string }): DeductionHint {
-  return { match: "settled", outstanding: 0, period: round.period, label: round.label };
+//
+// The round counts a matching transfer for every member on it, whatever
+// their deductionResult — matching by account and amount does not wait to
+// hear whether payroll succeeded. "เก็บไม่ได้ … ชำระแล้ว" is only true once
+// that has actually failed (uncollected); an awaiting or collected member's
+// line is said differently, so staff are not told a failed deduction was
+// paid off when nothing has failed yet.
+export function deductionSettled(
+  round: { period: string; label: string },
+  deductionResult: string
+): DeductionHint {
+  if (deductionResult === "uncollected") {
+    return { match: "settled", outstanding: 0, period: round.period, label: round.label };
+  }
+  return { match: "counted", outstanding: 0, period: round.period, label: round.label, deductionResult };
 }
