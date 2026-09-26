@@ -6,6 +6,8 @@ import {
   splitProblem,
   splitSourceOf,
   suggestedPayerName,
+  unitMatchMode,
+  unitMemberProblem,
 } from "../lib/unitPayer";
 
 describe("payerKey", () => {
@@ -104,5 +106,21 @@ describe("isUnitPayerLine", () => {
     expect(isUnitPayerLine("TR fr 4131150565")).toBe(false);
     expect(isUnitPayerLine("0012/345")).toBe(false);
     expect(isUnitPayerLine("")).toBe(false);
+  });
+});
+
+describe("unitMatchMode", () => {
+  it("recognises a one-member unit on its own and lists a larger one to divide", () => {
+    expect(unitMatchMode(0)).toBe("none");
+    expect(unitMatchMode(1)).toBe("auto");
+    expect(unitMatchMode(3)).toBe("split");
+  });
+});
+
+describe("unitMemberProblem", () => {
+  it("refuses a malformed number and one already on the unit, however written", () => {
+    expect(unitMemberProblem("abc", [])).not.toBeNull();
+    expect(unitMemberProblem("031132", ["31132"])).toBe("สมาชิกคนนี้อยู่ในหน่วยงานนี้แล้ว");
+    expect(unitMemberProblem("31133", ["31132"])).toBeNull();
   });
 });

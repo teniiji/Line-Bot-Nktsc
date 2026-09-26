@@ -105,3 +105,21 @@ export function isUnitPayerLine(description: string | null | undefined): boolean
     .map((part) => part.trim())
     .some((part) => part.length >= 3 && !/^[\d\s-]+$/.test(part) && /[A-Za-z฀-๿]/.test(part));
 }
+
+// What the daily page does with a unit's next transfer, by how many members
+// it is known to pay for — said on the unit's own row so staff can see why a
+// line was or was not recognised.
+export type UnitMatchMode = "none" | "auto" | "split";
+
+export function unitMatchMode(memberCount: number): UnitMatchMode {
+  if (memberCount <= 0) return "none";
+  return memberCount === 1 ? "auto" : "split";
+}
+
+// Why a member cannot be added to a unit by hand. Null when they can.
+export function unitMemberProblem(memberNumber: string, existing: string[]): string | null {
+  const key = memberNumberKey(memberNumber);
+  if (!key || !/^\d+$/.test(key)) return "เลขสมาชิกไม่ถูกต้อง";
+  if (existing.some((n) => (memberNumberKey(n) ?? n) === key)) return "สมาชิกคนนี้อยู่ในหน่วยงานนี้แล้ว";
+  return null;
+}

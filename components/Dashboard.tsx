@@ -29,6 +29,7 @@ import OrganizationUnitsPanel from "@/components/OrganizationUnitsPanel";
 import StatementReconcilePanel from "@/components/StatementReconcilePanel";
 import CarriedDebtsPanel from "@/components/CarriedDebtsPanel";
 import DailyReconcilePanel from "@/components/DailyReconcilePanel";
+import UnitPayersPanel from "@/components/UnitPayersPanel";
 import LineGroupsPanel from "@/components/LineGroupsPanel";
 import MemberBankAccountsPanel from "@/components/MemberBankAccountsPanel";
 
@@ -304,7 +305,12 @@ export default function Dashboard() {
           {
             id: "daily",
             label: "เงินเข้าประจำวัน",
-            content: <DailyReconcilePanel />,
+            content: (
+              <div className="space-y-6">
+                <DailyReconcilePanel />
+                <UnitPayersPanel />
+              </div>
+            ),
           },
           {
             id: "service-requests",
