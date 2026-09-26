@@ -309,6 +309,10 @@ export interface RecordedOutsideRow {
   memberNumber: string;
   amount: number;
   date: string;
+  lineId: string;
+  // Already paying carried debts (ชำระข้ามเดือน), and what is left for one.
+  carried: number;
+  available: number;
 }
 
 // A transfer that matched nobody on the round's list — money that arrived

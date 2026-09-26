@@ -9,6 +9,8 @@ const recorded = (over: Partial<RecordedLine> = {}): RecordedLine => ({
   createdAt: new Date("2026-09-25T10:09:00Z"),
   lineFingerprint: "413|2026-09-25|edu-coun|700",
   senderAccount: null,
+  lineId: "l1",
+  carried: 0,
   ...over,
 });
 
@@ -70,6 +72,20 @@ describe("unbridgedRecordings", () => {
 
   it("rounds the amount to the satang", () => {
     expect(unbridgedRecordings([recorded({ amount: 700.001 })], [])[0].amount).toBe(700);
+  });
+
+  it("offers the whole line to an earlier month's debt while nothing has taken it", () => {
+    const [row] = unbridgedRecordings([recorded()], []);
+    expect(row).toMatchObject({ lineId: "l1", carried: 0, available: 700 });
+  });
+
+  it("says how much already pays a carried debt, and leaves only the rest", () => {
+    // 31132: ✅ หักได้ครบ for September, ⚠️ ค้างข้ามเดือน ฿700 from before —
+    // the ฿700 recorded on the daily page is what pays that.
+    const [row] = unbridgedRecordings([recorded({ carried: 700 })], []);
+    expect(row).toMatchObject({ carried: 700, available: 0 });
+    const [part] = unbridgedRecordings([recorded({ carried: 200 })], []);
+    expect(part.available).toBe(500);
   });
 
   it("keeps more than one recording for the same member apart", () => {
