@@ -123,3 +123,87 @@ export function unitMemberProblem(memberNumber: string, existing: string[]): str
   if (existing.some((n) => (memberNumberKey(n) ?? n) === key)) return "สมาชิกคนนี้อยู่ในหน่วยงานนี้แล้ว";
   return null;
 }
+
+// Which member each of a unit's lines is, when the unit pays for its people
+// one transfer each (UdonThani Prim/… : seven lines at 10:40, one per
+// member). The lines name no account and all read alike, so the amount is the
+// only thing that tells them apart — matched against what each member was
+// paid last time.
+//
+// Only a match with nothing to confuse it is taken: one line of that amount
+// on the day, and one member the unit last paid that amount. Two members on
+// ฿13,220, or two ฿13,220 lines, and nobody is named — a wrong member is
+// worse than none, and staff are shown the line to decide. A unit known to
+// pay for one member names them for its only line of the day whatever the
+// amount, since a salary deduction changes month to month.
+export interface UnitLine {
+  id: string;
+  amount: number;
+  day: string;
+  // The line's month (MMYY), for this month's amounts below.
+  period?: string;
+}
+
+export interface KnownMember {
+  memberNumber: string;
+  lastAmount: number | null;
+  // What the round for each month says this member's unit should send for
+  // them — the ยอดแจ้งหัก, and the หักไม่ได้ balance where the deduction
+  // failed. A salary deduction changes month to month; this month's figure
+  // is the better guide when it does, last month's the fallback when the
+  // round does not know the member.
+  current?: Record<string, number[]>;
+}
+
+const sameMoney = (a: number, b: number) => Math.abs(a - b) < 0.01;
+
+export function matchUnitLines(lines: UnitLine[], members: KnownMember[]): Map<string, string> {
+  const out = new Map<string, string>();
+  if (members.length === 0) return out;
+  const byDay = new Map<string, UnitLine[]>();
+  for (const line of lines) byDay.set(line.day, [...(byDay.get(line.day) ?? []), line]);
+
+  for (const dayLines of byDay.values()) {
+    if (members.length === 1 && dayLines.length === 1) {
+      out.set(dayLines[0].id, members[0].memberNumber);
+      continue;
+    }
+    // Two passes: this month's amounts first, then last month's for what is
+    // left. A member named in the first is not offered again in the second.
+    const taken = new Set<string>();
+    const passes: ((m: KnownMember, line: UnitLine) => boolean)[] = [
+      (m, line) => (m.current?.[line.period ?? ""] ?? []).some((a) => sameMoney(a, line.amount)),
+      (m, line) => m.lastAmount !== null && sameMoney(m.lastAmount, line.amount),
+    ];
+    for (const fits of passes) {
+      const open = dayLines.filter((l) => !out.has(l.id));
+      for (const line of open) {
+        const who = members.filter((m) => !taken.has(m.memberNumber) && fits(m, line));
+        if (who.length !== 1) continue;
+        // Another open line of the day this member would fit just as well
+        // makes it a coin toss between the two lines.
+        const rivals = open.filter((l) => l.id !== line.id && fits(who[0], l));
+        if (rivals.length > 0) continue;
+        out.set(line.id, who[0].memberNumber);
+        taken.add(who[0].memberNumber);
+      }
+    }
+  }
+  return out;
+}
+
+// A member of the round owing exactly what a unit's line brings, offered to
+// staff as a guess when nothing else names the line: the round's หักไม่ได้
+// balance for a member whose deduction failed, or what payroll was asked to
+// take for one still awaiting the result. Named only when exactly one member
+// fits — a common amount matching several is no guide at all.
+export interface OwingMember {
+  memberNumber: string;
+  owed: number;
+}
+
+export function soleOwing(amount: number, owing: OwingMember[]): OwingMember | null {
+  const fits = owing.filter((m) => m.owed > 0 && sameMoney(m.owed, amount));
+  const distinct = [...new Map(fits.map((m) => [memberNumberKey(m.memberNumber) ?? m.memberNumber, m])).values()];
+  return distinct.length === 1 ? distinct[0] : null;
+}

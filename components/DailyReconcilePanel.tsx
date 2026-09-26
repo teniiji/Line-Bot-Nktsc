@@ -2146,12 +2146,16 @@ const ActionForm = ({
   targetId,
   amount,
   senderAccount,
+  picks,
 }: {
   actions: RecordActions;
   mode: "bind" | "record";
   targetId: string;
   amount: number;
   senderAccount: string | null;
+  // A known unit's members, for its line the amount could not name: one
+  // click fills the number. Closest amount first.
+  picks?: { memberNumber: string; name: string | null; amount: number | null }[] | null;
 }) => {
   const detailMissing = categoryNeedsDetail(actions.category) && !actions.note.trim();
   const ready =
@@ -2162,8 +2166,34 @@ const ActionForm = ({
     else if (mode === "record") actions.onRecord(targetId);
   };
 
+  const sortedPicks = [...(picks ?? [])].sort(
+    (a, b) =>
+      Math.abs((a.amount ?? Infinity) - amount) - Math.abs((b.amount ?? Infinity) - amount)
+  );
+
   return (
     <div className="flex flex-wrap items-center gap-2 text-sm">
+      {mode === "record" && sortedPicks.length > 0 && (
+        <div className="w-full flex flex-wrap items-center gap-1.5 text-xs">
+          <span className="text-slate-500">🏢 สมาชิกของหน่วยงานนี้:</span>
+          {sortedPicks.map((p) => (
+            <button
+              key={p.memberNumber}
+              type="button"
+              onClick={() => actions.setMemberNumber(p.memberNumber)}
+              className={`border rounded-full px-2 py-0.5 hover:bg-sky-50 ${
+                actions.memberNumber.trim() === p.memberNumber
+                  ? "border-sky-500 bg-sky-50 text-sky-800"
+                  : "border-slate-300 text-slate-700"
+              }`}
+              title="เลือกสมาชิกคนนี้ — ยอดในวงเล็บคือยอดแจ้งหักเดือนนี้ หรือยอดที่หน่วยงานโอนให้ครั้งก่อน"
+            >
+              <span className="num">{p.memberNumber}</span> {p.name ?? ""}
+              {p.amount != null && <span className="text-slate-400"> ({formatAmount(p.amount)})</span>}
+            </button>
+          ))}
+        </div>
+      )}
       <span className="text-slate-500">
         {mode === "bind"
           ? `เลขบัญชี ${senderAccount} เป็นของสมาชิกเลข`
@@ -2355,6 +2385,16 @@ const DepositTable = ({
               </td>
               <td className="px-2 py-1.5">
                 <Payer deposit={deposit} />
+                {!deposit.memberNumber && deposit.suggestion && (
+                  <span
+                    className="block text-xs text-sky-700"
+                    title="เดาจากยอด — สมาชิกคนเดียวในรอบที่ค้างยอดนี้พอดี ตรวจก่อนบันทึก บันทึกแล้วเดือนหน้าระบบจะจำยอดนี้ของหน่วยงานให้เอง"
+                  >
+                    💡 ยอดตรงกับ <span className="num">{deposit.suggestion.memberNumber}</span>{" "}
+                    {deposit.suggestion.name ?? ""} (ค้างรอบ {deposit.suggestion.roundLabel}{" "}
+                    {formatAmount(deposit.suggestion.owed)})
+                  </span>
+                )}
               </td>
               <td className="px-2 py-1.5 text-slate-500 whitespace-nowrap">
                 {CHANNEL_LABELS[deposit.channel] ?? deposit.channel}
@@ -2386,7 +2426,7 @@ const DepositTable = ({
                       onClick={() =>
                         actions.open(
                           { id: deposit.id, kind: "record", scope: "deposits" },
-                          deposit.memberNumber
+                          deposit.memberNumber ?? deposit.suggestion?.memberNumber ?? null
                         )
                       }
                       className="text-slate-900 hover:underline"
@@ -2433,6 +2473,7 @@ const DepositTable = ({
                     targetId={deposit.id}
                     amount={deposit.amount}
                     senderAccount={deposit.senderAccount}
+                    picks={deposit.unitPicks}
                   />
                   <p className="text-xs text-slate-500 mt-2">
                     {open === "bind"

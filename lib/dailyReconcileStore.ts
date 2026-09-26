@@ -152,8 +152,8 @@ export async function loadReconciliation(
 
   // A unit's line names no account; the unit itself may still be known to
   // pay for one member.
-  const unitOwners = await loadUnitOwners(deposits);
+  const { owners: unitOwners, picks: unitPicks } = await loadUnitOwners(deposits);
   const result = reconcileDay(deposits, slipRecords, accountOwners, unitOwners);
 
-  return { lines, slips, accountOwners, unitOwners, result, splits };
+  return { lines, slips, accountOwners, unitOwners, unitPicks, result, splits };
 }

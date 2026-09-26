@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import type { DepositLine, SlipRecord } from "@/lib/dailyReconcile";
 import { loadReconciliation } from "@/lib/dailyReconcileStore";
-import { isUnitPayerLine, payerKey } from "@/lib/unitPayer";
+import { isUnitPayerLine, payerKey, soleOwing } from "@/lib/unitPayer";
 import { OTHER_CHANNEL } from "@/lib/statementLines";
 import { statementLineStatus } from "@/lib/statementDayView";
 import { memberNumberKey } from "@/lib/memberNumber";
@@ -59,7 +59,7 @@ export async function GET(request: NextRequest) {
   }
   const end = new Date(lastDay.getTime() + DAY_MS);
 
-  const { lines, slips, accountOwners, unitOwners, result, splits } = await loadReconciliation(start, end);
+  const { lines, slips, accountOwners, unitOwners, unitPicks, result, splits } = await loadReconciliation(start, end);
   // Whose a line is, as far as anything knows: the paying account's owner,
   // or, for a unit's line naming no account, the one member it pays for.
   const ownerOf = (line: { id: string; senderAccount: string | null }) =>
@@ -284,6 +284,58 @@ export async function GET(request: NextRequest) {
 
   const unclaimedSlips = result.slipsWithoutMoney.filter((slip) => inRange(slip.date));
 
+  // A unit's line nothing names yet — one of a unit's one-per-member
+  // transfers, the first month it is seen — offered to staff as the one
+  // member of the newest round owing exactly that amount (lib/unitPayer.ts
+  // soleOwing). A guess to check, prefilled into "บันทึกรายการ"; recording it
+  // is what teaches the unit that member for next month.
+  const unnamedUnitLines = result.depositsWithoutSlip.filter(
+    (d) => !ownerOf(d) && !d.senderAccount && isUnitPayerLine(d.description)
+  );
+  const suggestionOf = new Map<string, { memberNumber: string; name: string | null; owed: number; roundLabel: string }>();
+  if (latestRound && unnamedUnitLines.length) {
+    const amounts = [...new Set(unnamedUnitLines.map((d) => d.amount))].slice(0, 200);
+    const near = (a: number) => ({ gte: a - 0.005, lte: a + 0.005 });
+    const rows = await prisma.statementMember.findMany({
+      where: {
+        roundId: latestRound.id,
+        OR: amounts.flatMap((a) => [{ amountDue: near(a) }, { expectedAmount: near(a) }]),
+      },
+      select: {
+        memberNumber: true,
+        name: true,
+        deductionResult: true,
+        status: true,
+        amountDue: true,
+        amountPaid: true,
+        expectedAmount: true,
+      },
+    });
+    const owing = rows
+      .map((m) => ({
+        memberNumber: m.memberNumber,
+        name: m.name,
+        owed:
+          m.deductionResult === "uncollected" && m.status === "unpaid"
+            ? Math.round((m.amountDue - m.amountPaid) * 100) / 100
+            : m.deductionResult === "awaiting" && m.status === "awaiting"
+              ? (m.expectedAmount ?? 0)
+              : 0,
+      }))
+      .filter((m) => m.owed > 0);
+    for (const line of unnamedUnitLines) {
+      const hit = soleOwing(line.amount, owing);
+      if (!hit) continue;
+      const row = owing.find((m) => m.memberNumber === hit.memberNumber)!;
+      suggestionOf.set(line.id, {
+        memberNumber: hit.memberNumber,
+        name: row.name ?? null,
+        owed: hit.owed,
+        roundLabel: latestRound.label,
+      });
+    }
+  }
+
   // Lines divided among several members, with who got what.
   const splitNumbers = [...new Set([...splits.values()].flat().map((p) => p.memberNumber))];
   const splitNames = splitNumbers.length
@@ -329,7 +381,12 @@ export async function GET(request: NextRequest) {
       minutesApart: pair.minutesApart,
     })),
     slipsWithoutMoney: unclaimedSlips.map(describeSlip),
-    depositsWithoutSlip: result.depositsWithoutSlip.map(describeDeposit),
+    depositsWithoutSlip: result.depositsWithoutSlip.map((d) => ({
+      ...describeDeposit(d),
+      suggestion: suggestionOf.get(d.id) ?? null,
+      // The unit's members to pick from, for a unit line nothing could name.
+      unitPicks: unitPicks.get(d.id) ?? null,
+    })),
     splitDeposits,
     otherLines: lines
       .filter((line) => line.channel === OTHER_CHANNEL)
