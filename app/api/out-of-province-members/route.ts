@@ -17,6 +17,16 @@ export async function GET() {
     : [];
   const rosterOf = new Map(roster.map((r) => [r.memberNumber, r]));
 
+  const links = await prisma.unitPayerOffice.findMany();
+  const payers = links.length
+    ? await prisma.unitPayer.findMany({
+        where: { id: { in: links.map((l) => l.payerId) } },
+        select: { id: true, name: true },
+      })
+    : [];
+  const payerName = new Map(payers.map((p) => [p.id, p.name]));
+  const linkOf = new Map(links.map((l) => [l.deductingUnit, { id: l.payerId, name: payerName.get(l.payerId) ?? "" }]));
+
   const units = new Map<string, number>();
   for (const m of members) units.set(m.deductingUnit, (units.get(m.deductingUnit) ?? 0) + 1);
 
@@ -33,7 +43,7 @@ export async function GET() {
       updatedAt: m.updatedAt,
     })),
     units: [...units]
-      .map(([name, count]) => ({ name, count }))
+      .map(([name, count]) => ({ name, count, linkedTo: linkOf.get(name) ?? null }))
       .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name, "th")),
   });
 }

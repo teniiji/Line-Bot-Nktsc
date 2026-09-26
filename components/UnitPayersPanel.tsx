@@ -15,6 +15,12 @@ interface UnitMember {
   memberNumber: string;
   name: string | null;
   lastAmount: number | null;
+  viaOffice: string | null;
+}
+
+interface OfficeRef {
+  name: string;
+  count: number;
 }
 
 interface Unit {
@@ -23,6 +29,9 @@ interface Unit {
   name: string;
   mode: "none" | "auto" | "split";
   members: UnitMember[];
+  // Out-of-province offices linked to this unit (lib/unitPayerOffices.ts).
+  offices: OfficeRef[];
+  suggestions: { office: string; overlap: number; size: number }[];
 }
 
 const MODE_TEXT: Record<Unit["mode"], { label: string; className: string; title: string }> = {
@@ -60,6 +69,8 @@ export default function UnitPayersPanel() {
   const [newDescription, setNewDescription] = useState("");
   const [newName, setNewName] = useState("");
   const [pendingDelete, setPendingDelete] = useState<Unit | null>(null);
+  const [officeChoices, setOfficeChoices] = useState<(OfficeRef & { linkedTo: string | null })[]>([]);
+  const [officePick, setOfficePick] = useState("");
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -72,6 +83,7 @@ export default function UnitPayersPanel() {
         return;
       }
       setUnits(body.data ?? []);
+      setOfficeChoices(body.offices ?? []);
     } finally {
       setLoading(false);
     }
@@ -133,6 +145,29 @@ export default function UnitPayersPanel() {
       );
       setAddMember("");
       setAddAmount("");
+    }
+  };
+
+  const linkOffice = async (unit: Unit, office: string) => {
+    const body = await call(`/api/unit-payers/${unit.id}/offices`, {
+      method: "POST",
+      body: JSON.stringify({ office }),
+    });
+    if (body) {
+      setOfficePick("");
+      setNotice(`ผูก "${office}" กับ ${unit.name} แล้ว — เพิ่มสมาชิก ${body.added} คนจากรายชื่อต่างจังหวัด`);
+    }
+  };
+
+  const unlinkOffice = async (unit: Unit, office: string) => {
+    const body = await call(`/api/unit-payers/${unit.id}/offices?office=${encodeURIComponent(office)}`, {
+      method: "DELETE",
+    });
+    if (body) {
+      setNotice(
+        `ยกเลิกการผูก "${office}" แล้ว — เอาสมาชิกที่มาจากการผูกออก ${body.removed} คน ` +
+          "(คนที่เคยบันทึกยอดไว้ยังอยู่)"
+      );
     }
   };
 
@@ -228,6 +263,30 @@ export default function UnitPayersPanel() {
                             <>
                               <div className="font-medium">{unit.name}</div>
                               <div className="font-mono text-xs text-slate-400">{unit.key}</div>
+                              {unit.offices.length > 0 && (
+                                <div className="mt-1 flex flex-wrap gap-1">
+                                  {unit.offices.map((o) => (
+                                    <span
+                                      key={o.name}
+                                      className="text-xs bg-violet-50 text-violet-700 border border-violet-200 rounded-full px-2 py-0.5"
+                                      title="ผูกกับหน่วยงานหักเงินในรายชื่อสมาชิกย้ายไปต่างจังหวัด"
+                                    >
+                                      🗺️ {o.name} · {o.count} คน
+                                    </span>
+                                  ))}
+                                </div>
+                              )}
+                              {unit.offices.length === 0 && unit.suggestions.length > 0 && (
+                                <button
+                                  onClick={() => linkOffice(unit, unit.suggestions[0].office)}
+                                  disabled={busy}
+                                  className="mt-1 text-xs text-violet-700 hover:underline disabled:opacity-50 text-left"
+                                  title="สมาชิกที่ระบบจำไว้ของหน่วยงานนี้ อยู่ในหน่วยงานหักเงินนี้ในรายชื่อต่างจังหวัด — กดเพื่อผูกและเพิ่มสมาชิกทั้งหน่วย"
+                                >
+                                  💡 น่าจะเป็น "{unit.suggestions[0].office}" (สมาชิกตรงกัน {unit.suggestions[0].overlap} จาก{" "}
+                                  {unit.suggestions[0].size} คน) — กดเพื่อผูก
+                                </button>
+                              )}
                             </>
                           )}
                         </td>
@@ -305,6 +364,14 @@ export default function UnitPayersPanel() {
                                         <td className="py-1.5 num">{m.memberNumber}</td>
                                         <td className="py-1.5">
                                           {m.name ?? <span className="text-amber-700">ไม่พบในทะเบียน</span>}
+                                          {m.viaOffice && (
+                                            <span
+                                              className="ml-1.5 text-xs text-violet-700"
+                                              title="เพิ่มจากการผูกหน่วยงานหักเงินต่างจังหวัด"
+                                            >
+                                              🗺️ {m.viaOffice}
+                                            </span>
+                                          )}
                                         </td>
                                         <td className="py-1.5 text-right">
                                           {edit !== undefined ? (
@@ -374,6 +441,65 @@ export default function UnitPayersPanel() {
                                 </tbody>
                               </table>
                             )}
+                            <div className="border-t border-slate-200 pt-2 space-y-1.5">
+                              <p className="text-xs text-slate-500">
+                                🗺️ หน่วยงานหักเงินต่างจังหวัด — ผูกแล้วสมาชิกทุกคนของหน่วยงานนั้นในรายชื่อ
+                                "สมาชิกย้ายไปต่างจังหวัด" จะถูกเพิ่มเข้าหน่วยงานนี้ และอัปเดตตามเมื่อนำเข้ารายชื่อใหม่
+                                (ผูกได้หลายชื่อ ถ้าในไฟล์เขียนชื่อหน่วยต่างกัน)
+                              </p>
+                              <div className="flex flex-wrap items-center gap-1.5">
+                                {unit.offices.map((o) => (
+                                  <span
+                                    key={o.name}
+                                    className="inline-flex items-center gap-1 text-xs bg-violet-50 text-violet-700 border border-violet-200 rounded-full pl-2 pr-1 py-0.5"
+                                  >
+                                    {o.name} · {o.count} คน
+                                    <button
+                                      onClick={() => unlinkOffice(unit, o.name)}
+                                      disabled={busy}
+                                      className="px-1 text-violet-500 hover:text-red-700 disabled:opacity-40"
+                                      title="ยกเลิกการผูก"
+                                    >
+                                      ✕
+                                    </button>
+                                  </span>
+                                ))}
+                                {unit.suggestions.map((sg) => (
+                                  <button
+                                    key={sg.office}
+                                    onClick={() => linkOffice(unit, sg.office)}
+                                    disabled={busy}
+                                    className="text-xs border border-dashed border-violet-300 text-violet-700 rounded-full px-2 py-0.5 hover:bg-violet-50 disabled:opacity-50"
+                                    title={`สมาชิกของหน่วยงานนี้ ${sg.overlap} คน อยู่ใน "${sg.office}"`}
+                                  >
+                                    💡 ผูก {sg.office} ({sg.overlap}/{sg.size})
+                                  </button>
+                                ))}
+                                <select
+                                  value={officePick}
+                                  onChange={(e) => setOfficePick(e.target.value)}
+                                  className="border border-slate-300 rounded px-2 py-1 text-xs max-w-[260px]"
+                                >
+                                  <option value="">
+                                    {officeChoices.length === 0
+                                      ? "— ยังไม่มีรายชื่อต่างจังหวัด —"
+                                      : "เลือกหน่วยงานหักเงิน…"}
+                                  </option>
+                                  {officeChoices.map((o) => (
+                                    <option key={o.name} value={o.name} disabled={o.linkedTo !== null}>
+                                      {o.name} ({o.count} คน){o.linkedTo ? ` — ผูกกับ ${o.linkedTo} แล้ว` : ""}
+                                    </option>
+                                  ))}
+                                </select>
+                                <button
+                                  onClick={() => linkOffice(unit, officePick)}
+                                  disabled={busy || !officePick}
+                                  className="text-xs text-white bg-violet-700 rounded px-2.5 py-1 disabled:opacity-50"
+                                >
+                                  ผูก
+                                </button>
+                              </div>
+                            </div>
                             <div className="flex flex-wrap items-center gap-2 pt-1">
                               <span className="text-xs text-slate-500">เพิ่มสมาชิก</span>
                               <input

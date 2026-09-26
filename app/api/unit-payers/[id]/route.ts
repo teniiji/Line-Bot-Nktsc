@@ -21,6 +21,7 @@ export async function DELETE(_request: NextRequest, { params }: { params: { id: 
   if (!payer) return NextResponse.json({ error: "ไม่พบหน่วยงานนี้" }, { status: 404 });
   await prisma.$transaction([
     prisma.unitPayerMember.deleteMany({ where: { payerId: payer.id } }),
+    prisma.unitPayerOffice.deleteMany({ where: { payerId: payer.id } }),
     prisma.statementLineSplit.updateMany({ where: { payerId: payer.id }, data: { payerId: null } }),
     prisma.unitPayer.delete({ where: { id: payer.id } }),
   ]);

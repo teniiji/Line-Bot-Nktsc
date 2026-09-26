@@ -24,6 +24,7 @@ interface ImportResult {
   moved: number;
   unchanged: number;
   unconfirmed: number;
+  addedToUnits: number;
   problemCount: number;
   problems: { rowNumber: number; reason: string }[];
   unknownMemberCount: number;
@@ -33,7 +34,9 @@ interface ImportResult {
 export default function OutOfProvincePanel() {
   const [open, setOpen] = useState(false);
   const [members, setMembers] = useState<Member[]>([]);
-  const [units, setUnits] = useState<{ name: string; count: number }[]>([]);
+  const [units, setUnits] = useState<
+    { name: string; count: number; linkedTo: { id: string; name: string } | null }[]
+  >([]);
   const [unitFilter, setUnitFilter] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(false);
@@ -128,7 +131,8 @@ export default function OutOfProvincePanel() {
             สมาชิกที่ย้ายไปรับราชการต่างจังหวัด และ<strong>หน่วยงานหักเงิน</strong>ที่นั่น (เช่น อุดรธานี 1,
             ศธจ.นนทบุรี) ซึ่งหักเงินเดือนแล้วโอนมาให้สหกรณ์ · นำเข้าจากไฟล์ Excel ที่มีคอลัมน์{" "}
             <strong>เลขสมาชิก</strong> และ <strong>หน่วยงานหักเงิน</strong> — ถ้าไฟล์มีคอลัมน์{" "}
-            <strong>ยืนยัน</strong> จะนำเข้าเฉพาะแถวที่ติ๊ก ✓
+            <strong>ยืนยัน</strong> จะนำเข้าเฉพาะแถวที่ติ๊ก ✓ · ผูกหน่วยงานหักเงินกับชื่อหน่วยงานในสเตทเมนต์ได้ที่กล่อง
+            "หน่วยงานที่โอนแทนสมาชิก" (🔗 = ผูกแล้ว)
           </p>
         </div>
         <button
@@ -188,6 +192,9 @@ export default function OutOfProvincePanel() {
             <div className="text-sm text-green-800 bg-green-50 rounded px-3 py-2">
               นำเข้าแล้ว {result.imported} คน — เพิ่มใหม่ {result.added} · ย้ายหน่วยงาน {result.moved} · เหมือนเดิม{" "}
               {result.unchanged}
+              {result.addedToUnits > 0 && (
+                <span> · เพิ่มเข้าหน่วยงานที่ผูกไว้ {result.addedToUnits} คน</span>
+              )}
               {result.unconfirmed > 0 && (
                 <span className="text-slate-600"> · ข้าม {result.unconfirmed} แถวที่ยังไม่ติ๊กยืนยัน</span>
               )}
@@ -231,6 +238,9 @@ export default function OutOfProvincePanel() {
                   }`}
                 >
                   {u.name} {u.count}
+                  {u.linkedTo && (
+                    <span title={`ผูกกับหน่วยงานในสเตทเมนต์: ${u.linkedTo.name}`}> 🔗</span>
+                  )}
                 </button>
               ))}
             </div>
