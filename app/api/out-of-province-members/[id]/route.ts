@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { syncOfficeMembers } from "@/lib/unitPayerOfficeStore";
 
 export const dynamic = "force-dynamic";
 
@@ -8,5 +9,7 @@ export async function DELETE(_request: NextRequest, { params }: { params: { id: 
   if (removed.count === 0) {
     return NextResponse.json({ error: "ไม่พบรายการนี้" }, { status: 404 });
   }
+  // Off the unit their office is linked to as well, unless recorded since.
+  await syncOfficeMembers();
   return NextResponse.json({ ok: true });
 }

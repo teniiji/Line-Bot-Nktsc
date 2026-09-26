@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { checkUploadedFile, describeReadError, readFirstSheetRows } from "@/lib/excelUpload";
+import { syncOfficeMembers } from "@/lib/unitPayerOfficeStore";
 import {
   OutOfProvinceSheetError,
   dedupeByMember,
@@ -109,6 +110,9 @@ export async function POST(request: NextRequest) {
     );
   }
 
+  // Offices already linked to a statement unit pick up their new members.
+  const unitSync = await syncOfficeMembers();
+
   // Not refused — the roster is imported separately and may lag — but a
   // member number nobody recognises is usually a typo, so it is named.
   const inRoster = new Set(roster.map((row) => row.memberNumber));
@@ -120,6 +124,7 @@ export async function POST(request: NextRequest) {
     moved,
     unchanged: incoming.length - added - moved,
     unconfirmed: sheet.unconfirmed,
+    addedToUnits: unitSync.added,
     blankRows: sheet.blankRows,
     problemCount: sheet.problems.length,
     problems: sheet.problems.slice(0, 20),

@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { memberNumberKey } from "@/lib/memberNumber";
 import { isUnitPayerLine, payerKey, suggestedPayerName, unitMatchMode } from "@/lib/unitPayer";
 import { markUnitLines } from "@/lib/unitPayerStore";
+import { officeSuggestions } from "@/lib/unitPayerOffices";
 
 export const dynamic = "force-dynamic";
 
@@ -13,10 +14,16 @@ export const dynamic = "force-dynamic";
 export async function GET(request: NextRequest) {
   const search = new URL(request.url).searchParams.get("search")?.trim().toLowerCase() ?? "";
 
-  const [payers, members] = await Promise.all([
+  const [payers, members, links, officeMembers] = await Promise.all([
     prisma.unitPayer.findMany({ orderBy: { name: "asc" } }),
     prisma.unitPayerMember.findMany({ orderBy: { memberNumber: "asc" } }),
+    prisma.unitPayerOffice.findMany({ orderBy: { deductingUnit: "asc" } }),
+    prisma.outOfProvinceMember.findMany({ select: { memberNumber: true, deductingUnit: true } }),
   ]);
+  const offices = officeMembers.map((m) => ({ memberNumber: m.memberNumber, office: m.deductingUnit }));
+  const linkedOffices = new Set(links.map((l) => l.deductingUnit));
+  const officeSize = new Map<string, number>();
+  for (const m of offices) officeSize.set(m.office, (officeSize.get(m.office) ?? 0) + 1);
   const numbers = [...new Set(members.flatMap((m) => [m.memberNumber, memberNumberKey(m.memberNumber) ?? m.memberNumber]))];
   const roster = numbers.length
     ? await prisma.memberRoster.findMany({
@@ -35,6 +42,7 @@ export async function GET(request: NextRequest) {
           memberNumber: m.memberNumber,
           name: nameOf.get(memberNumberKey(m.memberNumber) ?? m.memberNumber) ?? null,
           lastAmount: m.lastAmount,
+          viaOffice: m.viaOffice,
         }));
       return {
         id: payer.id,
@@ -43,6 +51,14 @@ export async function GET(request: NextRequest) {
         updatedAt: payer.updatedAt,
         mode: unitMatchMode(own.length),
         members: own,
+        offices: links
+          .filter((l) => l.payerId === payer.id)
+          .map((l) => ({ name: l.deductingUnit, count: officeSize.get(l.deductingUnit) ?? 0 })),
+        suggestions: officeSuggestions(
+          own.map((m) => m.memberNumber),
+          offices,
+          linkedOffices
+        ).slice(0, 3),
       };
     })
     .filter(
@@ -50,10 +66,18 @@ export async function GET(request: NextRequest) {
         !search ||
         p.name.toLowerCase().includes(search) ||
         p.key.includes(search) ||
+        p.offices.some((o) => o.name.toLowerCase().includes(search)) ||
         p.members.some((m) => m.memberNumber.includes(search) || (m.name ?? "").toLowerCase().includes(search))
     );
 
-  return NextResponse.json({ data });
+  // Every office on the out-of-province list, for linking by hand.
+  const payerNameOf = new Map(payers.map((p) => [p.id, p.name]));
+  const linkedTo = new Map(links.map((l) => [l.deductingUnit, payerNameOf.get(l.payerId) ?? null]));
+  const officeChoices = [...officeSize]
+    .map(([name, count]) => ({ name, count, linkedTo: linkedTo.get(name) ?? null }))
+    .sort((a, b) => a.name.localeCompare(b.name, "th"));
+
+  return NextResponse.json({ data, offices: officeChoices });
 }
 
 // A unit added ahead of time, from the text its transfers carry on the

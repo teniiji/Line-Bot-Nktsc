@@ -779,6 +779,10 @@ model UnitPayerMember {
   payerId      String
   memberNumber String
   lastAmount   Float?
+  // Set when the member came in with an out-of-province office linked to
+  // this unit (UnitPayerOffice), so unlinking can take back exactly those —
+  // and only while nothing has been recorded for them (lastAmount null).
+  viaOffice    String?
   updatedAt    DateTime @updatedAt
 
   @@unique([payerId, memberNumber])
@@ -806,6 +810,21 @@ model OutOfProvinceMember {
   updatedAt     DateTime @updatedAt
 
   @@index([deductingUnit])
+}
+
+// An out-of-province office (OutOfProvinceMember.deductingUnit) linked to
+// the unit whose name its transfers carry on the statement. The office list
+// comes from the cooperative's own file and the statement key from the bank,
+// and nothing but a person can say they are the same payer — so the link is
+// made by hand, once. Several spellings of one office may link to one unit;
+// an office links to one unit only.
+model UnitPayerOffice {
+  id            String   @id @default(cuid())
+  payerId       String
+  deductingUnit String   @unique
+  createdAt     DateTime @default(now())
+
+  @@index([payerId])
 }
 
 model StatementLineSplit {
