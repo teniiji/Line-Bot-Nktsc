@@ -66,10 +66,17 @@ describe("canBridgeToRound", () => {
     expect(canBridgeToRound({ deductionResult: "uncollected", status: "overpaid" })).toBe(false);
   });
 
-  it("refuses a member whose unit has not reported back", () => {
-    // awaiting/collected members owe nothing yet as far as this round knows
-    // — writing a transfer against them would invent a debt, not settle one.
-    expect(canBridgeToRound({ deductionResult: "awaiting", status: "awaiting" })).toBe(false);
+  it("lets through a member still on รอผลการหัก, judged later against what was declared", () => {
+    // 29375: ฿31,560 recorded against a แจ้งหัก of ฿31,140 while their unit's
+    // result had not come back — bridging is what lets recomputeRoundPayments
+    // judge them against expectedAmount instead of leaving them stuck on
+    // รอผลการหัก with nothing paid.
+    expect(canBridgeToRound({ deductionResult: "awaiting", status: "awaiting" })).toBe(true);
+  });
+
+  it("refuses a member whose unit already reported the deduction collected", () => {
+    // Nothing here for a bank line to settle: collectedStatus ignores
+    // amountPaid outright, so bridging one would only be noise.
     expect(canBridgeToRound({ deductionResult: "collected", status: "collected" })).toBe(false);
   });
 

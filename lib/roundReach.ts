@@ -30,13 +30,26 @@ export interface BridgeCandidate {
 
 // Whether a daily-view recording, filed as the deduction category, can be
 // written straight into the round's own bookkeeping instead of leaving the
-// gap this file otherwise warns about. Only the ordinary "still owes money
-// on the newest round" case qualifies — a member the round has already
-// resolved (paid/overpaid/collected) or has not heard from yet (awaiting)
-// has nothing here for a bank line to settle, and writing one anyway would
-// either double a real payment or invent one nobody asked for.
+// gap this file otherwise warns about. A member the round has already
+// resolved (paid/overpaid/collected) has nothing here for a bank line to
+// settle, and writing one anyway would double a real payment.
+//
+// A member still on รอผลการหัก (awaiting) is let through too: 29375 sent
+// ฿31,560 against a แจ้งหัก of ฿31,140 while their unit's deduction result
+// had not come back yet, and the daily page's own recording of it
+// disappeared — เทียบ Statement went on showing รอผลการหัก with nothing
+// paid. This is not inventing a debt: recomputeRoundPayments already judges
+// exactly this member (a staff-placed line on someone still awaiting)
+// against what was declared rather than leaving them stuck on รอผลการหัก,
+// and does not let the figure affect anyone the round later hears payroll
+// did collect (collectedStatus ignores amountPaid outright). Bridging is
+// what makes that judgment reachable in the first place.
 export function canBridgeToRound(member: BridgeCandidate | null): boolean {
-  return member !== null && member.deductionResult === "uncollected" && member.status === "unpaid";
+  if (!member) return false;
+  return (
+    (member.deductionResult === "uncollected" && member.status === "unpaid") ||
+    (member.deductionResult === "awaiting" && member.status === "awaiting")
+  );
 }
 
 export interface RealTransferCandidate {
