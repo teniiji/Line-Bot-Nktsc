@@ -122,8 +122,15 @@ model Expense {
   //
   // A plain column, no relation, per the convention in this schema.
   statementLineId      String?  @unique
+  // Set on each part of a bank line staff divided among several members (a
+  // unit paying for its people in one transfer): the StatementLine it is a
+  // share of. Not unique — that is the point — and never read by the daily
+  // pairing as a slip, since the line itself is already accounted for by its
+  // StatementLineSplit rows. See lib/unitPayer.ts.
+  splitFromLineId      String?
 
   @@index([date])
+  @@index([splitFromLineId])
   @@index([category])
   // get_transaction_summary always filters by lineUserId, often together
   // with a date range — a composite index serves that directly instead of
@@ -745,6 +752,42 @@ model CarriedDebtPayment {
 
   @@index([debtId])
   @@index([roundId, fingerprint])
+}
+
+// A payer that pays for several members in one transfer — a unit's payroll
+// office — named by staff and recognised again by its statement description
+// (payerKey in lib/unitPayer.ts).
+model UnitPayer {
+  id        String   @id @default(cuid())
+  key       String   @unique
+  name      String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// The members a UnitPayer paid for last time, and how much each — the
+// starting point offered for its next split.
+model UnitPayerMember {
+  id           String   @id @default(cuid())
+  payerId      String
+  memberNumber String
+  lastAmount   Float?
+  updatedAt    DateTime @updatedAt
+
+  @@unique([payerId, memberNumber])
+  @@index([payerId])
+}
+
+// One member's share of a bank line staff divided among several members.
+model StatementLineSplit {
+  id           String   @id @default(cuid())
+  lineId       String
+  memberNumber String
+  amount       Float
+  payerId      String?
+  createdAt    DateTime @default(now())
+
+  @@index([lineId])
 }
 
 // Staff saying a bank line is not payment toward one carried debt

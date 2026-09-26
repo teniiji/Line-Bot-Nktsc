@@ -325,6 +325,22 @@ export interface DailyDepositRow {
   description: string;
   // Who the bank-account directory says the paying account belongs to.
   memberNumber: string | null;
+  // The unit (payroll office) staff named for lines worded like this one,
+  // when a line from it has been divided among its members before.
+  payerName?: string | null;
+}
+
+// A bank line staff divided among several members — one unit paying for its
+// people in a single transfer (lib/unitPayer.ts).
+export interface DailySplitDepositRow {
+  id: string;
+  amount: number;
+  postedAt: string | null;
+  branch: string;
+  description: string;
+  channel: string;
+  payerName: string | null;
+  parts: { memberNumber: string; amount: number; name: string | null }[];
 }
 
 // One slip a member filed through the bot — or, when statementLineId is set,
@@ -415,6 +431,8 @@ export interface DailyReconcileResult {
   }[];
   slipsWithoutMoney: DailySlipRow[];
   depositsWithoutSlip: DailyDepositRow[];
+  // Lines divided among several members, set apart from the pairing.
+  splitDeposits: DailySplitDepositRow[];
   otherLines: DailyOtherLineRow[];
   totals: {
     depositCount: number;

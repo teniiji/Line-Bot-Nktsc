@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import type { DepositLine, SlipRecord } from "@/lib/dailyReconcile";
 import { loadReconciliation } from "@/lib/dailyReconcileStore";
+import { payerKey } from "@/lib/unitPayer";
 import { OTHER_CHANNEL } from "@/lib/statementLines";
 import { statementLineStatus } from "@/lib/statementDayView";
 import { memberNumberKey } from "@/lib/memberNumber";
@@ -58,7 +59,16 @@ export async function GET(request: NextRequest) {
   }
   const end = new Date(lastDay.getTime() + DAY_MS);
 
-  const { lines, slips, accountOwners, result } = await loadReconciliation(start, end);
+  const { lines, slips, accountOwners, result, splits } = await loadReconciliation(start, end);
+
+  // Payers staff have named (lib/unitPayer.ts) — a unit paying for several
+  // members is shown by its name rather than as "ไม่รู้ว่าใคร".
+  const payers = await prisma.unitPayer.findMany({ select: { key: true, name: true } });
+  const payerNameOf = new Map(payers.map((p) => [p.key, p.name]));
+  const payerOf = (description: string) => {
+    const key = payerKey(description);
+    return key ? (payerNameOf.get(key) ?? null) : null;
+  };
   // Slips outside the window itself only count when they pair with money
   // inside it; on their own they belong to their own day's view, not this one.
   const inRange = (date: Date) => date >= start && date < end;
@@ -96,6 +106,8 @@ export async function GET(request: NextRequest) {
     memberNumber: deposit.senderAccount
       ? (accountOwners.get(deposit.senderAccount) ?? null)
       : null,
+    // The unit this line is from, when staff have named its payer.
+    payerName: payerOf(deposit.description),
   });
 
   // The same day again, in the bank's order rather than by conclusion — see
@@ -222,7 +234,9 @@ export async function GET(request: NextRequest) {
       senderAccount: line.senderAccount,
       status: statementLineStatus({
         isMemberDeposit: line.channel !== OTHER_CHANNEL,
-        matched: slip !== null,
+        // A line divided among members is accounted for as surely as one a
+        // slip pairs with.
+        matched: slip !== null || splits.has(line.id),
         ownerMemberNumber: owner,
       }),
       memberNumber,
@@ -268,6 +282,32 @@ export async function GET(request: NextRequest) {
 
   const unclaimedSlips = result.slipsWithoutMoney.filter((slip) => inRange(slip.date));
 
+  // Lines divided among several members, with who got what.
+  const splitNumbers = [...new Set([...splits.values()].flat().map((p) => p.memberNumber))];
+  const splitNames = splitNumbers.length
+    ? await prisma.memberRoster.findMany({
+        where: { memberNumber: { in: splitNumbers } },
+        select: { memberNumber: true, memberName: true },
+      })
+    : [];
+  const splitNameOf = new Map(splitNames.map((r) => [r.memberNumber, r.memberName]));
+  const splitDeposits = lines
+    .filter((line) => splits.has(line.id))
+    .map((line) => ({
+      id: line.id,
+      amount: line.amount,
+      postedAt: line.postedAt?.toISOString() ?? null,
+      branch: line.branch,
+      description: line.description,
+      channel: line.channel,
+      payerName: payerOf(line.description),
+      parts: (splits.get(line.id) ?? []).map((p) => ({
+        memberNumber: p.memberNumber,
+        amount: p.amount,
+        name: splitNameOf.get(p.memberNumber) ?? null,
+      })),
+    }));
+
   return NextResponse.json({
     // `date` stays the first day of the window, so a caller that only ever
     // asked for one still reads the field it always read.
@@ -288,6 +328,7 @@ export async function GET(request: NextRequest) {
     })),
     slipsWithoutMoney: unclaimedSlips.map(describeSlip),
     depositsWithoutSlip: result.depositsWithoutSlip.map(describeDeposit),
+    splitDeposits,
     otherLines: lines
       .filter((line) => line.channel === OTHER_CHANNEL)
       .map((line) => ({

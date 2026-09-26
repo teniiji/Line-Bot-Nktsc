@@ -226,8 +226,19 @@ export async function loadCandidateInputs(debtIds?: string[]): Promise<Candidate
     });
     for (const row of found) bridged.add(row.fingerprint);
   }
+  // Lines divided among several members are accounted for, share by share.
+  const splitLineIds = new Set<string>();
+  for (const slice of chunks(rawLines.map((l) => l.id))) {
+    for (const row of await prisma.statementLineSplit.findMany({
+      where: { lineId: { in: slice } },
+      select: { lineId: true },
+    })) {
+      splitLineIds.add(row.lineId);
+    }
+  }
   const loose = rawLines.filter(
     (line) =>
+      !splitLineIds.has(line.id) &&
       isMemberDeposit(line.channel) &&
       line.amount > 0 &&
       !bridged.has(`${LINE_FINGERPRINT_PREFIX}${line.fingerprint}`) &&

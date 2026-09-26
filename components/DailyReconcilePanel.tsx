@@ -32,6 +32,7 @@ import {
 } from "@/lib/dailySections";
 import PanelHelp from "@/components/PanelHelp";
 import DateField from "@/components/DateField";
+import LineSplitDialog from "@/components/LineSplitDialog";
 import {
   depositHaystack,
   filterBy,
@@ -45,6 +46,7 @@ import {
   DailyOtherLineRow,
   DailyReconcileResult,
   DailySlipRow,
+  DailySplitDepositRow,
   DailyStatementRow,
 } from "@/lib/types";
 
@@ -125,6 +127,11 @@ const Payer = ({ deposit }: { deposit: DailyDepositRow }) => (
   <span>
     {deposit.memberNumber ? (
       <span className="num">{deposit.memberNumber}</span>
+    ) : deposit.payerName ? (
+      // A unit staff named when dividing an earlier line worded the same way.
+      <span className="text-slate-700" title="หน่วยงานที่เคยแบ่งยอดให้สมาชิกไว้ — กด &quot;แบ่งให้หลายคน&quot; รายชื่อเดิมจะขึ้นให้">
+        🏢 {deposit.payerName}
+      </span>
     ) : (
       <span className="text-slate-400">ไม่รู้ว่าใคร</span>
     )}
@@ -255,6 +262,9 @@ export default function DailyReconcilePanel() {
   const [actNote, setActNote] = useState("");
   const [saving, setSaving] = useState(false);
   const [actionNotice, setActionNotice] = useState<string | null>(null);
+  // The bank line being divided among several members, while its dialog is
+  // open — see components/LineSplitDialog.tsx.
+  const [splittingId, setSplittingId] = useState<string | null>(null);
   // Offered after a recording, when the line's account is plainly the payer's
   // and nothing had claimed it — one click to make the next transfer from it
   // recognise itself.
@@ -692,6 +702,27 @@ export default function DailyReconcilePanel() {
     }
   };
 
+  // Taking a division back: the members' round rows and transactions go, and
+  // the line returns to the list of money nobody has claimed.
+  const undoSplit = async (lineId: string) => {
+    if (!window.confirm("ยกเลิกการแบ่งยอดนี้? รายการของสมาชิกแต่ละคนและยอดที่นับในรอบจะถูกลบออก")) return;
+    setSaving(true);
+    setError(null);
+    setActionNotice(null);
+    try {
+      const res = await fetch(`/api/statement-lines/${lineId}/split`, { method: "DELETE" });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setError(body.error || "ยกเลิกการแบ่งไม่สำเร็จ");
+        return;
+      }
+      setActionNotice("ยกเลิกการแบ่งแล้ว — ยอดกลับไปอยู่ในรายการเงินเข้าที่ยังไม่มีเจ้าของ");
+      await fetchDay(from, to);
+    } finally {
+      setSaving(false);
+    }
+  };
+
   // Both ends move together, so the arrows still step through days at
   // whatever width the range is set to.
   const shiftRange = (days: number) => {
@@ -707,6 +738,7 @@ export default function DailyReconcilePanel() {
     matched: data?.matched ?? [],
     depositsWithoutSlip: data?.depositsWithoutSlip ?? [],
     otherLines: data?.otherLines ?? [],
+    splitDeposits: data?.splitDeposits ?? [],
   };
   const branches = branchesIn(day);
   const perAccount = summariseByAccount(day);
@@ -746,6 +778,7 @@ export default function DailyReconcilePanel() {
   const unknownRows = filterBy(unknownPayer, search, depositHaystack);
   const knownRows = filterBy(knownPayer, search, depositHaystack);
   const otherRows = filterBy(inBranch(data?.otherLines ?? []), search, otherLineHaystack);
+  const splitRows = filterBy(inBranch(data?.splitDeposits ?? []), search, splitHaystack);
   const searching = search.trim().length > 0;
   const totalHits =
     statementRows.length +
@@ -753,6 +786,7 @@ export default function DailyReconcilePanel() {
     unmatchedSlips.length +
     unknownRows.length +
     knownRows.length +
+    splitRows.length +
     otherRows.length;
 
   // Counted over the rows on screen, so the strip at the top says the same
@@ -793,6 +827,7 @@ export default function DailyReconcilePanel() {
     onRecord: recordDeposit,
     onBulkRecord: bulkRecordDeposits,
     onUnmark: unmarkMemberMoney,
+    onSplit: (lineId: string) => setSplittingId(lineId),
   };
 
   return (
@@ -1052,6 +1087,18 @@ export default function DailyReconcilePanel() {
         <p className="px-4 py-2 text-sm text-green-700 bg-green-50">{uploadNotice}</p>
       )}
 
+      {splittingId && (
+        <LineSplitDialog
+          lineId={splittingId}
+          onClose={() => setSplittingId(null)}
+          onSaved={async (message) => {
+            setSplittingId(null);
+            setError(null);
+            setActionNotice(message);
+            await fetchDay(from, to);
+          }}
+        />
+      )}
       {actionNotice && (
         <p className="px-4 py-2 text-sm text-green-700 bg-green-50">{actionNotice}</p>
       )}
@@ -1556,6 +1603,29 @@ export default function DailyReconcilePanel() {
             </Section>
           )}
 
+          {(data.splitDeposits ?? []).length > 0 && (
+            <Section
+              title={`🏢 แบ่งให้สมาชิกหลายคนแล้ว (${countLabel(
+                splitRows.length,
+                data.splitDeposits.length,
+                "รายการ"
+              )})`}
+              tone="text-slate-600"
+              note="ยอดที่หน่วยงานโอนมาก้อนเดียวแล้วเจ้าหน้าที่แบ่งให้สมาชิกแต่ละคน — แต่ละคนนับในรอบเทียบ Statement ของเดือนที่เงินเข้า และมีรายการของตัวเองในแถบธุรกรรม · แก้ยอด/เพิ่มคนได้ที่ &quot;แก้ไขการแบ่ง&quot; หรือ &quot;ยกเลิกการแบ่ง&quot; เพื่อกลับไปเป็นเงินที่ยังไม่มีเจ้าของ"
+              empty={false}
+              open={isOpen("splitDeposits", splitRows.length)}
+              onToggle={() => toggle("splitDeposits", splitRows.length)}
+            >
+              <SplitTable
+                rows={splitRows}
+                showDate={from !== to}
+                saving={saving}
+                onEdit={(id) => setSplittingId(id)}
+                onUndo={undoSplit}
+              />
+            </Section>
+          )}
+
           {data.otherLines.length > 0 && (
             <Section
               title={`รายการอื่นในบัญชี${from === to ? "วันนี้" : "ช่วงนี้"} (${countLabel(
@@ -2022,6 +2092,9 @@ interface RecordActions {
   // Only ever called for a line a person marked as member money themselves,
   // which is also the only kind of row it is offered on.
   onUnmark: (lineId: string) => void;
+  // Opens the dialog that divides one line among several members — a unit
+  // paying for its people in a single transfer.
+  onSplit?: (lineId: string) => void;
 }
 
 // The form itself, shared by both tables that offer it so the two cannot
@@ -2116,6 +2189,90 @@ const ActionForm = ({
   );
 };
 
+// What a search box matches in a divided line: the line itself, the unit's
+// name, and every member it went to.
+const splitHaystack = (row: DailySplitDepositRow) =>
+  [
+    formatStatementDate(row.postedAt),
+    String(row.amount),
+    formatAmount(row.amount),
+    row.description,
+    row.payerName ?? "",
+    ...row.parts.flatMap((p) => [p.memberNumber, p.name ?? "", formatAmount(p.amount)]),
+  ]
+    .join(" ")
+    .toLowerCase();
+
+const SplitTable = ({
+  rows,
+  showDate,
+  saving,
+  onEdit,
+  onUndo,
+}: {
+  rows: DailySplitDepositRow[];
+  showDate: boolean;
+  saving: boolean;
+  onEdit: (id: string) => void;
+  onUndo: (id: string) => void;
+}) => (
+  <table className="w-full text-sm">
+    <thead className="text-slate-500 text-left text-xs uppercase tracking-wide">
+      <tr>
+        <th className="px-2 py-1.5 font-semibold">{showDate ? "วันที่ / เวลา" : "เวลา"}</th>
+        <th className="px-2 py-1.5 font-semibold text-right">ยอด</th>
+        <th className="px-2 py-1.5 font-semibold">หน่วยงาน</th>
+        <th className="px-2 py-1.5 font-semibold">แบ่งให้</th>
+        <th className="px-2 py-1.5 font-semibold">ทำอะไรได้</th>
+      </tr>
+    </thead>
+    <tbody>
+      {rows.map((row) => (
+        <tr key={row.id} className="border-t border-slate-100 align-top hover:bg-slate-50">
+          <td className="px-2 py-1.5 whitespace-nowrap">
+            <Clock iso={row.postedAt} withDate={showDate} />
+          </td>
+          <td className="px-2 py-1.5 text-right">
+            <Money value={row.amount} className="font-medium" />
+          </td>
+          <td className="px-2 py-1.5">
+            <div>{row.payerName ?? "—"}</div>
+            <div className="text-xs text-slate-400">
+              {row.branch} · <StatementDetail description={row.description} />
+            </div>
+          </td>
+          <td className="px-2 py-1.5">
+            <ul className="space-y-0.5">
+              {row.parts.map((p) => (
+                <li key={p.memberNumber} className="flex gap-2">
+                  <span className="num">{p.memberNumber}</span>
+                  <span className="text-slate-600">{p.name ?? ""}</span>
+                  <Money value={p.amount} className="ml-auto text-slate-700" />
+                </li>
+              ))}
+            </ul>
+            <div className="text-xs text-slate-400 mt-0.5">{row.parts.length} คน</div>
+          </td>
+          <td className="px-2 py-1.5 whitespace-nowrap">
+            <span className="inline-flex items-center gap-3 text-xs">
+              <button onClick={() => onEdit(row.id)} className="text-slate-900 hover:underline">
+                แก้ไขการแบ่ง
+              </button>
+              <button
+                onClick={() => onUndo(row.id)}
+                disabled={saving}
+                className="text-red-700 hover:underline disabled:opacity-40"
+              >
+                ยกเลิกการแบ่ง
+              </button>
+            </span>
+          </td>
+        </tr>
+      ))}
+    </tbody>
+  </table>
+);
+
 const DepositTable = ({
   deposits,
   actions,
@@ -2196,6 +2353,15 @@ const DepositTable = ({
                     >
                       บันทึกรายการ
                     </button>
+                    {actions.onSplit && !deposit.memberNumber && (
+                      <button
+                        onClick={() => actions.onSplit?.(deposit.id)}
+                        className="text-slate-900 hover:underline"
+                        title="หน่วยงานโอนมาก้อนเดียวให้สมาชิกหลายคน — แบ่งยอดให้แต่ละคน นับในรอบเทียบ Statement และลงเป็นรายการของแต่ละคน"
+                      >
+                        แบ่งให้หลายคน
+                      </button>
+                    )}
                     {/* The way back out of a mark a person made by hand. Not
                         offered on a line the bank's own code classified: that
                         one is not anybody's decision to take back here. */}

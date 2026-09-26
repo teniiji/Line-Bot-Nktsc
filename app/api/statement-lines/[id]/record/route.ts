@@ -55,6 +55,15 @@ export async function POST(
     );
   }
 
+  // Divided among several members already (lib/unitPayer.ts): recording the
+  // whole line for one of them as well would count the money twice.
+  if (await prisma.statementLineSplit.count({ where: { lineId: line.id } })) {
+    return NextResponse.json(
+      { error: 'ยอดนี้แบ่งให้สมาชิกหลายคนไว้แล้ว — ถ้าจะบันทึกให้คนเดียว กด "ยกเลิกการแบ่ง" ก่อน' },
+      { status: 409 }
+    );
+  }
+
   // The bank's own postings — fees, outward transfers, institutional money —
   // are not a member paying in, and the daily view never offers them here.
   // Checked anyway: a request reaching this route with one would file

@@ -91,3 +91,10 @@ describe("allSections", () => {
     expect(Object.values(allSections(false)).every((v) => v === false)).toBe(true);
   });
 });
+
+describe("splitDeposits section", () => {
+  it("opens on arrival, so who got what is on screen after dividing a line", () => {
+    expect(SECTION_KEYS).toContain("splitDeposits");
+    expect(SECTION_OPEN_BY_DEFAULT.splitDeposits).toBe(true);
+  });
+});

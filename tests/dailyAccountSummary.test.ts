@@ -182,3 +182,23 @@ describe("missingBranches", () => {
     );
   });
 });
+
+describe("summariseByAccount with divided lines", () => {
+  it("counts a line divided among members as matched money in its account", () => {
+    // A unit's single transfer, divided among its members: no slip pairs with
+    // it, and leaving it out made the account's money in fall short of the
+    // bank's page by exactly that transfer.
+    const withSplit: DayByAccount = {
+      matched: [],
+      depositsWithoutSlip: [deposit({ id: "d9", amount: 500 })],
+      otherLines: [],
+      splitDeposits: [{ amount: 12000, branch: "บึงกาฬ" }],
+    };
+    expect(branchesIn(withSplit)).toEqual(["บึงกาฬ", "หนองคาย"].sort());
+    const byBranch = Object.fromEntries(summariseByAccount(withSplit).map((a) => [a.branch, a]));
+    expect(byBranch["บึงกาฬ"].depositAmount).toBe(12000);
+    expect(byBranch["บึงกาฬ"].matchedCount).toBe(1);
+    expect(byBranch["บึงกาฬ"].unclaimedCount).toBe(0);
+    expect(byBranch["หนองคาย"].unclaimedAmount).toBe(500);
+  });
+});

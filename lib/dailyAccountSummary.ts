@@ -31,6 +31,10 @@ export interface DayByAccount {
   matched: { deposit: DailyDepositRow; slip: DailySlipRow }[];
   depositsWithoutSlip: DailyDepositRow[];
   otherLines: DailyOtherLineRow[];
+  // Lines staff divided among several members. Accounted for as surely as a
+  // line a slip paired with, so they count as matched — leaving them out
+  // would make the account's money in fall short of the bank's page.
+  splitDeposits?: { amount: number; branch: string }[];
 }
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
@@ -44,13 +48,17 @@ export function branchesIn(day: DayByAccount): string[] {
   for (const pair of day.matched) seen.add(pair.deposit.branch);
   for (const row of day.depositsWithoutSlip) seen.add(row.branch);
   for (const row of day.otherLines) seen.add(row.branch);
+  for (const row of day.splitDeposits ?? []) seen.add(row.branch);
   seen.delete("");
   return [...seen].sort();
 }
 
 export function summariseByAccount(day: DayByAccount): AccountTotals[] {
   return branchesIn(day).map((branch) => {
-    const matched = day.matched.filter((p) => p.deposit.branch === branch).map((p) => p.deposit);
+    const matched: { amount: number }[] = [
+      ...day.matched.filter((p) => p.deposit.branch === branch).map((p) => p.deposit),
+      ...(day.splitDeposits ?? []).filter((d) => d.branch === branch),
+    ];
     const unclaimed = day.depositsWithoutSlip.filter((d) => d.branch === branch);
     const deposits = [...matched, ...unclaimed];
     return {
