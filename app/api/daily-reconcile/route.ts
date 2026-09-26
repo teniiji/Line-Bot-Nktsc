@@ -59,7 +59,11 @@ export async function GET(request: NextRequest) {
   }
   const end = new Date(lastDay.getTime() + DAY_MS);
 
-  const { lines, slips, accountOwners, result, splits } = await loadReconciliation(start, end);
+  const { lines, slips, accountOwners, unitOwners, result, splits } = await loadReconciliation(start, end);
+  // Whose a line is, as far as anything knows: the paying account's owner,
+  // or, for a unit's line naming no account, the one member it pays for.
+  const ownerOf = (line: { id: string; senderAccount: string | null }) =>
+    line.senderAccount ? (accountOwners.get(line.senderAccount) ?? null) : (unitOwners.get(line.id) ?? null);
 
   // Payers staff have named (lib/unitPayer.ts) — a unit paying for several
   // members is shown by its name rather than as "ไม่รู้ว่าใคร".
@@ -103,9 +107,7 @@ export async function GET(request: NextRequest) {
     description: deposit.description,
     // Who the directory says the paying account belongs to, so staff can act
     // on an unclaimed payment without looking it up separately.
-    memberNumber: deposit.senderAccount
-      ? (accountOwners.get(deposit.senderAccount) ?? null)
-      : null,
+    memberNumber: ownerOf(deposit),
     // The unit this line is from, when staff have named its payer.
     payerName: payerOf(deposit.description),
   });
@@ -117,7 +119,7 @@ export async function GET(request: NextRequest) {
   const slipByDeposit = new Map(result.matched.map((pair) => [pair.deposit.id, pair.slip]));
   const resolved = lines.map((line) => {
     const slip = slipByDeposit.get(line.id) ?? null;
-    const owner = line.senderAccount ? (accountOwners.get(line.senderAccount) ?? null) : null;
+    const owner = ownerOf(line);
     return { line, slip, owner, memberNumber: slip?.memberNumber ?? owner };
   });
 

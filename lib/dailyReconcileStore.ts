@@ -6,6 +6,7 @@ import {
   reconcileDay,
 } from "@/lib/dailyReconcile";
 import { OTHER_CHANNEL } from "@/lib/statementLines";
+import { loadUnitOwners } from "@/lib/unitPayerStore";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -149,7 +150,10 @@ export async function loadReconciliation(
     new Set([...inWindow, ...liveElsewhere.map((line) => line.id)])
   );
 
-  const result = reconcileDay(deposits, slipRecords, accountOwners);
+  // A unit's line names no account; the unit itself may still be known to
+  // pay for one member.
+  const unitOwners = await loadUnitOwners(deposits);
+  const result = reconcileDay(deposits, slipRecords, accountOwners, unitOwners);
 
-  return { lines, slips, accountOwners, result, splits };
+  return { lines, slips, accountOwners, unitOwners, result, splits };
 }
