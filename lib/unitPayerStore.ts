@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/prisma";
 import { memberNumberKey } from "@/lib/memberNumber";
 import { isUnitPayerLine, payerKey, suggestedPayerName } from "@/lib/unitPayer";
+import { OTHER_CHANNEL, STAFF_CHANNEL } from "@/lib/statementLines";
 
 // A unit's payroll office (BSD02 "…/สำนักงานเลขาธิการสภาการศึกษา") names no
 // paying account, so the account directory can never say whose its money
@@ -65,4 +66,40 @@ export async function loadUnitOwners(
     if (member) owners.set(lineId, member);
   }
   return owners;
+}
+
+// A unit on the list is staff saying its money is members' money. Its lines
+// the bank's code files under "other" (BSD02, BSD14, SDTRC …) are moved into
+// the member-money lists the way "เป็นเงินสมาชิก" moves one line — every one
+// of them, now and as later statements arrive — so the next month's transfer
+// is there to record or divide without anybody marking it first.
+//
+// `where` narrows the lines looked at: one account's file just stored, or
+// nothing for every line on record. Returns how many were moved.
+export async function markUnitLines(
+  keys: string[] | null,
+  where: { account?: string; fingerprints?: string[] } = {}
+): Promise<number> {
+  const known = keys ?? (await prisma.unitPayer.findMany({ select: { key: true } })).map((p) => p.key);
+  if (known.length === 0) return 0;
+  const wanted = new Set(known);
+  const candidates = await prisma.statementLine.findMany({
+    where: {
+      channel: OTHER_CHANNEL,
+      amount: { gt: 0 },
+      description: { contains: "/" },
+      ...(where.account ? { account: where.account } : {}),
+      ...(where.fingerprints ? { fingerprint: { in: where.fingerprints } } : {}),
+    },
+    select: { id: true, description: true },
+  });
+  const ids = candidates
+    .filter((line) => isUnitPayerLine(line.description) && wanted.has(payerKey(line.description) ?? ""))
+    .map((line) => line.id);
+  if (ids.length === 0) return 0;
+  const { count } = await prisma.statementLine.updateMany({
+    where: { id: { in: ids } },
+    data: { channel: STAFF_CHANNEL },
+  });
+  return count;
 }

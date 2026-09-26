@@ -1,6 +1,7 @@
 import { prisma } from "./prisma";
 import { parseStatementLines, statementLineFingerprint } from "./statementLines";
 import { planLineMerge, postedRange } from "./statementLineMerge";
+import { markUnitLines } from "./unitPayerStore";
 
 export interface StoredStatement {
   // Lines the file carried, whether or not this upload wrote any of them.
@@ -75,6 +76,14 @@ export async function storeStatementLines(
       })
     ),
   ]);
+
+  // Lines from a unit staff have put on the list are member money whatever
+  // the bank's code says (lib/unitPayerStore.ts).
+  try {
+    await markUnitLines(null, { account, fingerprints: data.map((row) => row.fingerprint) });
+  } catch (err) {
+    console.error("unit lines not marked", err);
+  }
 
   return { lines: data.length, ...range };
 }
