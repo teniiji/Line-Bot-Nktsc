@@ -7,6 +7,10 @@ import { splitByBinding } from "@/lib/boundTransfers";
 import { ROUND_CLOSED_ERROR, countedAmount } from "@/lib/carriedDebt";
 import { splitOriginsFor } from "@/lib/lineSplitStore";
 import { isSetAsidePiece } from "@/lib/transferSetAside";
+import { DEDUCTION_CATEGORY } from "@/lib/statementSlipHints";
+import { memberNumberKey } from "@/lib/memberNumber";
+import { periodOfDate } from "@/lib/deductionPeriod";
+import { unbridgedRecordings } from "@/lib/unbridgedRecordings";
 
 export const dynamic = "force-dynamic";
 
@@ -230,6 +234,62 @@ export async function GET(
 
   const excluded = withHints.filter((t) => t.excludedReason);
 
+  // Money filed on the เงินเข้าประจำวัน page as this month's deduction that the
+  // round never took in — see lib/unbridgedRecordings.ts. Shown, not counted.
+  const roundNumberByKey = new Map<string, string>();
+  for (const m of members) {
+    const key = memberNumberKey(m.memberNumber);
+    if (key) roundNumberByKey.set(key, m.memberNumber);
+  }
+  const memberKeys = [...roundNumberByKey.keys()];
+  const recordings: { id: string; memberNumber: string | null; amount: number; createdAt: Date; statementLineId: string | null }[] = [];
+  for (let i = 0; i < memberKeys.length; i += CHUNK) {
+    recordings.push(
+      ...(await prisma.expense.findMany({
+        where: {
+          category: DEDUCTION_CATEGORY,
+          statementLineId: { not: null },
+          memberNumber: { in: memberKeys.slice(i, i + CHUNK) },
+        },
+        select: { id: true, memberNumber: true, amount: true, createdAt: true, statementLineId: true },
+      }))
+    );
+  }
+  const recordedLines = recordings.length
+    ? await prisma.statementLine.findMany({
+        where: { id: { in: recordings.map((r) => r.statementLineId as string) } },
+        select: { id: true, postedAt: true, fingerprint: true, senderAccount: true },
+      })
+    : [];
+  const lineById = new Map(recordedLines.map((l) => [l.id, l]));
+  const recordedOutside = unbridgedRecordings(
+    recordings.flatMap((r) => {
+      const line = lineById.get(r.statementLineId as string);
+      const memberNumber = roundNumberByKey.get(memberNumberKey(r.memberNumber) ?? "");
+      if (!line || !memberNumber) return [];
+      // The same month rule the record route bridges by: a payment belongs to
+      // the round whose period its own bank date falls in.
+      if (periodOfDate(line.postedAt ?? r.createdAt) !== round.period) return [];
+      return [
+        {
+          expenseId: r.id,
+          memberNumber,
+          amount: r.amount,
+          postedAt: line.postedAt,
+          createdAt: r.createdAt,
+          lineFingerprint: line.fingerprint,
+          senderAccount: line.senderAccount,
+        },
+      ];
+    }),
+    transfers.map((t) => ({
+      fingerprint: t.fingerprint,
+      accountNumber: t.accountNumber,
+      amount: t.amount,
+      transferredAt: t.transferredAt,
+    }))
+  );
+
   return NextResponse.json({
     round,
     data: membersWithAccounts,
@@ -241,6 +301,7 @@ export async function GET(
     outsideRoundTotal:
       Math.round(outsideRound.reduce((sum, t) => sum + countedAmount(t), 0) * 100) / 100,
     transfers: withHints,
+    recordedOutside,
     excluded,
     excludedTotal:
       Math.round(excluded.reduce((sum, t) => sum + t.amount, 0) * 100) / 100,

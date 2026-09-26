@@ -295,6 +295,16 @@ export interface StatementTransferRow {
   setAside?: boolean;
 }
 
+// A deduction payment filed on the เงินเข้าประจำวัน page that the round never
+// took in, because the member was already settled — see
+// lib/unbridgedRecordings.ts. Shown beside the member, never counted.
+export interface RecordedOutsideRow {
+  id: string;
+  memberNumber: string;
+  amount: number;
+  date: string;
+}
+
 // A transfer that matched nobody on the round's list — money that arrived
 // under an account number the หักไม่ได้ sheet doesn't carry.
 export interface StatementUnmatchedRow {
