@@ -29,6 +29,7 @@ import { controlUnitLabel } from "@/lib/controlUnits";
 import { describeDeductionPeriod } from "@/lib/deductionPeriod";
 import { downloadStatementMembersCsv } from "@/lib/csv";
 import { EXCLUDE_REASONS } from "@/lib/statementSlipHints";
+import { SET_ASIDE_CATEGORIES } from "@/lib/transferSetAside";
 import { describeDoubleCount } from "@/lib/roundDoubleCount";
 import { cooperativeToday } from "@/lib/cooperativeClock";
 import { sectionOpen } from "@/lib/sections";
@@ -192,6 +193,12 @@ export default function StatementReconcilePanel() {
   const [pendingClose, setPendingClose] = useState(false);
   const [splitMemberNumber, setSplitMemberNumber] = useState("");
   const [splitAmountInput, setSplitAmountInput] = useState("");
+  // "✂️ ตัดยอดออก": the transfer whose form is open, and what it asks — how
+  // much of it, and what that part was for. See lib/transferSetAside.ts.
+  const [asideTransfer, setAsideTransfer] = useState<string | null>(null);
+  const [asideAmount, setAsideAmount] = useState("");
+  const [asideCategory, setAsideCategory] = useState<string>(SET_ASIDE_CATEGORIES[0]);
+  const [asideError, setAsideError] = useState<string | null>(null);
   const [splitError, setSplitError] = useState<string | null>(null);
   // The one member currently offering the "บันทึกเงินสด" form — a payment
   // that never touches a bank account at all, so no Statement upload could
@@ -344,6 +351,58 @@ export default function StatementReconcilePanel() {
         return;
       }
       closeSplit();
+      await Promise.all([fetchRound(selectedId), fetchRounds()]);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const openAside = (transfer: StatementTransferRow) => {
+    setAsideTransfer(transfer.id);
+    setAsideAmount("");
+    setAsideCategory(SET_ASIDE_CATEGORIES[0]);
+    setAsideError(null);
+  };
+
+  const submitAside = async (transferId: string) => {
+    if (!selectedId) return;
+    setAsideError(null);
+    setBusy(true);
+    try {
+      const res = await fetch(
+        `/api/statement-rounds/${selectedId}/transfers/${transferId}/set-aside`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ amount: Number(asideAmount), category: asideCategory }),
+        }
+      );
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        setAsideError(body.error || "ตัดยอดไม่สำเร็จ");
+        return;
+      }
+      setAsideTransfer(null);
+      await Promise.all([fetchRound(selectedId), fetchRounds()]);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // Puts a cut-out part back into the row it came from.
+  const restoreAside = async (pieceId: string) => {
+    if (!selectedId) return;
+    setBusy(true);
+    try {
+      const res = await fetch(
+        `/api/statement-rounds/${selectedId}/transfers/${pieceId}/set-aside`,
+        { method: "DELETE" }
+      );
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        setError(body.error || "รวมยอดกลับไม่สำเร็จ");
+        return;
+      }
       await Promise.all([fetchRound(selectedId), fetchRounds()]);
     } finally {
       setBusy(false);
@@ -1992,7 +2051,14 @@ export default function StatementReconcilePanel() {
                                         a whole transfer moved outright, or a
                                         cash payment that was never a bank
                                         line to begin with. */}
-                                    {t.splitFrom ? (
+                                    {t.setAside ? (
+                                      <span
+                                        className="text-xs text-violet-700"
+                                        title="ส่วนนี้ตัดออกจากยอดโอนก้อนเดียวกัน ไม่นับในรอบ และบันทึกเป็นรายการของสมาชิกที่แถบธุรกรรมแล้ว"
+                                      >
+                                        ✂️ ตัดออกจากยอดโอน · บันทึกเป็น <strong>{t.excludedReason}</strong>
+                                      </span>
+                                    ) : t.splitFrom ? (
                                       // A share of one bank line: say whose
                                       // line, so it does not read as money
                                       // arriving from nowhere.
@@ -2029,6 +2095,19 @@ export default function StatementReconcilePanel() {
                                         ↪ ชำระข้ามเดือน {formatAmount(t.carriedAmount)}
                                       </span>
                                     )}
+                                    {t.setAside ? (
+                                    <span className="ml-auto flex items-center gap-2">
+                                      <button
+                                        type="button"
+                                        onClick={() => restoreAside(t.id)}
+                                        disabled={busy || frozen}
+                                        className="text-xs text-slate-600 border border-slate-300 rounded px-2 py-1 hover:bg-slate-50 disabled:opacity-50"
+                                        title="ตัดผิด — รวมยอดนี้กลับเข้ารายการโอนเดิม และลบรายการที่บันทึกไว้ในแถบธุรกรรม"
+                                      >
+                                        รวมกลับ
+                                      </button>
+                                    </span>
+                                    ) : (
                                     <span className="ml-auto flex items-center gap-2">
                                       <select
                                         value={t.excludedReason ?? ""}
@@ -2073,7 +2152,61 @@ export default function StatementReconcilePanel() {
                                           {carryingTransfer === t.id ? "ยกเลิก" : "ชำระข้ามเดือน"}
                                         </button>
                                       )}
+                                      {!t.excludedReason && t.memberNumber && t.amount - t.carriedAmount > 0.005 && (
+                                        <button
+                                          type="button"
+                                          onClick={() =>
+                                            asideTransfer === t.id ? setAsideTransfer(null) : openAside(t)
+                                          }
+                                          disabled={busy || frozen}
+                                          className="text-xs text-violet-800 border border-violet-300 rounded px-2 py-1 hover:bg-violet-50 disabled:opacity-50"
+                                          title="เงินก้อนนี้มีเงินอื่นรวมมาด้วย เช่น สสค — ตัดส่วนนั้นออกจากรอบ แล้วบันทึกเป็นรายการของสมาชิก"
+                                        >
+                                          {asideTransfer === t.id ? "ยกเลิก" : "✂️ ตัดยอดออก"}
+                                        </button>
+                                      )}
                                     </span>
+                                    )}
+                                    {asideTransfer === t.id && (
+                                      <div className="w-full flex flex-wrap items-center gap-2 pt-1 pl-1 border-t border-dashed border-slate-200 mt-1">
+                                        <span className="text-xs text-slate-500">ตัดออก</span>
+                                        <input
+                                          type="number"
+                                          inputMode="decimal"
+                                          step="0.01"
+                                          value={asideAmount}
+                                          onChange={(e) => setAsideAmount(e.target.value)}
+                                          placeholder="เช่น 390"
+                                          className="border border-slate-300 rounded px-2 py-1 text-xs w-24"
+                                          autoFocus
+                                        />
+                                        <span className="text-xs text-slate-500">บาท บันทึกเป็น</span>
+                                        <select
+                                          value={asideCategory}
+                                          onChange={(e) => setAsideCategory(e.target.value)}
+                                          className="border border-slate-300 rounded px-2 py-1 text-xs"
+                                        >
+                                          {SET_ASIDE_CATEGORIES.map((c) => (
+                                            <option key={c} value={c}>
+                                              {c}
+                                            </option>
+                                          ))}
+                                        </select>
+                                        <button
+                                          type="button"
+                                          onClick={() => submitAside(t.id)}
+                                          disabled={busy || !(Number(asideAmount) > 0)}
+                                          className="text-xs text-white bg-violet-700 rounded px-2.5 py-1 disabled:opacity-50"
+                                        >
+                                          ตัดยอดออก
+                                        </button>
+                                        {asideError && <p className="w-full text-xs text-red-600">{asideError}</p>}
+                                        <p className="w-full text-xs text-slate-400">
+                                          ส่วนที่ตัดออกไม่นับเป็นค่าหักของรอบ {selected?.label ?? "นี้"} และลงเป็นรายการ
+                                          ของ {m.name} ที่แถบธุรกรรม — ส่วนที่เหลือยังนับเหมือนเดิม · ตัดผิดกด "รวมกลับ" ได้
+                                        </p>
+                                      </div>
+                                    )}
                                     {carryingTransfer === t.id && selectedId && (
                                       <CarryToDebtForm
                                         roundId={selectedId}

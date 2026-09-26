@@ -128,9 +128,16 @@ model Expense {
   // pairing as a slip, since the line itself is already accounted for by its
   // StatementLineSplit rows. See lib/unitPayer.ts.
   splitFromLineId      String?
+  // Set on a payment staff cut out of a round's transfer ("ตัดยอดออก" — the
+  // สสค folded into a member's monthly transfer): the id of the round row
+  // holding the part cut out. Never read by the daily pairing as a slip; the
+  // bank line it came from is accounted for already. See
+  // lib/transferSetAside.ts.
+  setAsideFromId       String?
 
   @@index([date])
   @@index([splitFromLineId])
+  @@index([setAsideFromId])
   @@index([category])
   // get_transaction_summary always filters by lineUserId, often together
   // with a date range — a composite index serves that directly instead of

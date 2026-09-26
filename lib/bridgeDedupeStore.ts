@@ -37,7 +37,28 @@ export async function absorbCoveredStandIns(roundId: string): Promise<number> {
     select,
   });
 
-  const pairs = pairStandIns(bridges, uploaded);
+  // A row part of which was cut out ("ตัดยอดออก") or split off to another
+  // member holds less than the bank line; the line's own amount is the row
+  // plus its pieces, and that is what the other copy carries.
+  const pieces = await prisma.statementTransfer.findMany({
+    where: {
+      roundId,
+      OR: [...bridges, ...uploaded].map((r) => ({ fingerprint: { startsWith: `${r.fingerprint}::` } })),
+    },
+    select: { fingerprint: true, amount: true },
+  });
+  const whole = <T extends { fingerprint: string; amount: number }>(row: T): T => ({
+    ...row,
+    amount:
+      Math.round(
+        (row.amount +
+          pieces
+            .filter((p) => p.fingerprint.startsWith(`${row.fingerprint}::`))
+            .reduce((sum, p) => sum + p.amount, 0)) *
+          100
+      ) / 100,
+  });
+  const pairs = pairStandIns(bridges.map(whole), uploaded.map(whole));
   for (const { bridge, real } of pairs) {
     const [keep, drop] = real.manualMemberNumber ? [real, bridge] : [bridge, real];
     if (drop.excludedReason && !keep.excludedReason) {

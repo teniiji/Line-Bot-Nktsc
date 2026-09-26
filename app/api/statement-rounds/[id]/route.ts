@@ -6,6 +6,7 @@ import { recordedOwnersForAccounts } from "@/lib/roundRecordings";
 import { splitByBinding } from "@/lib/boundTransfers";
 import { ROUND_CLOSED_ERROR, countedAmount } from "@/lib/carriedDebt";
 import { splitOriginsFor } from "@/lib/lineSplitStore";
+import { isSetAsidePiece } from "@/lib/transferSetAside";
 
 export const dynamic = "force-dynamic";
 
@@ -223,6 +224,8 @@ export async function GET(
     // Empty on all but the few lines being counted more than once.
     alsoCountedIn: doubles.get(t.id) ?? [],
     splitFrom: origins.get(t.id) ?? null,
+    // The part staff cut out of another row ("ตัดยอดออก"), which can be put back.
+    setAside: isSetAsidePiece(t.fingerprint),
   }));
 
   const excluded = withHints.filter((t) => t.excludedReason);
