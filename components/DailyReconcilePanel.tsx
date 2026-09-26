@@ -1910,19 +1910,24 @@ const StatementTable = ({
               statement from the member. The three read differently on
               purpose: settled is done, counted is only recorded, exact is a
               job still to do. */}
-          <td className="px-2 py-1.5 whitespace-nowrap text-slate-600">
+          <td className="px-2 py-1.5 text-slate-600">
             {row.category ? (
               row.category
             ) : row.deduction ? (
               <span
+                // Capped and truncated rather than left to stretch the row:
+                // "counted" and "over" can run long, and a wide column here
+                // pushed the whole table into a horizontal scroll. The full
+                // reason is always in the title tooltip below.
                 className={
-                  row.deduction.match === "settled"
+                  "inline-block max-w-[220px] truncate align-bottom " +
+                  (row.deduction.match === "settled"
                     ? "text-emerald-700"
                     : row.deduction.match === "counted"
                       ? "text-sky-700"
                       : row.deduction.match === "exact"
                         ? "text-amber-700"
-                        : "text-slate-500"
+                        : "text-slate-500")
                 }
                 title={
                   row.deduction.match === "settled"
