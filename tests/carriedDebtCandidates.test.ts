@@ -341,14 +341,24 @@ describe("daily lines no round holds", () => {
     ).toEqual([]);
   });
 
-  it("does not offer a line staff placed in a round for the member back to an old debt", () => {
+  it("does not offer a line staff placed in a round back to an old debt when the round needs all of it", () => {
     expect(
       findCandidates(
         [debt()],
         [transfer({ memberNumber: "29642", staffPlaced: true })],
-        [standing()]
+        [standing({ amountDue: 4700, amountPaid: 4700 })]
       )
     ).toEqual([]);
+  });
+
+  it("offers a staff-placed line its round has more than enough of, but never in bulk", () => {
+    // 29000: ฿9,706 bridged into September where ฿6,672 was due — really
+    // paying August's debt, and invisible from the debt's side.
+    const placed = transfer({ memberNumber: "29642", amount: 9706, staffPlaced: true });
+    const due = standing({ amountDue: 6672, amountPaid: 9706 });
+    const [c] = findCandidates([debt()], [placed], [due]);
+    expect(c).toMatchObject({ reason: "surplus", spare: 3034, available: 9706, staffPlaced: true, clear: false });
+    expect(planClearPayments([debt()], [placed], [due])).toEqual([]);
   });
 
   it("plans round transfers and daily lines together, oldest money first", () => {

@@ -43,6 +43,7 @@ export async function GET() {
       spare: c.spare,
       reason: c.reason,
       looksMonthly: c.looksMonthly,
+      staffPlaced: c.staffPlaced,
       clear: c.clear,
       suggested: suggestedAmount(c, outstandingOf.get(c.debtId) ?? 0),
     };
