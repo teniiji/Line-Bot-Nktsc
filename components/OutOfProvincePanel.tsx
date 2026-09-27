@@ -16,6 +16,15 @@ interface Member {
   deductingUnit: string;
   originalUnit: string | null;
   note: string | null;
+  linkedTo: LinkedUnit | null;
+  onLinkedUnit: boolean;
+}
+
+// The statement unit (หน่วยงานที่โอนแทนสมาชิก) an office is linked to.
+interface LinkedUnit {
+  id: string;
+  name: string;
+  key: string;
 }
 
 interface ImportResult {
@@ -34,9 +43,9 @@ interface ImportResult {
 export default function OutOfProvincePanel() {
   const [open, setOpen] = useState(false);
   const [members, setMembers] = useState<Member[]>([]);
-  const [units, setUnits] = useState<
-    { name: string; count: number; linkedTo: { id: string; name: string } | null }[]
-  >([]);
+  const [units, setUnits] = useState<{ name: string; count: number; linkedTo: LinkedUnit | null }[]>([]);
+  const [view, setView] = useState<"members" | "offices">("members");
+  const [unlinkedOnly, setUnlinkedOnly] = useState(false);
   const [unitFilter, setUnitFilter] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(false);
@@ -116,11 +125,19 @@ export default function OutOfProvincePanel() {
   const shown = members.filter(
     (m) =>
       (!unitFilter || m.deductingUnit === unitFilter) &&
+      (!unlinkedOnly || !m.linkedTo) &&
       (!q ||
         m.memberNumber.includes(q) ||
         (m.name ?? "").toLowerCase().includes(q) ||
         m.deductingUnit.toLowerCase().includes(q))
   );
+
+  const linkedUnits = units.filter((u) => u.linkedTo);
+  const unlinkedUnits = units.filter((u) => !u.linkedTo);
+  const countOf = (list: typeof units) => list.reduce((n, u) => n + u.count, 0);
+  const shownOffices = units
+    .filter((u) => (!unlinkedOnly || !u.linkedTo) && (!q || u.name.toLowerCase().includes(q) || (u.linkedTo?.name ?? "").toLowerCase().includes(q)))
+    .sort((a, b) => Number(!!a.linkedTo) - Number(!!b.linkedTo) || b.count - a.count || a.name.localeCompare(b.name, "th"));
 
   return (
     <div className="bg-white rounded-lg shadow">
@@ -220,6 +237,90 @@ export default function OutOfProvincePanel() {
           )}
 
           {units.length > 0 && (
+            <div className="flex flex-wrap items-center gap-2 text-sm">
+              <span className="inline-flex rounded border border-slate-300 overflow-hidden">
+                <button
+                  onClick={() => setView("members")}
+                  className={`px-3 py-1 ${view === "members" ? "bg-slate-800 text-white" : "hover:bg-slate-50"}`}
+                >
+                  👥 รายชื่อ
+                </button>
+                <button
+                  onClick={() => setView("offices")}
+                  className={`px-3 py-1 border-l border-slate-300 ${view === "offices" ? "bg-slate-800 text-white" : "hover:bg-slate-50"}`}
+                >
+                  🔗 ตามหน่วยงาน
+                </button>
+              </span>
+              <span className="text-xs text-slate-600">
+                ผูกแล้ว <strong className="text-violet-700">{linkedUnits.length}</strong> หน่วยงาน (
+                {countOf(linkedUnits)} คน) · ยังไม่ผูก <strong className="text-amber-700">{unlinkedUnits.length}</strong>{" "}
+                หน่วยงาน ({countOf(unlinkedUnits)} คน)
+              </span>
+              <label className="inline-flex items-center gap-1 text-xs text-slate-600">
+                <input type="checkbox" checked={unlinkedOnly} onChange={(e) => setUnlinkedOnly(e.target.checked)} />
+                เฉพาะที่ยังไม่ผูก
+              </label>
+            </div>
+          )}
+
+          {view === "offices" && units.length > 0 && (
+            <div className="overflow-auto max-h-[480px] border border-slate-200 rounded">
+              <table className="w-full text-sm">
+                <thead className="bg-slate-50 text-slate-500 text-left text-xs sticky top-0">
+                  <tr>
+                    <th className="px-3 py-2 font-semibold">หน่วยงานหักเงิน (ต่างจังหวัด)</th>
+                    <th className="px-3 py-2 font-semibold text-right">สมาชิก</th>
+                    <th className="px-3 py-2 font-semibold">ผูกกับหน่วยงานในสเตทเมนต์</th>
+                    <th className="px-3 py-2" />
+                  </tr>
+                </thead>
+                <tbody>
+                  {shownOffices.map((u) => (
+                    <tr key={u.name} className="border-t border-slate-100 hover:bg-slate-50 align-top">
+                      <td className="px-3 py-1.5">{u.name}</td>
+                      <td className="px-3 py-1.5 num text-right">{u.count}</td>
+                      <td className="px-3 py-1.5">
+                        {u.linkedTo ? (
+                          <>
+                            <span className="text-violet-700">🔗 {u.linkedTo.name}</span>
+                            <span className="block font-mono text-[11px] text-slate-400">{u.linkedTo.key}</span>
+                          </>
+                        ) : (
+                          <span
+                            className="text-amber-700 text-xs"
+                            title='ผูกได้ที่กล่อง "หน่วยงานที่โอนแทนสมาชิก" → จัดการสมาชิก ของหน่วยงานที่โอนเงินมา'
+                          >
+                            — ยังไม่ผูก
+                          </span>
+                        )}
+                      </td>
+                      <td className="px-3 py-1.5 text-right">
+                        <button
+                          onClick={() => {
+                            setUnitFilter(u.name);
+                            setView("members");
+                          }}
+                          className="text-xs text-slate-700 hover:underline"
+                        >
+                          ดูรายชื่อ
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                  {shownOffices.length === 0 && (
+                    <tr>
+                      <td colSpan={4} className="px-3 py-4 text-center text-slate-400">
+                        ไม่พบหน่วยงานที่ค้นหา
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          {view === "members" && units.length > 0 && (
             <div className="flex flex-wrap gap-1.5">
               <button
                 onClick={() => setUnitFilter(null)}
@@ -246,6 +347,7 @@ export default function OutOfProvincePanel() {
             </div>
           )}
 
+          {view === "members" && (
           <div className="overflow-auto max-h-[480px] border border-slate-200 rounded">
             <table className="w-full text-sm">
               <thead className="bg-slate-50 text-slate-500 text-left text-xs sticky top-0">
@@ -254,6 +356,7 @@ export default function OutOfProvincePanel() {
                   <th className="px-3 py-2 font-semibold">ชื่อ</th>
                   <th className="px-3 py-2 font-semibold">หน่วยงานหักเงิน</th>
                   <th className="px-3 py-2 font-semibold">สังกัดเดิม</th>
+                  <th className="px-3 py-2 font-semibold">ผูกกับหน่วยงานในสเตทเมนต์</th>
                   <th className="px-3 py-2 font-semibold">หมายเหตุ</th>
                   <th className="px-3 py-2" />
                 </tr>
@@ -261,7 +364,7 @@ export default function OutOfProvincePanel() {
               <tbody>
                 {shown.length === 0 && !loading && (
                   <tr>
-                    <td colSpan={6} className="px-3 py-4 text-center text-slate-400">
+                    <td colSpan={7} className="px-3 py-4 text-center text-slate-400">
                       {members.length === 0 ? "ยังไม่มีรายชื่อ — นำเข้าจากไฟล์ Excel" : "ไม่พบรายชื่อที่ค้นหา"}
                     </td>
                   </tr>
@@ -279,6 +382,21 @@ export default function OutOfProvincePanel() {
                     </td>
                     <td className="px-3 py-1.5 whitespace-nowrap">{m.deductingUnit}</td>
                     <td className="px-3 py-1.5 whitespace-nowrap text-slate-500">{m.originalUnit ?? "—"}</td>
+                    <td className="px-3 py-1.5 whitespace-nowrap text-xs">
+                      {m.linkedTo ? (
+                        <span className="text-violet-700" title={m.linkedTo.key}>
+                          🔗 {m.linkedTo.name}
+                          {!m.onLinkedUnit && (
+                            <span className="text-amber-700" title="ยังไม่อยู่ในรายชื่อของหน่วยงานนั้น">
+                              {" "}
+                              ⚠️
+                            </span>
+                          )}
+                        </span>
+                      ) : (
+                        <span className="text-slate-400">— ยังไม่ผูก</span>
+                      )}
+                    </td>
                     <td className="px-3 py-1.5 text-xs text-slate-500 max-w-[220px] truncate" title={m.note ?? ""}>
                       {m.note ?? ""}
                     </td>
@@ -296,6 +414,7 @@ export default function OutOfProvincePanel() {
               </tbody>
             </table>
           </div>
+          )}
         </div>
       )}
 
