@@ -21,11 +21,25 @@ export async function GET() {
   const payers = links.length
     ? await prisma.unitPayer.findMany({
         where: { id: { in: links.map((l) => l.payerId) } },
-        select: { id: true, name: true },
+        select: { id: true, name: true, key: true },
       })
     : [];
-  const payerName = new Map(payers.map((p) => [p.id, p.name]));
-  const linkOf = new Map(links.map((l) => [l.deductingUnit, { id: l.payerId, name: payerName.get(l.payerId) ?? "" }]));
+  const payerOf = new Map(payers.map((p) => [p.id, p]));
+  const linkOf = new Map(
+    links.map((l) => [
+      l.deductingUnit,
+      { id: l.payerId, name: payerOf.get(l.payerId)?.name ?? "", key: payerOf.get(l.payerId)?.key ?? "" },
+    ])
+  );
+  // Whether each member is on the unit their office is linked to — the sync
+  // keeps it so, and this is where staff can see that it did.
+  const onUnit = links.length
+    ? await prisma.unitPayerMember.findMany({
+        where: { payerId: { in: links.map((l) => l.payerId) }, memberNumber: { in: members.map((m) => m.memberNumber) } },
+        select: { payerId: true, memberNumber: true },
+      })
+    : [];
+  const onUnitSet = new Set(onUnit.map((r) => `${r.payerId}|${r.memberNumber}`));
 
   const units = new Map<string, number>();
   for (const m of members) units.set(m.deductingUnit, (units.get(m.deductingUnit) ?? 0) + 1);
@@ -41,6 +55,11 @@ export async function GET() {
       originalUnit: m.originalUnit,
       note: m.note,
       updatedAt: m.updatedAt,
+      linkedTo: linkOf.get(m.deductingUnit) ?? null,
+      onLinkedUnit: (() => {
+        const link = linkOf.get(m.deductingUnit);
+        return link ? onUnitSet.has(`${link.id}|${m.memberNumber}`) : false;
+      })(),
     })),
     units: [...units]
       .map(([name, count]) => ({ name, count, linkedTo: linkOf.get(name) ?? null }))
