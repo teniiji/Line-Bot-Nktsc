@@ -269,6 +269,27 @@ describe("daily lines no round holds", () => {
     expect(c).toMatchObject({ bySlip: true, contested: false, clear: true, available: 13500 });
   });
 
+  it("never pays an old debt automatically from a unit's transfer in a month already collected", () => {
+    // 29457: ฿19,320 from Udon Thani PES in September, when the results file
+    // had them หักได้ครบ (แจ้งหัก ฿18,900) — the office passing on that
+    // deduction, not money for the ฿19,000 carried from before.
+    const [c] = findLineCandidates(
+      [debt({ memberNumber: "29457", outstanding: 19000, accounts: [], since: aug })],
+      [line({ senderAccount: null, owners: ["29457"], available: 19320, amount: 19320 })],
+      [{ period: "0969", memberNumber: "29457", deductionResult: "collected", status: "collected", expectedAmount: 18900 }]
+    );
+    expect(c).toMatchObject({ contested: true, clear: false, looksMonthly: false });
+  });
+
+  it("still lets a member's own transfer in a collected month pay an old debt", () => {
+    const [c] = findLineCandidates(
+      [debt({ since: aug })],
+      [line()],
+      [{ period: "0969", memberNumber: "29642", deductionResult: "collected", status: "collected" }]
+    );
+    expect(c).toMatchObject({ contested: false, clear: true });
+  });
+
   it("does not offer somebody else's slip-paired line", () => {
     expect(
       findLineCandidates([debt()], [line({ senderAccount: null, owners: ["11111"] })], [])

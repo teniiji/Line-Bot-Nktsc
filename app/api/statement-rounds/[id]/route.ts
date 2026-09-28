@@ -304,6 +304,20 @@ export async function GET(
       transferredAt: t.transferredAt,
     }))
   );
+  // Parts staff booked under another category (lib/recordingAside.ts).
+  const asideRows = recordedOutside.length
+    ? await prisma.expense.findMany({
+        where: { asideFromLineId: { in: recordedOutside.map((r) => r.lineId) } },
+        select: { id: true, amount: true, category: true, asideFromLineId: true },
+        orderBy: { createdAt: "asc" },
+      })
+    : [];
+  const recordedOutsideWithAsides = recordedOutside.map((r) => ({
+    ...r,
+    asides: asideRows
+      .filter((a) => a.asideFromLineId === r.lineId)
+      .map((a) => ({ id: a.id, amount: a.amount, category: a.category })),
+  }));
 
   return NextResponse.json({
     round,
@@ -316,7 +330,7 @@ export async function GET(
     outsideRoundTotal:
       Math.round(outsideRound.reduce((sum, t) => sum + countedAmount(t), 0) * 100) / 100,
     transfers: withHints,
-    recordedOutside,
+    recordedOutside: recordedOutsideWithAsides,
     excluded,
     excludedTotal:
       Math.round(excluded.reduce((sum, t) => sum + t.amount, 0) * 100) / 100,

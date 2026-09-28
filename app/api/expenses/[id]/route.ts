@@ -93,10 +93,31 @@ export async function DELETE(
   _request: NextRequest,
   { params }: { params: { id: string } }
 ) {
-  try {
-    await prisma.expense.delete({ where: { id: params.id } });
-    return NextResponse.json({ ok: true });
-  } catch {
-    return NextResponse.json({ error: "ไม่พบรายการ" }, { status: 404 });
-  }
+  const expense = await prisma.expense.findUnique({
+    where: { id: params.id },
+    select: { id: true, amount: true, statementLineId: true, asideFromLineId: true },
+  });
+  if (!expense) return NextResponse.json({ error: "ไม่พบรายการ" }, { status: 404 });
+
+  // A recording and the parts set aside from it (lib/recordingAside.ts) add up
+  // to one bank line: the recording takes its parts with it, and a part on
+  // its own goes back into the recording.
+  const recording = expense.asideFromLineId
+    ? await prisma.expense.findUnique({ where: { statementLineId: expense.asideFromLineId } })
+    : null;
+  await prisma.$transaction([
+    ...(expense.statementLineId
+      ? [prisma.expense.deleteMany({ where: { asideFromLineId: expense.statementLineId } })]
+      : []),
+    ...(recording
+      ? [
+          prisma.expense.update({
+            where: { id: recording.id },
+            data: { amount: Math.round((recording.amount + expense.amount) * 100) / 100 },
+          }),
+        ]
+      : []),
+    prisma.expense.delete({ where: { id: expense.id } }),
+  ]);
+  return NextResponse.json({ ok: true });
 }
