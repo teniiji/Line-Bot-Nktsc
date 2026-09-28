@@ -4,7 +4,6 @@ import { canBridgeToRound, coveredByRealTransfer } from "@/lib/roundReach";
 import { recomputeRoundPayments } from "@/lib/statementRecompute";
 import { adoptLinePayments } from "@/lib/carriedDebtStore";
 import { periodOfDate } from "@/lib/deductionPeriod";
-import { isUnitPayerLine } from "@/lib/unitPayer";
 
 // Writes a bank line recorded on the เงินเข้าประจำวัน page as this member's
 // deduction into the หักไม่ได้ round for the month the money arrived in — the
@@ -44,12 +43,12 @@ export async function bridgeLineToRound(
   // recording under another category (lib/recordingAside.ts).
   amount: number = line.amount
 ): Promise<BridgeOutcome> {
-  // A unit's line names no account but is still this member's deduction
-  // paid. The round's own uploads only ever read "TR fr" lines, which always
-  // name one, so there is no file copy for it to double.
-  if (!line.senderAccount && !isUnitPayerLine(line.description)) {
-    return { bridged: false, reason: "บรรทัดนี้ไม่มีเลขบัญชีผู้โอน และไม่ใช่ยอดที่หน่วยงานโอน" };
-  }
+  // A line that names no account — a unit's remittance, cash paid in at the
+  // counter — is still this member's deduction paid: staff chose the member
+  // when recording it. The round's own uploads only ever read "TR fr" lines,
+  // which always name one, so there is no file copy for it to double. 14801:
+  // ฿16,160 paid in with no account on it was turned away here while the
+  // round still showed them waiting on ฿15,740.
   if (!line.postedAt) return { bridged: false, reason: "บรรทัดนี้ไม่มีวันที่โอน" };
 
   const round = await prisma.statementRound.findUnique({
