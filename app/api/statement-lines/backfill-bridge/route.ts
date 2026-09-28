@@ -6,6 +6,7 @@ import { recomputeRoundPayments } from "@/lib/statementRecompute";
 import { adoptLinePayments } from "@/lib/carriedDebtStore";
 import { memberNumberKey } from "@/lib/memberNumber";
 import { periodOfDate } from "@/lib/deductionPeriod";
+import { isUnitPayerLine } from "@/lib/unitPayer";
 
 export const dynamic = "force-dynamic";
 
@@ -44,7 +45,7 @@ export async function POST() {
       memberNumber: { not: null },
     },
     orderBy: { date: "asc" },
-    select: { memberNumber: true, statementLineId: true },
+    select: { memberNumber: true, statementLineId: true, amount: true },
   });
 
   if (candidates.length === 0) {
@@ -121,7 +122,9 @@ export async function POST() {
 
   for (const candidate of candidates) {
     const line = lineById.get(candidate.statementLineId as string);
-    if (!line || !line.senderAccount || !line.postedAt) {
+    // A unit's line names no account but is still a deduction paid for its
+    // member — bridged the same as on recording (lib/lineBridgeStore.ts).
+    if (!line || !line.postedAt || (!line.senderAccount && !isUnitPayerLine(line.description))) {
       notEligible += 1;
       continue;
     }
@@ -155,16 +158,18 @@ export async function POST() {
     // The round's own statement may already carry a real transfer for this
     // exact bank line — the same money read a second way, not a second
     // payment. Writing this candidate on top of it would double it.
-    const realTransfers = await prisma.statementTransfer.findMany({
-      where: {
-        roundId: round.id,
-        accountNumber: line.senderAccount,
-        amount: line.amount,
-        manualMemberNumber: false,
-      },
-      select: { accountNumber: true, amount: true, transferredAt: true },
-    });
-    if (coveredByRealTransfer(realTransfers, line.senderAccount, line.amount, line.postedAt)) {
+    const realTransfers = line.senderAccount
+      ? await prisma.statementTransfer.findMany({
+          where: {
+            roundId: round.id,
+            accountNumber: line.senderAccount,
+            amount: line.amount,
+            manualMemberNumber: false,
+          },
+          select: { accountNumber: true, amount: true, transferredAt: true },
+        })
+      : [];
+    if (line.senderAccount && coveredByRealTransfer(realTransfers, line.senderAccount, line.amount, line.postedAt)) {
       alreadyCoveredByFile += 1;
       continue;
     }
@@ -173,8 +178,8 @@ export async function POST() {
       data: {
         roundId: round.id,
         memberNumber: member!.memberNumber,
-        accountNumber: line.senderAccount,
-        amount: line.amount,
+        accountNumber: line.senderAccount ?? "",
+        amount: candidate.amount,
         transferredAt: line.postedAt,
         account: line.account,
         branch: line.branch,

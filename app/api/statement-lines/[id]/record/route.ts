@@ -9,12 +9,8 @@ import {
 import { isMemberDeposit } from "@/lib/statementLines";
 import { memberNumberKey } from "@/lib/memberNumber";
 import { DEDUCTION_CATEGORY } from "@/lib/statementSlipHints";
-import { canBridgeToRound, coveredByRealTransfer } from "@/lib/roundReach";
-import { recomputeRoundPayments } from "@/lib/statementRecompute";
-import { adoptLinePayments } from "@/lib/carriedDebtStore";
-import { periodOfDate } from "@/lib/deductionPeriod";
-import { isUnitPayerLine } from "@/lib/unitPayer";
 import { rememberUnitMember } from "@/lib/unitPayerStore";
+import { bridgeLineToRound } from "@/lib/lineBridgeStore";
 
 export const dynamic = "force-dynamic";
 
@@ -155,71 +151,17 @@ export async function POST(
     }
   }
 
+  // Filing this as the deduction category is staff saying "this settles what
+  // this member owes the หักไม่ได้ round for the month this payment landed
+  // in" — written through when that round agrees (lib/lineBridgeStore.ts).
+  // Best-effort and never fatal to the recording above: the transaction just
+  // filed is the thing staff came here for, and is real whether or not a
+  // round happens to be watching this member right now.
   let bridgedRound: { period: string; label: string } | null = null;
-  // A unit's line names no account but is still this member's deduction
-  // paid: it is bridged too. The round's own uploads only ever read "TR fr"
-  // lines, which always name one, so there is no file copy for it to double.
-  if (category === DEDUCTION_CATEGORY && (line.senderAccount || isUnitPayerLine(line.description))) {
+  if (category === DEDUCTION_CATEGORY) {
     try {
-      const round = await prisma.statementRound.findUnique({
-        where: { period: periodOfDate(line.postedAt) },
-        select: { id: true, period: true, label: true, closedAt: true },
-      });
-      // A closed round's month has been cut off and set up as carried debt;
-      // money for it is placed on the ชำระข้ามเดือน tab by a person, not
-      // written into the frozen round here.
-      if (round && !round.closedAt) {
-        const onRound = await prisma.statementMember.findMany({
-          where: { roundId: round.id },
-          select: { memberNumber: true, deductionResult: true, status: true },
-        });
-        const member = onRound.find((m) => memberNumberKey(m.memberNumber) === memberNumber) ?? null;
-        // A member still showing "unpaid" only means the round has not seen
-        // enough money yet — not that this exact bank line is unaccounted
-        // for. If the round's own statement already carries a real transfer
-        // for the same account, amount and day, this line is that transfer
-        // read a second way, and writing it again would double it.
-        const realTransfers = member && line.senderAccount
-          ? await prisma.statementTransfer.findMany({
-              where: {
-                roundId: round.id,
-                accountNumber: line.senderAccount,
-                amount: line.amount,
-                manualMemberNumber: false,
-              },
-              select: { accountNumber: true, amount: true, transferredAt: true },
-            })
-          : [];
-        if (
-          canBridgeToRound(member) &&
-          !(line.senderAccount && coveredByRealTransfer(realTransfers, line.senderAccount, line.amount, line.postedAt))
-        ) {
-          await prisma.statementTransfer.create({
-            data: {
-              roundId: round.id,
-              memberNumber: member!.memberNumber,
-              accountNumber: line.senderAccount ?? "",
-              amount: line.amount,
-              transferredAt: line.postedAt,
-              account: line.account,
-              branch: line.branch,
-              description: line.description,
-              // Traceable back to the line it came from, and never mistaken
-              // for a fingerprint a real statement upload could also
-              // produce — see manualMemberNumber on StatementTransfer for
-              // why a collision there would matter.
-              fingerprint: `line:${line.fingerprint}`,
-              sourceFile: line.sourceFile,
-              manualMemberNumber: true,
-            },
-          });
-          // Part of this line may already pay a carried debt (taken from the
-          // daily page while no round held it); the round leaves that out.
-          await adoptLinePayments(round.id);
-          await recomputeRoundPayments(round.id);
-          bridgedRound = { period: round.period, label: round.label };
-        }
-      }
+      const outcome = await bridgeLineToRound(line, memberNumber);
+      if (outcome.bridged) bridgedRound = { period: outcome.round.period, label: outcome.round.label };
     } catch (err) {
       console.error("statement line not bridged to round", err);
     }

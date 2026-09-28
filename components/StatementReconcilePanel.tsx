@@ -32,6 +32,7 @@ import { downloadStatementMembersCsv } from "@/lib/csv";
 import { EXCLUDE_REASONS } from "@/lib/statementSlipHints";
 import { SET_ASIDE_CATEGORIES } from "@/lib/transferSetAside";
 import { isCollectedRemittance } from "@/lib/unbridgedRecordings";
+import { canBridgeToRound } from "@/lib/roundReach";
 import { recordingExcess } from "@/lib/recordingAside";
 import { describeDoubleCount } from "@/lib/roundDoubleCount";
 import { cooperativeDateTime, cooperativeToday } from "@/lib/cooperativeClock";
@@ -1005,6 +1006,27 @@ export default function StatementReconcilePanel() {
 
   // A daily-page recording the round did not take in, put on an earlier
   // month's debt instead — see the from-line route.
+  // A recording the round turned away when it was made, counted now that the
+  // member owes (lib/lineBridgeStore.ts).
+  const countRecordingInRound = async (lineId: string, amount: number) => {
+    if (!selectedId) return;
+    setBusy(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const res = await fetch(`/api/statement-lines/${lineId}/bridge`, { method: "POST" });
+      const body = await res.json();
+      if (!res.ok) {
+        setError(body.error || "นับเข้ารอบไม่สำเร็จ");
+        return;
+      }
+      setNotice(`นับยอด ${formatAmount(body.amount ?? amount)} เข้ารอบ ${body.round?.label ?? ""} แล้ว`);
+      await Promise.all([fetchRound(selectedId), fetchRounds()]);
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const payDebtFromRecording = async (debt: CarriedDebtRow, lineId: string, amount: number) => {
     if (!selectedId) return;
     setBusy(true);
@@ -2178,7 +2200,9 @@ export default function StatementReconcilePanel() {
                                           ? "✅ ตามผลการหัก"
                                           : latest.carried > 0
                                             ? "↪ ชำระค้างข้ามเดือน"
-                                            : "📒 ไม่นับในรอบนี้"}
+                                            : canBridgeToRound(m)
+                                              ? "📒 ยังไม่ได้นับในรอบ"
+                                              : "📒 ไม่นับในรอบนี้"}
                                       </span>
                                     </button>
                                   );
@@ -2581,6 +2605,23 @@ export default function StatementReconcilePanel() {
                                           </span>
                                         );
                                       })()}
+                                      </>
+                                    ) : canBridgeToRound(m) ? (
+                                      // Turned away when recorded (settled, or no
+                                      // result yet) but owed now — 29375.
+                                      <>
+                                        <span className="text-xs text-amber-700">
+                                          📒 บันทึกจากหน้าเงินเข้าประจำวัน · ยังไม่ได้นับในรอบนี้
+                                        </span>
+                                        <button
+                                          type="button"
+                                          onClick={() => countRecordingInRound(r.lineId, r.amount)}
+                                          disabled={busy || frozen}
+                                          className="text-xs text-white bg-emerald-700 rounded px-2 py-1 hover:bg-emerald-800 disabled:opacity-50"
+                                          title="ตอนบันทึกสมาชิกคนนี้ครบหรือยังไม่มีผลการหัก ระบบจึงยังไม่นับ — ตอนนี้ยังค้างอยู่ กดเพื่อนับยอดนี้เป็นการชำระของรอบนี้"
+                                        >
+                                          ➕ นับเข้ารอบนี้
+                                        </button>
                                       </>
                                     ) : (
                                       <span className="text-xs text-slate-500">
