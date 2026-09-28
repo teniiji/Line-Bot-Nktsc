@@ -2256,7 +2256,7 @@ export default function StatementReconcilePanel() {
                                       >
                                         ✂️ ตัดออกจากยอดโอน · บันทึกเป็น <strong>{t.excludedReason}</strong>
                                       </span>
-                                    ) : t.splitFrom ? (
+                                    ) : t.splitFrom && !(t.origin?.origin?.kind === "splitFrom" && !t.splitFrom.payerName) ? (
                                       // A share of one bank line: say whose
                                       // line, so it does not read as money
                                       // arriving from nowhere.
@@ -2275,8 +2275,47 @@ export default function StatementReconcilePanel() {
                                       <span className="text-xs text-sky-700" title="ไม่มีบรรทัดในสเตทเมนต์ธนาคาร — บันทึกตรงจากหน้านี้">
                                         💵 เงินสด
                                       </span>
+                                    ) : t.origin?.origin?.kind === "splitFrom" ? (
+                                      <span
+                                        className="text-xs text-sky-700"
+                                        title="ส่วนนี้แบ่งมาจากยอดโอนของสมาชิกอีกคน — แก้ได้ที่แถวของคนนั้น"
+                                      >
+                                        ✂️ แบ่งมาจาก{" "}
+                                        <strong>
+                                          {t.origin.origin.from
+                                            ? `${t.origin.origin.from.memberNumber} ${t.origin.origin.from.name ?? ""}`.trim()
+                                            : "ยอดโอนอีกรายการ"}
+                                        </strong>{" "}
+                                        · ยอดโอนเต็ม {formatAmount(t.origin.origin.total)}
+                                      </span>
+                                    ) : t.origin?.origin?.kind === "movedFrom" ? (
+                                      <span
+                                        className="text-xs text-sky-700"
+                                        title="ทั้งก้อนย้ายมาจากบัญชีของสมาชิกอีกคน โดยเจ้าหน้าที่ — จะไม่ถูกจับคู่ทับตอนอัป Statement รอบถัดไป"
+                                      >
+                                        🔀 ย้ายมาจากบัญชีของ{" "}
+                                        <strong>
+                                          {`${t.origin.origin.from.memberNumber} ${t.origin.origin.from.name ?? ""}`.trim()}
+                                        </strong>
+                                      </span>
+                                    ) : t.origin?.origin?.kind === "recorded" ? (
+                                      <span
+                                        className="text-xs text-sky-700"
+                                        title="บันทึกเป็นของสมาชิกคนนี้ที่หน้าเงินเข้าประจำวัน แล้วเชื่อมเข้ารอบ"
+                                      >
+                                        📒 บันทึกจากหน้าเงินเข้าประจำวัน
+                                        {t.origin.origin.accountOwner && (
+                                          <>
+                                            {" "}· บัญชีของ{" "}
+                                            <strong>
+                                              {`${t.origin.origin.accountOwner.memberNumber} ${t.origin.origin.accountOwner.name ?? ""}`.trim()}
+                                            </strong>
+                                          </>
+                                        )}
+                                      </span>
                                     ) : (
-                                      t.manualMemberNumber && (
+                                      t.manualMemberNumber &&
+                                      !(t.origin?.gaveTo.length) && (
                                         <span
                                           className="text-xs text-sky-700"
                                           title="เลขสมาชิกของรายการนี้ถูกระบุเองโดยเจ้าหน้าที่ ไม่ใช่จับคู่จากเลขบัญชี — จะไม่ถูกจับคู่ทับตอนอัป Statement รอบถัดไป"
@@ -2285,6 +2324,17 @@ export default function StatementReconcilePanel() {
                                         </span>
                                       )
                                     )}
+                                    {(t.origin?.gaveTo ?? []).map((g) => (
+                                      <span
+                                        key={g.memberNumber}
+                                        className="text-xs text-slate-600"
+                                        title="ส่วนนี้ของยอดโอนแบ่งไปให้สมาชิกอีกคน — ยอดที่เหลือในแถวนี้คือส่วนของคนนี้"
+                                      >
+                                        ✂️ แบ่งให้{" "}
+                                        <strong>{`${g.memberNumber} ${g.name ?? ""}`.trim()}</strong>{" "}
+                                        {formatAmount(g.amount)}
+                                      </span>
+                                    ))}
                                     {t.carriedAmount > 0 && (
                                       <span
                                         className="text-xs text-amber-700"

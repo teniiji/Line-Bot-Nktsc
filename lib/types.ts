@@ -299,6 +299,8 @@ export interface StatementTransferRow {
   // The part staff cut out of another row ("ตัดยอดออก" — see
   // lib/transferSetAside.ts), left out of the round under what it was for.
   setAside?: boolean;
+  // Where a hand-placed row came from — see lib/transferOrigin.ts.
+  origin?: import("./transferOrigin").TransferOriginInfo | null;
 }
 
 // A deduction payment filed on the เงินเข้าประจำวัน page that the round never

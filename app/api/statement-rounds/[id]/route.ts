@@ -12,6 +12,7 @@ import { memberNumberKey } from "@/lib/memberNumber";
 import { periodOfDate } from "@/lib/deductionPeriod";
 import { unbridgedRecordings } from "@/lib/unbridgedRecordings";
 import { summarizeStatementFiles } from "@/lib/roundStatementFiles";
+import { transferOrigins, type Person } from "@/lib/transferOrigin";
 
 export const dynamic = "force-dynamic";
 
@@ -209,6 +210,52 @@ export async function GET(
   // Which unit a share came from, on rows that are only part of a bank line.
   const origins = await splitOriginsFor(round.id, transfers);
 
+  // Who a hand-placed transfer came from (lib/transferOrigin.ts): the account
+  // holder, by this round's own list first and the directory second.
+  const nameOnRound = new Map(members.map((m) => [memberNumberKey(m.memberNumber) ?? m.memberNumber, m.name]));
+  const ownerOnRound = new Map<string, string>();
+  for (const m of members) if (m.accountNumber && !ownerOnRound.has(m.accountNumber)) ownerOnRound.set(m.accountNumber, m.memberNumber);
+  const handPlaced = transfers.filter((t) => t.manualMemberNumber);
+  const lookupAccounts = [...new Set(handPlaced.map((t) => t.accountNumber).filter((a) => a && !ownerOnRound.has(a)))];
+  const directory = lookupAccounts.length
+    ? await prisma.memberBankAccount.findMany({
+        where: { accountNumber: { in: lookupAccounts } },
+        select: { accountNumber: true, memberNumber: true, memberName: true },
+      })
+    : [];
+  const ownerInDirectory = new Map(directory.map((d) => [d.accountNumber, d]));
+  const involved = new Set<string>();
+  for (const t of handPlaced) if (t.memberNumber) involved.add(t.memberNumber);
+  for (const d of directory) involved.add(d.memberNumber);
+  const rosterNames = involved.size
+    ? await prisma.memberRoster.findMany({
+        where: { memberNumber: { in: [...involved].filter((n) => !nameOnRound.has(memberNumberKey(n) ?? n)) } },
+        select: { memberNumber: true, memberName: true },
+      })
+    : [];
+  const rosterName = new Map(rosterNames.map((r) => [memberNumberKey(r.memberNumber) ?? r.memberNumber, r.memberName]));
+  const personOf = (memberNumber: string, fallbackName: string | null = null): Person => {
+    const key = memberNumberKey(memberNumber) ?? memberNumber;
+    return { memberNumber, name: nameOnRound.get(key) ?? rosterName.get(key) ?? fallbackName };
+  };
+  const transferOriginOf = transferOrigins(
+    transfers.map((t) => ({
+      id: t.id,
+      fingerprint: t.fingerprint,
+      memberNumber: t.memberNumber,
+      accountNumber: t.accountNumber,
+      amount: t.amount,
+      manualMemberNumber: t.manualMemberNumber,
+    })),
+    (accountNumber) => {
+      const onRound = ownerOnRound.get(accountNumber);
+      if (onRound) return personOf(onRound);
+      const found = ownerInDirectory.get(accountNumber);
+      return found ? personOf(found.memberNumber, found.memberName) : null;
+    },
+    (memberNumber) => personOf(memberNumber)
+  );
+
   const withHints = transfers.map((t) => ({
     id: t.id,
     memberNumber: t.memberNumber,
@@ -226,6 +273,7 @@ export async function GET(
     splitFrom: origins.get(t.id) ?? null,
     // The part staff cut out of another row ("ตัดยอดออก"), which can be put back.
     setAside: isSetAsidePiece(t.fingerprint),
+    origin: transferOriginOf.get(t.id) ?? null,
   }));
 
   const excluded = withHints.filter((t) => t.excludedReason);
