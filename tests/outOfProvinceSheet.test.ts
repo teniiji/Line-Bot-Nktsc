@@ -4,6 +4,7 @@ import {
   dedupeByMember,
   findUnitConflicts,
   isTicked,
+  outOfProvinceEntry,
   parseOutOfProvinceSheet,
 } from "../lib/outOfProvinceSheet";
 
@@ -128,5 +129,25 @@ describe("conflicts and duplicates", () => {
     const rows = [row("28794", "อุดรธานี 4", 2), row("28794", "อุดรธานี 4", 9)];
     expect(findUnitConflicts(rows)).toEqual([]);
     expect(dedupeByMember(rows).map((r) => r.rowNumber)).toEqual([2]);
+  });
+});
+
+describe("outOfProvinceEntry", () => {
+  it("accepts a member number and one office, tidied the way the file is", () => {
+    expect(outOfProvinceEntry({ memberNumber: " 028564 ", deductingUnit: "ร.ร.ราชประชาสงเคราะห์29" })).toEqual({
+      memberNumber: "28564",
+      deductingUnit: "ร.ร.ราชประชาสงเคราะห์ 29",
+    });
+  });
+
+  it("refuses a missing or non-numeric number, a missing office, or two offices", () => {
+    expect(outOfProvinceEntry({ memberNumber: "", deductingUnit: "อุดรธานี 1" })).toEqual({ error: "ใส่เลขสมาชิก" });
+    expect(outOfProvinceEntry({ memberNumber: "28x64", deductingUnit: "อุดรธานี 1" })).toMatchObject({
+      error: expect.stringMatching(/ไม่ใช่ตัวเลข/),
+    });
+    expect(outOfProvinceEntry({ memberNumber: "28564", deductingUnit: "  " })).toEqual({ error: "ใส่หน่วยงานหักเงิน" });
+    expect(outOfProvinceEntry({ memberNumber: "28564", deductingUnit: "อุดรธานี 1 | อุดรธานี 3" })).toEqual({
+      error: "ใส่หน่วยงานหักเงินได้หน่วยเดียว",
+    });
   });
 });
