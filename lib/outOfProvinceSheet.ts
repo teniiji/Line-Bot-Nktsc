@@ -70,6 +70,26 @@ const cellText = (value: unknown): string =>
 
 export const isTicked = (value: unknown): boolean => TICKS.has(cellText(value).toLowerCase());
 
+// "ชัยภูมิ1" and "ชัยภูมิ 1" are one office; spacing is not a difference.
+export const normalizeDeductingUnit = (value: unknown): string =>
+  cellText(value).replace(/([^\s\d])(\d+)$/, "$1 $2");
+
+// One member entered by hand on the dashboard, checked the way a file row
+// is: a numeric member number and exactly one office.
+export function outOfProvinceEntry(input: {
+  memberNumber: unknown;
+  deductingUnit: unknown;
+}): { memberNumber: string; deductingUnit: string } | { error: string } {
+  const raw = cellText(input.memberNumber);
+  const memberNumber = memberNumberKey(raw);
+  if (!raw) return { error: "ใส่เลขสมาชิก" };
+  if (!memberNumber || !/^\d+$/.test(memberNumber)) return { error: `เลขสมาชิก "${raw}" ไม่ใช่ตัวเลข` };
+  const deductingUnit = normalizeDeductingUnit(input.deductingUnit);
+  if (!deductingUnit) return { error: "ใส่หน่วยงานหักเงิน" };
+  if (deductingUnit.includes("|")) return { error: "ใส่หน่วยงานหักเงินได้หน่วยเดียว" };
+  return { memberNumber, deductingUnit };
+}
+
 export function parseOutOfProvinceSheet(rows: unknown[][]): OutOfProvinceSheet {
   let headerIndex = -1;
   let memberColumn = -1;
@@ -108,8 +128,7 @@ export function parseOutOfProvinceSheet(rows: unknown[][]): OutOfProvinceSheet {
     const row = rows[i] ?? [];
     const rowNumber = i + 1;
     const memberRaw = cellText(row[memberColumn]);
-    // "ชัยภูมิ1" and "ชัยภูมิ 1" are one office; spacing is not a difference.
-    const unit = cellText(row[unitColumn]).replace(/([^\s\d])(\d+)$/, "$1 $2");
+    const unit = normalizeDeductingUnit(row[unitColumn]);
     if (!memberRaw && !unit) {
       blankRows++;
       continue;
