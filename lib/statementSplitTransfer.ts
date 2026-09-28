@@ -51,3 +51,48 @@ export function isFullSplit(transferAmount: number, amount: number): boolean {
 export function remainingAfterSplit(transferAmount: number, amount: number): number {
   return Math.round((transferAmount - amount) * 100) / 100;
 }
+
+export interface SplitFamilyRow {
+  fingerprint: string;
+  amount: number;
+  manualMemberNumber: boolean;
+}
+
+// Pieces cut from a row are named after it: "<parent>::split:…" for a share
+// given to another member, "<parent>::aside:…" for a part filed as something
+// else (lib/transferSetAside.ts). A piece can be split again, so the direct
+// parent is up to the last marker.
+const PIECE_MARKERS = ["::split:", "::aside:"];
+
+export function parentOfPiece(fingerprint: string): string | null {
+  const at = Math.max(...PIECE_MARKERS.map((m) => fingerprint.lastIndexOf(m)));
+  return at === -1 ? null : fingerprint.slice(0, at);
+}
+
+/**
+ * Rows that hold the whole bank line again although pieces were cut from
+ * them, with the amount each should hold. Taking a piece always marks the
+ * row it came from manualMemberNumber, which a statement re-upload leaves
+ * alone; a row with pieces that is not marked was written back at the full
+ * line amount by a re-upload before that protection existed, and counts the
+ * pieces twice. 13857: ฿5,600 with ฿3,000 given to 9904, the ฿5,600 back.
+ *
+ * A row whose pieces add up to all of it or more is left for a person: the
+ * pieces themselves are then what is in doubt.
+ */
+export function overstatedParents(rows: SplitFamilyRow[]): { fingerprint: string; amount: number }[] {
+  const piecesOf = new Map<string, number>();
+  for (const r of rows) {
+    const parent = parentOfPiece(r.fingerprint);
+    if (parent !== null) piecesOf.set(parent, (piecesOf.get(parent) ?? 0) + r.amount);
+  }
+  const out: { fingerprint: string; amount: number }[] = [];
+  for (const r of rows) {
+    if (r.manualMemberNumber || parentOfPiece(r.fingerprint) !== null) continue;
+    const pieces = piecesOf.get(r.fingerprint);
+    if (pieces === undefined) continue;
+    const amount = remainingAfterSplit(r.amount, pieces);
+    if (amount > EPSILON) out.push({ fingerprint: r.fingerprint, amount });
+  }
+  return out;
+}

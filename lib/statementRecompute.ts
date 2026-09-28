@@ -3,6 +3,7 @@ import { calcPaymentStatus, collectedStatus } from "@/lib/statementReconcile";
 import { fillAccounts } from "@/lib/accountHistory";
 import { countedAmount } from "@/lib/carriedDebt";
 import { sameStanding } from "@/lib/roundStanding";
+import { overstatedParents, parentOfPiece } from "@/lib/statementSplitTransfer";
 
 // Recomputes every member's payment total for a round from the transfer rows
 // that are currently stored.
@@ -13,6 +14,8 @@ import { sameStanding } from "@/lib/roundStanding";
 // rows means the numbers on screen always match the transfers staff can
 // click through to.
 export async function recomputeRoundPayments(roundId: string): Promise<void> {
+  await mendOverstatedParents(roundId);
+
   const [members, transfers] = await Promise.all([
     prisma.statementMember.findMany({
       where: { roundId },
@@ -378,4 +381,29 @@ export async function applyDirectoryAccounts(roundId: string): Promise<AccountFi
     fromPrevious: fills.filter((fill) => fill.source === "previous").length,
     ambiguous: ambiguous.length,
   };
+}
+
+// A row a split or cut was taken from, written back at the full bank line by
+// an old re-upload, is brought back to what it keeps — see overstatedParents.
+// Here so "🔄 คำนวณยอดใหม่" mends a round that still carries one.
+async function mendOverstatedParents(roundId: string): Promise<void> {
+  const pieces = await prisma.statementTransfer.findMany({
+    where: {
+      roundId,
+      OR: [{ fingerprint: { contains: "::split:" } }, { fingerprint: { contains: "::aside:" } }],
+    },
+    select: { fingerprint: true, amount: true, manualMemberNumber: true },
+  });
+  if (pieces.length === 0) return;
+  const parentFps = [...new Set(pieces.map((p) => parentOfPiece(p.fingerprint) as string))];
+  const parents = await prisma.statementTransfer.findMany({
+    where: { roundId, fingerprint: { in: parentFps }, manualMemberNumber: false },
+    select: { fingerprint: true, amount: true, manualMemberNumber: true },
+  });
+  for (const fix of overstatedParents([...parents, ...pieces])) {
+    await prisma.statementTransfer.updateMany({
+      where: { roundId, fingerprint: fix.fingerprint },
+      data: { amount: fix.amount, manualMemberNumber: true },
+    });
+  }
 }
