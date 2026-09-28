@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { unbridgedRecordings, type RecordedLine } from "../lib/unbridgedRecordings";
+import { isCollectedRemittance, unbridgedRecordings, type RecordedLine } from "../lib/unbridgedRecordings";
 
 const recorded = (over: Partial<RecordedLine> = {}): RecordedLine => ({
   expenseId: "e1",
@@ -94,5 +94,27 @@ describe("unbridgedRecordings", () => {
       []
     );
     expect(rows.map((r) => r.id)).toEqual(["expense:e1", "expense:e2"]);
+  });
+});
+
+describe("isCollectedRemittance", () => {
+  it("is a unit's transfer for a member already หักได้ครบ", () => {
+    // 29457: ฿19,320 from Udon Thani PES — the deduction the results file
+    // already marked collected, arriving from the office that took it.
+    const [row] = unbridgedRecordings([recorded({ senderAccount: null })], []);
+    expect(row.fromUnit).toBe(true);
+    expect(isCollectedRemittance(row, "collected")).toBe(true);
+  });
+
+  it("is not a member's own transfer, which is money beyond what payroll took", () => {
+    const [row] = unbridgedRecordings([recorded({ senderAccount: "4960392169" })], []);
+    expect(row.fromUnit).toBe(false);
+    expect(isCollectedRemittance(row, "collected")).toBe(false);
+  });
+
+  it("is not a unit's transfer for a member whose deduction was not collected", () => {
+    const [row] = unbridgedRecordings([recorded()], []);
+    expect(isCollectedRemittance(row, "uncollected")).toBe(false);
+    expect(isCollectedRemittance(row, "awaiting")).toBe(false);
   });
 });

@@ -313,6 +313,11 @@ export interface RecordedOutsideRow {
   // Already paying carried debts (ชำระข้ามเดือน), and what is left for one.
   carried: number;
   available: number;
+  // Sent by a unit's office rather than the member — see
+  // isCollectedRemittance in lib/unbridgedRecordings.ts.
+  fromUnit: boolean;
+  // Parts booked under another category (lib/recordingAside.ts).
+  asides: { id: string; amount: number; category: string }[];
 }
 
 // A transfer that matched nobody on the round's list — money that arrived

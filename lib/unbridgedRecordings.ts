@@ -47,6 +47,9 @@ export interface UnbridgedRecording {
   carried: number;
   // What is left of the line for a carried debt to take.
   available: number;
+  // No paying account on the line: a unit's office sending money on for its
+  // people (lib/unitPayer.ts), not the member transferring it themselves.
+  fromUnit: boolean;
 }
 
 // A recording is already on screen the ordinary way when the round holds its
@@ -75,5 +78,20 @@ export function unbridgedRecordings(
       lineId: r.lineId,
       carried: Math.round(r.carried * 100) / 100,
       available: Math.max(0, Math.round((r.amount - r.carried) * 100) / 100),
+      fromUnit: !r.senderAccount,
     }));
+}
+
+// A unit's transfer for a member the round already has as หักได้ครบ is that
+// deduction arriving: the office took it from their pay and passed it on.
+// It is the round's own money, not a second payment — so it is neither
+// "ไม่นับในรอบนี้" nor something an earlier month's debt may take. 29457:
+// ฿19,320 from Udon Thani PES, the same money the results file had already
+// marked collected. (A member's own transfer is different — that is money
+// beyond what payroll took, and may well be paying an older month.)
+export function isCollectedRemittance(
+  recording: { fromUnit: boolean },
+  deductionResult: string
+): boolean {
+  return recording.fromUnit && deductionResult === "collected";
 }

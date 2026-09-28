@@ -134,10 +134,17 @@ model Expense {
   // bank line it came from is accounted for already. See
   // lib/transferSetAside.ts.
   setAsideFromId       String?
+  // Set on the part of a daily-page recording staff booked under another
+  // category (the สสค a unit sends on top of a member's deduction): the id of
+  // the bank line the recording is on. The recording keeps the rest; the two
+  // still add up to the line. Never read by the daily pairing as a slip. See
+  // lib/recordingAside.ts.
+  asideFromLineId      String?
 
   @@index([date])
   @@index([splitFromLineId])
   @@index([setAsideFromId])
+  @@index([asideFromLineId])
   @@index([category])
   // get_transaction_summary always filters by lineUserId, often together
   // with a date range — a composite index serves that directly instead of

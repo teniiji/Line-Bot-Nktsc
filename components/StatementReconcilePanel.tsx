@@ -31,6 +31,8 @@ import { describeDeductionPeriod } from "@/lib/deductionPeriod";
 import { downloadStatementMembersCsv } from "@/lib/csv";
 import { EXCLUDE_REASONS } from "@/lib/statementSlipHints";
 import { SET_ASIDE_CATEGORIES } from "@/lib/transferSetAside";
+import { isCollectedRemittance } from "@/lib/unbridgedRecordings";
+import { recordingExcess } from "@/lib/recordingAside";
 import { describeDoubleCount } from "@/lib/roundDoubleCount";
 import { cooperativeDateTime, cooperativeToday } from "@/lib/cooperativeClock";
 import { sectionOpen } from "@/lib/sections";
@@ -181,6 +183,8 @@ export default function StatementReconcilePanel() {
   const [statements, setStatements] = useState<StatementFileSummary[]>([]);
   const [transfers, setTransfers] = useState<StatementTransferRow[]>([]);
   const [recordedOutside, setRecordedOutside] = useState<RecordedOutsideRow[]>([]);
+  // The category chosen for each recording's excess, by line id.
+  const [excessCategory, setExcessCategory] = useState<Record<string, string>>({});
   const [excludedTotal, setExcludedTotal] = useState(0);
   const [expandedMember, setExpandedMember] = useState<string | null>(null);
   // The one transfer row currently offering its "แบ่งให้สมาชิกอื่น" form, and
@@ -948,6 +952,52 @@ export default function StatementReconcilePanel() {
             : "")
       );
       await Promise.all([fetchRound(selectedId), fetchRounds()]);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // The part of a unit's transfer beyond ยอดแจ้งหัก, booked under its own
+  // category (lib/recordingAside.ts), and put back.
+  const setAsideFromRecording = async (lineId: string, amount: number, category: string) => {
+    if (!selectedId) return;
+    setBusy(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const res = await fetch(`/api/statement-lines/${lineId}/aside`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ amount, category }),
+      });
+      const body = await res.json();
+      if (!res.ok) {
+        setError(body.error || "บันทึกไม่สำเร็จ");
+        return;
+      }
+      setNotice(`บันทึก ${formatAmount(amount)} เป็น ${category} แล้ว — ดูได้ที่แถบธุรกรรม`);
+      await fetchRound(selectedId);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const restoreRecordingAside = async (lineId: string, asideId: string) => {
+    if (!selectedId) return;
+    setBusy(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const res = await fetch(`/api/statement-lines/${lineId}/aside?asideId=${encodeURIComponent(asideId)}`, {
+        method: "DELETE",
+      });
+      const body = await res.json();
+      if (!res.ok) {
+        setError(body.error || "รวมกลับไม่สำเร็จ");
+        return;
+      }
+      setNotice("รวมยอดกลับเข้ารายการเดิมแล้ว");
+      await fetchRound(selectedId);
     } finally {
       setBusy(false);
     }
@@ -2124,7 +2174,11 @@ export default function StatementReconcilePanel() {
                                     >
                                       <DateTimeCell iso={latest.date} />
                                       <span className="block text-[11px] text-slate-400">
-                                        {latest.carried > 0 ? "↪ ชำระค้างข้ามเดือน" : "📒 ไม่นับในรอบนี้"}
+                                        {isCollectedRemittance(latest, m.deductionResult)
+                                          ? "✅ ตามผลการหัก"
+                                          : latest.carried > 0
+                                            ? "↪ ชำระค้างข้ามเดือน"
+                                            : "📒 ไม่นับในรอบนี้"}
                                       </span>
                                     </button>
                                   );
@@ -2402,11 +2456,17 @@ export default function StatementReconcilePanel() {
                                 {/* Recorded on the daily page but not taken
                                     into the round: the member was already
                                     settled when it was filed. Read-only. */}
-                                {recordedOutsideOf(m.memberNumber).map((r) => (
+                                {recordedOutsideOf(m.memberNumber).map((r) => {
+                                  const remittance = isCollectedRemittance(r, m.deductionResult);
+                                  return (
                                   <div
                                     key={r.id}
                                     className="flex flex-wrap items-center gap-3 text-sm py-1 border-t border-slate-200 text-slate-500"
-                                    title="บันทึกเป็นชำระเก็บไม่ได้รายเดือนที่หน้าเงินเข้าประจำวันแล้ว แต่ตอนบันทึกสมาชิกคนนี้มีสถานะครบในรอบนี้อยู่แล้ว จึงไม่นับซ้ำในรอบ — ดู/แก้รายการได้ที่หน้าเงินเข้าประจำวันหรือแถบธุรกรรม"
+                                    title={
+                                      remittance
+                                        ? "หน่วยงานหักจากเงินเดือนแล้วโอนมาให้สหกรณ์ — เป็นเงินก้อนเดียวกับที่ไฟล์ผลการหักบอกว่า หักได้ครบ จึงไม่นับเพิ่มในรอบ และไม่ใช้ชำระค้างข้ามเดือน"
+                                        : "บันทึกเป็นชำระเก็บไม่ได้รายเดือนที่หน้าเงินเข้าประจำวันแล้ว แต่ตอนบันทึกสมาชิกคนนี้มีสถานะครบในรอบนี้อยู่แล้ว จึงไม่นับซ้ำในรอบ — ดู/แก้รายการได้ที่หน้าเงินเข้าประจำวันหรือแถบธุรกรรม"
+                                    }
                                   >
                                     <span className="num whitespace-nowrap font-medium">
                                       {formatAmount(r.amount)}
@@ -2414,18 +2474,89 @@ export default function StatementReconcilePanel() {
                                     <span className="num whitespace-nowrap">
                                       {formatStatementDateTime(r.date)}
                                     </span>
-                                    <span className="text-xs text-slate-500">
-                                      📒 บันทึกจากหน้าเงินเข้าประจำวัน · ไม่นับในรอบนี้
-                                      {m.deductionResult === "collected"
-                                        ? " (หักเงินเดือนได้ครบแล้ว)"
-                                        : " (ยอดครบแล้วตอนบันทึก)"}
-                                    </span>
+                                    {remittance ? (
+                                      <>
+                                      <span className="text-xs text-emerald-700">
+                                        ✅ เงินที่หน่วยงานโอนตามผลการหัก · รวมอยู่ใน "หักได้ครบ" แล้ว
+                                      </span>
+                                      {r.asides.map((a) => (
+                                        <span key={a.id} className="text-xs text-violet-700">
+                                          ✂️ {a.category} {formatAmount(a.amount)}{" "}
+                                          <button
+                                            type="button"
+                                            onClick={() => restoreRecordingAside(r.lineId, a.id)}
+                                            disabled={busy}
+                                            className="text-slate-500 hover:underline disabled:opacity-50"
+                                            title="ตัดผิด — รวมยอดนี้กลับเข้ารายการเดิม และลบรายการที่บันทึกไว้ในแถบธุรกรรม"
+                                          >
+                                            รวมกลับ
+                                          </button>
+                                        </span>
+                                      ))}
+                                      {(() => {
+                                        const excess = recordingExcess(r.amount, m.expectedAmount);
+                                        if (excess <= 0) return null;
+                                        const category = excessCategory[r.lineId] ?? "สสค";
+                                        return (
+                                          <span className="ml-auto inline-flex flex-wrap items-center gap-1.5 text-xs">
+                                            <span
+                                              className="text-amber-700"
+                                              title="หน่วยงานโอนมามากกว่ายอดแจ้งหัก — ส่วนเกินมักเป็นเงิน สสค รายเดือนของสมาชิก"
+                                            >
+                                              ส่วนเกินจากยอดแจ้งหัก {formatAmount(excess)}
+                                            </span>
+                                            <select
+                                              value={category}
+                                              onChange={(e) =>
+                                                setExcessCategory((prev) => ({ ...prev, [r.lineId]: e.target.value }))
+                                              }
+                                              disabled={busy || frozen}
+                                              className="border border-slate-300 rounded px-1.5 py-0.5"
+                                            >
+                                              {SET_ASIDE_CATEGORIES.map((c) => (
+                                                <option key={c} value={c}>
+                                                  {c}
+                                                </option>
+                                              ))}
+                                            </select>
+                                            <button
+                                              type="button"
+                                              onClick={() => setAsideFromRecording(r.lineId, excess, category)}
+                                              disabled={busy || frozen}
+                                              className="border border-violet-300 text-violet-800 bg-violet-50 rounded px-2 py-0.5 hover:bg-violet-100 disabled:opacity-50"
+                                              title={`ตัด ${formatAmount(excess)} ออกจากรายการที่บันทึก แล้วบันทึกเป็น ${category} ของสมาชิกคนนี้ (ดูได้ที่แถบธุรกรรม)`}
+                                            >
+                                              ✂️ บันทึกเป็น {category}
+                                            </button>
+                                          </span>
+                                        );
+                                      })()}
+                                      </>
+                                    ) : (
+                                      <span className="text-xs text-slate-500">
+                                        📒 บันทึกจากหน้าเงินเข้าประจำวัน · ไม่นับในรอบนี้
+                                        {m.deductionResult === "collected"
+                                          ? " (หักเงินเดือนได้ครบแล้ว)"
+                                          : " (ยอดครบแล้วตอนบันทึก)"}
+                                      </span>
+                                    )}
                                     {r.carried > 0 && (
                                       <span className="text-xs text-amber-700">
                                         ↪ ใช้ชำระค้างข้ามเดือนแล้ว {formatAmount(r.carried)}
+                                        {/* Taken for an older month before this was told
+                                            apart — likely the same money twice (31132). */}
+                                        {remittance && (
+                                          <span
+                                            className="text-red-700"
+                                            title='ยอดนี้เป็นเงินที่หน่วยงานโอนตามผลการหักของเดือนนี้ ถ้านำไปชำระค้างข้ามเดือนด้วย เงินก้อนเดียวถูกนับสองครั้ง — ตรวจและลบรายการชำระได้ที่แถบ "ชำระข้ามเดือน"'
+                                          >
+                                            {" "}⚠️ น่าจะนับซ้ำ ตรวจที่แถบชำระข้ามเดือน
+                                          </span>
+                                        )}
                                       </span>
                                     )}
-                                    {r.available > 0 &&
+                                    {!remittance &&
+                                      r.available > 0 &&
                                       debtsOf(m.memberNumber)
                                         .filter((d) => d.amount - d.amountPaid > 0.005)
                                         .map((d) => {
@@ -2445,7 +2576,8 @@ export default function StatementReconcilePanel() {
                                           );
                                         })}
                                   </div>
-                                ))}
+                                  );
+                                })}
                                 {transfersOf(m.memberNumber).length === 0 &&
                                   recordedOutsideOf(m.memberNumber).length === 0 && (
                                     <p className="text-xs text-slate-400 py-1 border-t border-slate-200">

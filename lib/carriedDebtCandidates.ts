@@ -324,6 +324,17 @@ export function findLineCandidates(
       .map((s) => `${s.period}|${memberNumberKey(s.memberNumber) ?? s.memberNumber}`)
   );
 
+  // A unit's transfer (no paying account) in a month the member's deduction
+  // was collected is that deduction arriving from their office — the same
+  // money the round already counts — so it is never taken for an older debt
+  // without a person saying so. 29457: ฿19,320 from Udon Thani PES against
+  // ยอดแจ้งหัก ฿18,900; not equal, so looksMonthly alone would not catch it.
+  const collectedIn = new Set(
+    monthStandings
+      .filter((s) => s.deductionResult === "collected")
+      .map((s) => `${s.period}|${memberNumberKey(s.memberNumber) ?? s.memberNumber}`)
+  );
+
   const candidates: LineCandidate[] = [];
   const byLineDate = (a: DailyLine, b: DailyLine) =>
     (a.postedAt?.getTime() ?? 0) - (b.postedAt?.getTime() ?? 0) || a.id.localeCompare(b.id);
@@ -341,7 +352,11 @@ export function findLineCandidates(
       const looksMonthly =
         period !== null &&
         matchesExpected(expectedIn.get(`${period}|${key}`), line.amount ?? line.available);
-      const contested = period ? stillOwing.has(`${period}|${key}`) || looksMonthly : true;
+      const unitRemittance =
+        line.senderAccount === null && period !== null && collectedIn.has(`${period}|${key}`);
+      const contested = period
+        ? stillOwing.has(`${period}|${key}`) || looksMonthly || unitRemittance
+        : true;
       // An account two debtors share says nothing about which; a slip does.
       const sharedAccount =
         !bySlip && (debtorsOfAccount.get(line.senderAccount as string)?.size ?? 0) > 1;
