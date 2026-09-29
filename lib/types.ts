@@ -296,6 +296,9 @@ export interface StatementTransferRow {
   // A unit passing on a deduction (lib/unitRemittance.ts): left out of what
   // a member the results file has as หักได้ paid.
   unitRemittance?: boolean;
+  // The daily-page line this row was recorded from, when it is that line
+  // whole ("line:<fingerprint>") — what "👤 ย้ายเป็นของสมาชิกอื่น" moves.
+  recordedLineId?: string | null;
   splitFrom?: {
     payerName: string | null;
     total: number;

@@ -1008,6 +1008,82 @@ export default function StatementReconcilePanel() {
   // month's debt instead — see the from-line route.
   // A recording the round turned away when it was made, counted now that the
   // member owes (lib/lineBridgeStore.ts).
+  // "👤 ย้ายเป็นของสมาชิกอื่น": a line recorded for the wrong member on the
+  // daily page, moved whole — recording, round row and the unit's memory
+  // (lib/lineReassignStore.ts).
+  const [reassigningLine, setReassigningLine] = useState<string | null>(null);
+  const [reassignMember, setReassignMember] = useState("");
+  const [reassignError, setReassignError] = useState<string | null>(null);
+  const toggleReassign = (lineId: string) => {
+    setReassigningLine(reassigningLine === lineId ? null : lineId);
+    setReassignMember("");
+    setReassignError(null);
+  };
+  const submitReassign = async (lineId: string, amount: number) => {
+    if (!selectedId) return;
+    setBusy(true);
+    setReassignError(null);
+    setNotice(null);
+    try {
+      const res = await fetch(`/api/statement-lines/${lineId}/reassign`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ memberNumber: reassignMember.trim() }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setReassignError(body.error || "ย้ายไม่สำเร็จ");
+        return;
+      }
+      setReassigningLine(null);
+      setNotice(
+        `ย้ายยอด ${formatAmount(amount)} จาก ${body.from ?? "-"} เป็นของ ${body.to}${body.name ? ` ${body.name}` : ""} แล้ว` +
+          (body.round ? ` · นับเข้ารอบ ${body.round.label} ให้แล้ว` : body.notCounted ? ` · ยังไม่นับเข้ารอบ (${body.notCounted})` : "")
+      );
+      await Promise.all([fetchRound(selectedId), fetchRounds()]);
+    } finally {
+      setBusy(false);
+    }
+  };
+  const reassignForm = (lineId: string, amount: number, fromName: string) =>
+    reassigningLine === lineId && (
+      <div className="w-full flex flex-wrap items-center gap-2 pt-1 pl-1 border-t border-dashed border-slate-200 mt-1">
+        <span className="text-xs text-slate-500">ย้ายยอด {formatAmount(amount)} ทั้งก้อนเป็นของเลขสมาชิก</span>
+        <input
+          type="text"
+          value={reassignMember}
+          onChange={(e) => setReassignMember(e.target.value)}
+          placeholder="เลขสมาชิก"
+          className="border border-slate-300 rounded px-2 py-1 text-xs w-28"
+          autoFocus
+        />
+        <button
+          type="button"
+          onClick={() => submitReassign(lineId, amount)}
+          disabled={busy || !reassignMember.trim()}
+          className="text-xs text-white bg-slate-900 rounded px-2.5 py-1 disabled:opacity-50"
+        >
+          ย้าย
+        </button>
+        {reassignError && <p className="w-full text-xs text-red-600">{reassignError}</p>}
+        <p className="w-full text-xs text-slate-400">
+          แก้รายการที่บันทึกผิดคน: ย้ายรายการในแถบธุรกรรม เอาออกจากยอดของ {fromName} และถ้าเป็นยอดของหน่วยงาน
+          ระบบจะจำว่าหน่วยงานนี้โอนแทนคนใหม่แทน — ถ้าคนใหม่ยังค้างในรอบนี้จะนับให้เลย
+        </p>
+      </div>
+    );
+  const reassignButton = (lineId: string) => (
+    <button
+      type="button"
+      onClick={() => toggleReassign(lineId)}
+      disabled={busy || frozen}
+      className="text-xs text-slate-600 border border-slate-300 rounded px-2 py-1 hover:bg-slate-50 disabled:opacity-50"
+      title="บันทึกยอดนี้ผิดคนที่หน้าเงินเข้าประจำวัน — ย้ายทั้งก้อนไปเป็นของสมาชิกที่ถูกต้อง"
+    >
+      {reassigningLine === lineId ? "ยกเลิก" : "👤 ย้ายเป็นของสมาชิกอื่น"}
+    </button>
+  );
+
   const countRecordingInRound = async (lineId: string, amount: number) => {
     if (!selectedId) return;
     setBusy(true);
@@ -2453,6 +2529,7 @@ export default function StatementReconcilePanel() {
                                       >
                                         {splittingTransfer === t.id ? "ยกเลิกแบ่งยอด" : "แบ่งให้สมาชิกอื่น"}
                                       </button>
+                                      {t.recordedLineId && reassignButton(t.recordedLineId)}
                                       {canCarry(t) && (
                                         <button
                                           type="button"
@@ -2530,6 +2607,7 @@ export default function StatementReconcilePanel() {
                                         onDone={afterCarry}
                                       />
                                     )}
+                                    {t.recordedLineId && reassignForm(t.recordedLineId, t.amount, m.name)}
                                     {splittingTransfer === t.id && (
                                       <div className="w-full flex flex-wrap items-center gap-2 pt-1 pl-1 border-t border-dashed border-slate-200 mt-1">
                                         <span className="text-xs text-slate-500">ย้าย</span>
@@ -2708,6 +2786,8 @@ export default function StatementReconcilePanel() {
                                             </button>
                                           );
                                         })}
+                                    {reassignButton(r.lineId)}
+                                    {reassignForm(r.lineId, r.amount, m.name)}
                                   </div>
                                   );
                                 })}
