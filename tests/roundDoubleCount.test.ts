@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { countedElsewhere, describeDoubleCount } from "../lib/roundDoubleCount";
-import { EXCLUDE_REASONS, OTHER_ROUND_REASON } from "../lib/statementSlipHints";
+import { EXCLUDE_REASONS, IN_RESULT_REASON, OTHER_ROUND_REASON, excludeReasonLabel } from "../lib/statementSlipHints";
 
 const mine = (id: string, fingerprint: string, counts = true) => ({ id, fingerprint, counts });
 const other = (fingerprint: string, label: string, counts = true) => ({
@@ -88,5 +88,13 @@ describe("EXCLUDE_REASONS", () => {
 
   it("never offers the deduction payment itself as a reason to exclude", () => {
     expect(EXCLUDE_REASONS).not.toContain("ชำระเก็บไม่ได้รายเดือน");
+  });
+});
+
+describe("excludeReasonLabel", () => {
+  it("reads the already-counted reason as such, and every other as money for something else", () => {
+    expect(EXCLUDE_REASONS).toContain(IN_RESULT_REASON);
+    expect(excludeReasonLabel(IN_RESULT_REASON)).toBe("✅ รวมอยู่ในผลการหักแล้ว");
+    expect(excludeReasonLabel("ซื้อหุ้น")).toBe("ไม่เกี่ยวกับรอบนี้ — ซื้อหุ้น");
   });
 });

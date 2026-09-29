@@ -27,7 +27,21 @@ export const OTHER_ROUND_REASON = "ชำระของรอบอื่น";
 // list rather than free text, so the reason on a row is something the next
 // person can read and act on. Lives here rather than in the route because a
 // Next.js route file may only export request handlers.
+// The money the results file already counts: a member it lists as หักได้ครบ
+// who transferred part of it themselves before the unit reported (22730:
+// ฿2,000 of a ฿16,111 deduction), where the transfer is the settling, not
+// money on top of it. Left out of what they paid, like any other reason.
+export const IN_RESULT_REASON = "รวมอยู่ในผลการหักแล้ว";
+
+// How a reason reads in the "เป็นเงินอะไร" choices: every other one takes
+// the money out of this round as being for something else, this one says
+// the round has already counted it.
+export function excludeReasonLabel(reason: string): string {
+  return reason === IN_RESULT_REASON ? `✅ ${reason}` : `ไม่เกี่ยวกับรอบนี้ — ${reason}`;
+}
+
 export const EXCLUDE_REASONS = [
+  IN_RESULT_REASON,
   "ซื้อหุ้น",
   "ชำระหนี้",
   "ฝากเงิน",
