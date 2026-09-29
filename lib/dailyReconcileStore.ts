@@ -97,9 +97,12 @@ export async function loadReconciliation(
         orderBy: { createdAt: "asc" },
       })
     : [];
-  const splits = new Map<string, { memberNumber: string; amount: number }[]>();
+  const splits = new Map<string, { memberNumber: string; amount: number; payerName: string | null }[]>();
   for (const row of splitRows) {
-    splits.set(row.lineId, [...(splits.get(row.lineId) ?? []), { memberNumber: row.memberNumber, amount: row.amount }]);
+    splits.set(row.lineId, [
+      ...(splits.get(row.lineId) ?? []),
+      { memberNumber: row.memberNumber, amount: row.amount, payerName: row.payerName },
+    ]);
   }
 
   const deposits: DepositLine[] = lines
