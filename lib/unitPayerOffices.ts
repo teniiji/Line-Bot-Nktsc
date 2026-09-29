@@ -74,6 +74,9 @@ export interface OfficeSuggestion {
   // How many of the unit's own members the list has at this office.
   overlap: number;
   size: number;
+  // Which of them, as the unit holds their numbers — so staff can see who
+  // the suggestion rests on before linking.
+  matched: string[];
 }
 
 // Offices worth linking to a unit: those holding members the unit is already
@@ -85,15 +88,16 @@ export function officeSuggestions(
   officeMembers: OfficeMember[],
   linkedOffices: Set<string>
 ): OfficeSuggestion[] {
-  const mine = new Set(unitMemberNumbers.map(key));
+  const mine = new Map(unitMemberNumbers.map((n) => [key(n), n]));
   const size = new Map<string, number>();
-  const overlap = new Map<string, number>();
+  const matched = new Map<string, string[]>();
   for (const m of officeMembers) {
     size.set(m.office, (size.get(m.office) ?? 0) + 1);
-    if (mine.has(key(m.memberNumber))) overlap.set(m.office, (overlap.get(m.office) ?? 0) + 1);
+    const own = mine.get(key(m.memberNumber));
+    if (own !== undefined) matched.set(m.office, [...(matched.get(m.office) ?? []), own]);
   }
-  return [...overlap]
+  return [...matched]
     .filter(([office]) => !linkedOffices.has(office))
-    .map(([office, n]) => ({ office, overlap: n, size: size.get(office) ?? n }))
+    .map(([office, members]) => ({ office, overlap: members.length, size: size.get(office) ?? members.length, matched: members }))
     .sort((a, b) => b.overlap - a.overlap || a.office.localeCompare(b.office, "th"));
 }

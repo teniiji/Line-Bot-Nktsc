@@ -58,7 +58,12 @@ export async function GET(request: NextRequest) {
           own.map((m) => m.memberNumber),
           offices,
           linkedOffices
-        ).slice(0, 3),
+        )
+          .slice(0, 3)
+          .map((sg) => ({
+            ...sg,
+            matched: sg.matched.map((n) => ({ memberNumber: n, name: own.find((m) => m.memberNumber === n)?.name ?? null })),
+          })),
       };
     })
     .filter(

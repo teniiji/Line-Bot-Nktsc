@@ -93,8 +93,8 @@ describe("officeSuggestions", () => {
 
   it("ranks offices by how many of the unit's own members they hold", () => {
     expect(officeSuggestions(["28864", "29766", "29395"], office, new Set())).toEqual([
-      { office: "อุดรธานี 1", overlap: 2, size: 2 },
-      { office: "อุดรธานี 4", overlap: 1, size: 1 },
+      { office: "อุดรธานี 1", overlap: 2, size: 2, matched: ["28864", "29766"] },
+      { office: "อุดรธานี 4", overlap: 1, size: 1, matched: ["29395"] },
     ]);
   });
 

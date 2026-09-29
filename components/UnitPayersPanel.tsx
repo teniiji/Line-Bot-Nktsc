@@ -31,7 +31,12 @@ interface Unit {
   members: UnitMember[];
   // Out-of-province offices linked to this unit (lib/unitPayerOffices.ts).
   offices: OfficeRef[];
-  suggestions: { office: string; overlap: number; size: number }[];
+  suggestions: {
+    office: string;
+    overlap: number;
+    size: number;
+    matched: { memberNumber: string; name: string | null }[];
+  }[];
 }
 
 const MODE_TEXT: Record<Unit["mode"], { label: string; className: string; title: string }> = {
@@ -51,6 +56,13 @@ const MODE_TEXT: Record<Unit["mode"], { label: string; className: string; title:
     title: "เพิ่มสมาชิกก่อน ระบบถึงจะจำยอดของหน่วยงานนี้ได้",
   },
 };
+
+// Who a suggested office shares with the unit, as staff check it: number
+// and name, the first few of them.
+function matchedText(members: { memberNumber: string; name: string | null }[]): string {
+  const shown = members.slice(0, 5).map((m) => `${m.memberNumber} ${m.name ?? ""}`.trim());
+  return shown.join(", ") + (members.length > 5 ? ` และอีก ${members.length - 5} คน` : "");
+}
 
 export default function UnitPayersPanel() {
   const [open, setOpen] = useState(false);
@@ -287,6 +299,11 @@ export default function UnitPayersPanel() {
                                   {unit.suggestions[0].size} คน) — กดเพื่อผูก
                                 </button>
                               )}
+                              {unit.offices.length === 0 && unit.suggestions.length > 0 && (
+                                <div className="text-xs text-slate-500">
+                                  ตรงกัน: {matchedText(unit.suggestions[0].matched)}
+                                </div>
+                              )}
                             </>
                           )}
                         </td>
@@ -470,7 +487,7 @@ export default function UnitPayersPanel() {
                                     onClick={() => linkOffice(unit, sg.office)}
                                     disabled={busy}
                                     className="text-xs border border-dashed border-violet-300 text-violet-700 rounded-full px-2 py-0.5 hover:bg-violet-50 disabled:opacity-50"
-                                    title={`สมาชิกของหน่วยงานนี้ ${sg.overlap} คน อยู่ใน "${sg.office}"`}
+                                    title={`สมาชิกของหน่วยงานนี้ ${sg.overlap} คน อยู่ใน "${sg.office}": ${matchedText(sg.matched)}`}
                                   >
                                     💡 ผูก {sg.office} ({sg.overlap}/{sg.size})
                                   </button>
