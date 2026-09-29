@@ -69,30 +69,44 @@ export function parentOfPiece(fingerprint: string): string | null {
   return at === -1 ? null : fingerprint.slice(0, at);
 }
 
+// The amount the bank reported for a line uploaded from a statement file,
+// read back out of its fingerprint (account|payer account|amount|day|
+// balance|occurrence — lib/statementReconcile.ts). Null for rows that were
+// never a file line (daily-page stand-ins, cash).
+export function bankAmountOf(fingerprint: string): number | null {
+  if (fingerprint.startsWith("line:")) return null;
+  const parts = fingerprint.split("|");
+  if (parts.length !== 6 || !/^\d+\.\d{2}$/.test(parts[2])) return null;
+  return Number(parts[2]);
+}
+
 /**
- * Rows that hold the whole bank line again although pieces were cut from
- * them, with the amount each should hold. Taking a piece always marks the
- * row it came from manualMemberNumber, which a statement re-upload leaves
- * alone; a row with pieces that is not marked was written back at the full
- * line amount by a re-upload before that protection existed, and counts the
- * pieces twice. 13857: ฿5,600 with ฿3,000 given to 9904, the ฿5,600 back.
+ * Rows holding more than their share of the bank line now that pieces have
+ * been cut from them, with the amount each should hold. The row and every
+ * piece taken from it (and from those pieces) add up to the line the bank
+ * reported; a re-upload made before split rows were protected wrote the row
+ * back at the whole line while its pieces stayed, counting them twice. 13857:
+ * ฿5,600 with ฿3,000 given to 9904, the ฿5,600 back.
  *
- * A row whose pieces add up to all of it or more is left for a person: the
- * pieces themselves are then what is in doubt.
+ * Measured against the bank's own amount where the fingerprint carries it.
+ * Otherwise a row with pieces that was never marked manualMemberNumber (which
+ * taking a piece always does now) is taken to hold the whole line. A row
+ * whose pieces leave nothing for it is left for a person: the pieces are then
+ * what is in doubt.
  */
 export function overstatedParents(rows: SplitFamilyRow[]): { fingerprint: string; amount: number }[] {
-  const piecesOf = new Map<string, number>();
-  for (const r of rows) {
-    const parent = parentOfPiece(r.fingerprint);
-    if (parent !== null) piecesOf.set(parent, (piecesOf.get(parent) ?? 0) + r.amount);
-  }
+  const pieces = rows.filter((r) => parentOfPiece(r.fingerprint) !== null);
   const out: { fingerprint: string; amount: number }[] = [];
   for (const r of rows) {
-    if (r.manualMemberNumber || parentOfPiece(r.fingerprint) !== null) continue;
-    const pieces = piecesOf.get(r.fingerprint);
-    if (pieces === undefined) continue;
-    const amount = remainingAfterSplit(r.amount, pieces);
-    if (amount > EPSILON) out.push({ fingerprint: r.fingerprint, amount });
+    if (parentOfPiece(r.fingerprint) !== null) continue;
+    const taken = pieces.filter((p) => p.fingerprint.startsWith(`${r.fingerprint}::`));
+    if (taken.length === 0) continue;
+    const takenSum = taken.reduce((sum, p) => sum + p.amount, 0);
+    const bank = bankAmountOf(r.fingerprint);
+    const whole = bank ?? (r.manualMemberNumber ? null : r.amount);
+    if (whole === null) continue;
+    const amount = remainingAfterSplit(whole, takenSum);
+    if (amount > EPSILON && r.amount - amount > EPSILON) out.push({ fingerprint: r.fingerprint, amount });
   }
   return out;
 }

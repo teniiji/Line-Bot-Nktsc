@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   isFullSplit,
+  bankAmountOf,
   overstatedParents,
   parentOfPiece,
   remainingAfterSplit,
@@ -93,5 +94,26 @@ describe("overstatedParents", () => {
 
   it("leaves it for a person when the pieces take all of it", () => {
     expect(overstatedParents([row("fp", 3000, false), row("fp::split:a", 3000)])).toEqual([]);
+  });
+
+  const line = (amount: string) => `447|4470313378|${amount}|2026-09-23|120000.00|0`;
+
+  it("reads the bank's amount out of a file row's fingerprint, and nothing out of a stand-in's", () => {
+    expect(bankAmountOf(line("5600.00"))).toBe(5600);
+    expect(bankAmountOf(`line:${line("5600.00")}`)).toBeNull();
+    expect(bankAmountOf("fp")).toBeNull();
+  });
+
+  it("measures against the bank's amount even on a row marked as staff's", () => {
+    expect(
+      overstatedParents([row(line("5600.00"), 5600, true), row(`${line("5600.00")}::split:a`, 3000)])
+    ).toEqual([{ fingerprint: line("5600.00"), amount: 2600 }]);
+  });
+
+  it("leaves a family that adds up to the bank line, pieces of pieces included", () => {
+    const fp = line("8600.00");
+    expect(
+      overstatedParents([row(fp, 5600), row(`${fp}::split:a`, 2000), row(`${fp}::split:a::split:b`, 1000)])
+    ).toEqual([]);
   });
 });

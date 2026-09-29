@@ -397,10 +397,11 @@ async function mendOverstatedParents(roundId: string): Promise<void> {
   if (pieces.length === 0) return;
   const parentFps = [...new Set(pieces.map((p) => parentOfPiece(p.fingerprint) as string))];
   const parents = await prisma.statementTransfer.findMany({
-    where: { roundId, fingerprint: { in: parentFps }, manualMemberNumber: false },
+    where: { roundId, fingerprint: { in: parentFps } },
     select: { fingerprint: true, amount: true, manualMemberNumber: true },
   });
-  for (const fix of overstatedParents([...parents, ...pieces])) {
+  const family = new Map([...parents, ...pieces].map((r) => [r.fingerprint, r]));
+  for (const fix of overstatedParents([...family.values()])) {
     await prisma.statementTransfer.updateMany({
       where: { roundId, fingerprint: fix.fingerprint },
       data: { amount: fix.amount, manualMemberNumber: true },
