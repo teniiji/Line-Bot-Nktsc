@@ -253,8 +253,21 @@ export default function Dashboard() {
       )}
 
       <Tabs
-        defaultTab="transactions"
+        // The day's money first — it is what staff open the dashboard to work
+        // through — then the transactions it becomes, then the round it feeds.
+        defaultTab="daily"
         tabs={[
+          {
+            id: "daily",
+            label: "เงินเข้าประจำวัน",
+            content: (
+              <div className="space-y-6">
+                <DailyReconcilePanel />
+                <UnitPayersPanel />
+                <OutOfProvincePanel />
+              </div>
+            ),
+          },
           {
             id: "transactions",
             label: "ธุรกรรม",
@@ -304,22 +317,6 @@ export default function Dashboard() {
             ),
           },
           {
-            id: "daily",
-            label: "เงินเข้าประจำวัน",
-            content: (
-              <div className="space-y-6">
-                <DailyReconcilePanel />
-                <UnitPayersPanel />
-                <OutOfProvincePanel />
-              </div>
-            ),
-          },
-          {
-            id: "service-requests",
-            label: "คำขอบริการ",
-            content: <ServiceRequestsPanel />,
-          },
-          {
             id: "statement",
             label: "เทียบ Statement",
             content: (
@@ -328,6 +325,11 @@ export default function Dashboard() {
                 <MemberBankAccountsPanel />
               </div>
             ),
+          },
+          {
+            id: "service-requests",
+            label: "คำขอบริการ",
+            content: <ServiceRequestsPanel />,
           },
           {
             id: "carried-debts",
