@@ -4,6 +4,7 @@ import { fillAccounts } from "@/lib/accountHistory";
 import { countedAmount } from "@/lib/carriedDebt";
 import { sameStanding } from "@/lib/roundStanding";
 import { overstatedParents, parentOfPiece } from "@/lib/statementSplitTransfer";
+import { isUnitRemittance } from "@/lib/unitRemittance";
 
 // Recomputes every member's payment total for a round from the transfer rows
 // that are currently stored.
@@ -44,6 +45,8 @@ export async function recomputeRoundPayments(roundId: string): Promise<void> {
         branch: true,
         fingerprint: true,
         manualMemberNumber: true,
+        accountNumber: true,
+        description: true,
       },
     }),
   ]);
@@ -79,7 +82,14 @@ export async function recomputeRoundPayments(roundId: string): Promise<void> {
     string,
     { amountPaid: number; paidAt: Date | null; branches: Set<string>; staffPlaced: boolean }
   >();
+  // A unit passing on what it deducted from someone the results file already
+  // has as หักได้ is that deduction arriving, not a second payment on top of
+  // it — see lib/unitRemittance.ts.
+  const collected = new Set(
+    members.filter((m) => m.deductionResult === "collected").map((m) => m.memberNumber)
+  );
   for (const transfer of transfers) {
+    if (collected.has(transfer.memberNumber as string) && isUnitRemittance(transfer)) continue;
     // The part staff moved to a carried debt (ชำระข้ามเดือน) pays an earlier
     // month, not this round — see CarriedDebtPayment.
     const counted = countedAmount(transfer);
