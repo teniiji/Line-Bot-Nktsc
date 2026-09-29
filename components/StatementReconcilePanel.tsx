@@ -1239,6 +1239,8 @@ export default function StatementReconcilePanel() {
   const missingAccountCount = countMatching("no_account");
   const manyAccountsCount = countMatching("many_accounts");
   const cashCount = countMatching("cash");
+  const unitCollectedCount = countMatching("unit_collected");
+  const unitUncollectedCount = countMatching("unit_uncollected");
 
   const transfersOf = (memberNumber: string) =>
     transfers.filter((t) => t.memberNumber === memberNumber);
@@ -1779,6 +1781,30 @@ export default function StatementReconcilePanel() {
                     count={manyAccountsCount}
                     countClass="text-slate-600"
                     title="ทะเบียนมีมากกว่าหนึ่งเลขบัญชีของสมาชิกคนนี้ ระบบจึงไม่เลือกให้ — เงินที่โอนมาจากบัญชีไหนก็ยังจับคู่ได้ตามปกติ"
+                  />
+                )}
+                {unitUncollectedCount > 0 && (
+                  <FilterChip
+                    active={statusFilter === "unit_uncollected"}
+                    onClick={() =>
+                      setStatusFilter(statusFilter === "unit_uncollected" ? "all" : "unit_uncollected")
+                    }
+                    label="⚠️ หน่วยงานแบ่งให้ แต่หักไม่ได้"
+                    count={unitUncollectedCount}
+                    countClass="text-red-600"
+                    title="ได้ส่วนแบ่งจากยอดที่หน่วยงานโอนมา แต่ผลการหักบอกว่าหักเงินเดือนไม่ได้ — หน่วยงานไม่น่ามีเงินของคนนี้ส่งมา ส่วนแบ่งนี้อาจเป็นของคนอื่น ตรวจแล้วแบ่งใหม่ที่หน้าเงินเข้าประจำวัน"
+                  />
+                )}
+                {unitCollectedCount > 0 && (
+                  <FilterChip
+                    active={statusFilter === "unit_collected"}
+                    onClick={() =>
+                      setStatusFilter(statusFilter === "unit_collected" ? "all" : "unit_collected")
+                    }
+                    label="🏢 หน่วยงานโอน + หักได้แล้ว"
+                    count={unitCollectedCount}
+                    countClass="text-emerald-700"
+                    title="ยอดที่หน่วยงานโอนมาของคนที่ผลการหักบอกว่าหักได้ คือเงินที่หักจากเงินเดือนก้อนเดียวกัน — ไม่นับเป็นเงินโอนซ้ำ"
                   />
                 )}
                 {missingAccountCount > 0 && (
@@ -2347,6 +2373,22 @@ export default function StatementReconcilePanel() {
                                           🔀 ย้ายมาให้คนนี้
                                         </span>
                                       )
+                                    )}
+                                    {t.unitRemittance && m.deductionResult === "collected" && (
+                                      <span
+                                        className="text-xs text-emerald-700"
+                                        title="ผลการหักบอกว่าหักเงินเดือนคนนี้ได้แล้ว ยอดนี้คือเงินที่หน่วยงานหักแล้วโอนต่อมา — ไม่นับเป็นเงินโอนซ้ำ"
+                                      >
+                                        ✅ เงินที่หน่วยงานโอนตามผลการหัก · ไม่นับซ้ำ
+                                      </span>
+                                    )}
+                                    {t.unitRemittance && m.deductionResult === "uncollected" && (
+                                      <span
+                                        className="text-xs text-red-700"
+                                        title="ผลการหักบอกว่าหักเงินเดือนคนนี้ไม่ได้ หน่วยงานจึงไม่น่ามีเงินของคนนี้ส่งมา — ถ้าส่วนนี้เป็นของคนอื่น ยกเลิกการแบ่งแล้วแบ่งใหม่ที่หน้าเงินเข้าประจำวัน"
+                                      >
+                                        ⚠️ ผลการหักบอกหักไม่ได้ — ตรวจว่าหน่วยงานส่งเงินของคนนี้จริงไหม
+                                      </span>
                                     )}
                                     {(t.origin?.gaveTo ?? []).map((g) => (
                                       <span

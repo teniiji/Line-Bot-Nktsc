@@ -11,6 +11,7 @@ import { DEDUCTION_CATEGORY } from "@/lib/statementSlipHints";
 import { memberNumberKey } from "@/lib/memberNumber";
 import { periodOfDate } from "@/lib/deductionPeriod";
 import { unbridgedRecordings } from "@/lib/unbridgedRecordings";
+import { isUnitRemittance, unitRemittanceByMember } from "@/lib/unitRemittance";
 import { summarizeStatementFiles } from "@/lib/roundStatementFiles";
 import { transferOrigins, type Person } from "@/lib/transferOrigin";
 
@@ -115,8 +116,12 @@ export async function GET(
       ]);
     }
   }
+  // What units passed on for each member, to set beside their deduction
+  // result (lib/unitRemittance.ts).
+  const remittedFor = unitRemittanceByMember(transfers);
   const membersWithAccounts = members.map((member) => ({
     ...member,
+    unitRemittance: remittedFor.get(member.memberNumber) ?? 0,
     knownAccounts: [
       ...new Set([
         ...(member.accountNumber ? [member.accountNumber] : []),
@@ -273,6 +278,7 @@ export async function GET(
     splitFrom: origins.get(t.id) ?? null,
     // The part staff cut out of another row ("ตัดยอดออก"), which can be put back.
     setAside: isSetAsidePiece(t.fingerprint),
+    unitRemittance: isUnitRemittance(t),
     origin: transferOriginOf.get(t.id) ?? null,
   }));
 

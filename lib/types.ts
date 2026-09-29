@@ -226,6 +226,9 @@ export interface StatementMemberRow {
   // between a member's accounts, and a row that says "ไม่มีเลขบัญชี" when the
   // cooperative holds two of them is telling the opposite of the truth.
   knownAccounts?: string[];
+  // What units passed on for this member (lib/unitRemittance.ts) — set
+  // beside deductionResult to find the same deduction heard twice.
+  unitRemittance?: number;
   amountDue: number;
   amountPaid: number;
   paidAt: string | null;
@@ -290,6 +293,9 @@ export interface StatementTransferRow {
   // Set when this row is only one member's share of a bank line: the unit
   // that paid it, the line's whole amount, and how many members shared it —
   // see splitOriginsFor in lib/lineSplitStore.ts.
+  // A unit passing on a deduction (lib/unitRemittance.ts): left out of what
+  // a member the results file has as หักได้ paid.
+  unitRemittance?: boolean;
   splitFrom?: {
     payerName: string | null;
     total: number;

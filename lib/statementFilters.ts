@@ -1,5 +1,6 @@
 import { StatementMemberRow } from "./types";
 import { stripHonorific } from "./nameMatch";
+import { remittanceOverlap } from "./unitRemittance";
 
 // Filtering/sorting for the เทียบ Statement table. Kept out of the component
 // because these are the rules staff actually reason about ("who in this unit
@@ -135,6 +136,10 @@ export function matchesStatus(m: StatementMemberRow, status: string): boolean {
     );
   }
   if (status === "many_accounts") return accountsOf(m).length > 1;
+  // A unit's money and the results file on the same member — see
+  // lib/unitRemittance.ts.
+  if (status === "unit_collected") return remittanceOverlap(m) === "collected";
+  if (status === "unit_uncollected") return remittanceOverlap(m) === "uncollected";
   // At least one payment counted toward this member came in as cash rather
   // than off a bank line — see app/api/statement-rounds/[id]/cash/route.ts.
   // includes() rather than equality: paidBranch reads "เงินสด + หนองคาย" for
