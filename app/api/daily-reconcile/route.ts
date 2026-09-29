@@ -73,6 +73,10 @@ export async function GET(request: NextRequest) {
     const key = payerKey(description);
     return key ? (payerNameOf.get(key) ?? null) : null;
   };
+  // A divided line whose description files no payer (numbers only) keeps the
+  // name staff gave it on the division itself.
+  const payerOfLine = (line: { id: string; description: string }) =>
+    payerOf(line.description) ?? splits.get(line.id)?.find((p) => p.payerName)?.payerName ?? null;
   // Slips outside the window itself only count when they pair with money
   // inside it; on their own they belong to their own day's view, not this one.
   const inRange = (date: Date) => date >= start && date < end;
@@ -354,7 +358,7 @@ export async function GET(request: NextRequest) {
       branch: line.branch,
       description: line.description,
       channel: line.channel,
-      payerName: payerOf(line.description),
+      payerName: payerOfLine(line),
       parts: (splits.get(line.id) ?? []).map((p) => ({
         memberNumber: p.memberNumber,
         amount: p.amount,
@@ -400,7 +404,7 @@ export async function GET(request: NextRequest) {
         // A unit's line, which staff can put on the unit list from here
         // (lib/unitPayerStore.ts) — money in only, named between slashes.
         unitLine: line.amount > 0 && isUnitPayerLine(line.description),
-        payerName: payerOf(line.description),
+        payerName: payerOfLine(line),
       })),
     totals: {
       ...result.totals,

@@ -840,6 +840,10 @@ model StatementLineSplit {
   memberNumber String
   amount       Float
   payerId      String?
+  // What staff called the payer when dividing the line. The UnitPayer holds
+  // it where the description gives a key to file it under; a line of numbers
+  // only ("9802889202/10131063") gives none, and this is where it stays.
+  payerName    String?
   createdAt    DateTime @default(now())
 
   @@index([lineId])

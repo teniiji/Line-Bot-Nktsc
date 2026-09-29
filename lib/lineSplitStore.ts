@@ -98,7 +98,8 @@ export async function splitContext(lineId: string) {
       account: line.account,
     },
     payer: payer ? { id: payer.id, name: payer.name } : null,
-    suggestedName: suggestedPayerName(line.description),
+    // The name given last time, where the description could not file it.
+    suggestedName: existing.find((s) => s.payerName)?.payerName ?? suggestedPayerName(line.description),
     round: round ? { id: round.id, label: round.label } : null,
     remembered: remembered.map((m) => ({
       memberNumber: m.memberNumber,
@@ -218,7 +219,13 @@ export async function applySplit(lineId: string, payerName: string, parts: Split
     const memberNumber = rosterRow?.memberNumber ?? roundOf.get(k)?.memberNumber ?? part.memberNumber.trim();
 
     await prisma.statementLineSplit.create({
-      data: { lineId: line.id, memberNumber, amount: part.amount, payerId: payer?.id ?? null },
+      data: {
+        lineId: line.id,
+        memberNumber,
+        amount: part.amount,
+        payerId: payer?.id ?? null,
+        payerName: payerName.trim() || null,
+      },
     });
     await prisma.expense.create({
       data: {
@@ -332,7 +339,7 @@ export async function splitOriginsFor(
     });
     const parts = await prisma.statementLineSplit.findMany({
       where: { lineId: { in: lines.map((l) => l.id) } },
-      select: { lineId: true, payerId: true },
+      select: { lineId: true, payerId: true, payerName: true },
     });
     const lineOf = new Map(lines.map((l) => [`${l.account}|${l.fingerprint}`, l]));
     for (const { t, source } of sources) {
@@ -342,7 +349,11 @@ export async function splitOriginsFor(
       const own = parts.filter((p) => p.lineId === line.id);
       const payerId = own.find((p) => p.payerId)?.payerId ?? null;
       out.set(t.id, {
-        payerName: (payerId ? nameById.get(payerId) : null) ?? unitOf(line.description),
+        payerName:
+          (payerId ? nameById.get(payerId) : null) ??
+          unitOf(line.description) ??
+          own.find((p) => p.payerName)?.payerName ??
+          null,
         total: line.amount,
         memberCount: own.length,
         fromAccount: null,
