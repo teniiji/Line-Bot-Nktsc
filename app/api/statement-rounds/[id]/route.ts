@@ -261,6 +261,19 @@ export async function GET(
     (memberNumber) => personOf(memberNumber)
   );
 
+  // The daily-page line behind each row recorded from it whole, for moving a
+  // recording made for the wrong member (lib/lineReassignStore.ts).
+  const recordedRows = transfers.filter(
+    (t) => t.fingerprint.startsWith("line:") && !t.fingerprint.includes("::") && !t.fingerprint.includes("#")
+  );
+  const wholeLines = recordedRows.length
+    ? await prisma.statementLine.findMany({
+        where: { fingerprint: { in: recordedRows.map((t) => t.fingerprint.slice("line:".length)) } },
+        select: { id: true, account: true, fingerprint: true },
+      })
+    : [];
+  const recordedLineOf = new Map(wholeLines.map((l) => [`${l.account}|line:${l.fingerprint}`, l.id]));
+
   const withHints = transfers.map((t) => ({
     id: t.id,
     memberNumber: t.memberNumber,
@@ -279,6 +292,7 @@ export async function GET(
     // The part staff cut out of another row ("ตัดยอดออก"), which can be put back.
     setAside: isSetAsidePiece(t.fingerprint),
     unitRemittance: isUnitRemittance(t),
+    recordedLineId: recordedLineOf.get(`${t.account}|${t.fingerprint}`) ?? null,
     origin: transferOriginOf.get(t.id) ?? null,
   }));
 
