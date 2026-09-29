@@ -29,7 +29,7 @@ import PanelHelp from "@/components/PanelHelp";
 import { controlUnitLabel } from "@/lib/controlUnits";
 import { describeDeductionPeriod } from "@/lib/deductionPeriod";
 import { downloadStatementMembersCsv } from "@/lib/csv";
-import { EXCLUDE_REASONS } from "@/lib/statementSlipHints";
+import { EXCLUDE_REASONS, IN_RESULT_REASON, excludeReasonLabel } from "@/lib/statementSlipHints";
 import { SET_ASIDE_CATEGORIES } from "@/lib/transferSetAside";
 import { isCollectedRemittance } from "@/lib/unbridgedRecordings";
 import { canBridgeToRound } from "@/lib/roundReach";
@@ -2450,6 +2450,25 @@ export default function StatementReconcilePanel() {
                                         </span>
                                       )
                                     )}
+                                    {m.deductionResult === "collected" &&
+                                      !t.excludedReason &&
+                                      !t.unitRemittance &&
+                                      !t.setAside &&
+                                      t.amount - t.carriedAmount > 0.005 && (
+                                        <span className="text-xs text-slate-600 flex items-center gap-2">
+                                          <span title="ผลการหักบอกว่าหักได้ครบแล้ว ยอดนี้จึงขึ้นเป็นส่วนต่าง — ถ้าเป็นเงินที่สมาชิกโอนจ่ายส่วนที่หักไม่ได้ และผลการหักนับรวมไว้แล้ว กดปุ่มข้างๆ ถ้าเป็นเงินค่าอื่นเลือกเหตุผลในช่องด้านขวา">
+                                            ℹ️ ผลการหักบอกหักได้ครบแล้ว
+                                          </span>
+                                          <button
+                                            type="button"
+                                            onClick={() => setTransferReason(t.id, IN_RESULT_REASON)}
+                                            disabled={busy || frozen}
+                                            className="text-xs text-emerald-800 border border-emerald-300 bg-emerald-50 rounded px-2 py-0.5 hover:bg-emerald-100 disabled:opacity-50"
+                                          >
+                                            ✅ ยอดนี้รวมอยู่ในผลการหักแล้ว
+                                          </button>
+                                        </span>
+                                      )}
                                     {t.unitRemittance && m.deductionResult === "collected" && (
                                       <span
                                         className="text-xs text-emerald-700"
@@ -2514,7 +2533,7 @@ export default function StatementReconcilePanel() {
                                         <option value="">นับเป็นจ่ายค่าหักไม่ได้</option>
                                         {EXCLUDE_REASONS.map((r) => (
                                           <option key={r} value={r}>
-                                            ไม่เกี่ยวกับรอบนี้ — {r}
+                                            {excludeReasonLabel(r)}
                                           </option>
                                         ))}
                                       </select>
@@ -2943,7 +2962,7 @@ export default function StatementReconcilePanel() {
                             <option value="">ยังไม่ระบุ</option>
                             {EXCLUDE_REASONS.map((r) => (
                               <option key={r} value={r}>
-                                ไม่เกี่ยวกับรอบนี้ — {r}
+                                {excludeReasonLabel(r)}
                               </option>
                             ))}
                           </select>
