@@ -115,3 +115,38 @@ export async function bridgeLineToRound(
   await recomputeRoundPayments(round.id);
   return { bridged: true, round: { id: round.id, period: round.period, label: round.label } };
 }
+
+// A recording deleted from the transactions list takes the round row it put
+// on its member with it — left behind, the round went on counting a payment
+// nobody had recorded any more, and recording the line again for the right
+// member was turned away as already counted. A row staff have since moved to
+// someone else in the round, cut up, or used on a carried debt is their own
+// work there, and the deletion waits until that is undone. Returns why it
+// cannot go, or null once done.
+export async function unbridgeRecording(
+  line: { account: string; fingerprint: string },
+  memberNumber: string | null
+): Promise<string | null> {
+  const bridge = `line:${line.fingerprint}`;
+  const rows = await prisma.statementTransfer.findMany({
+    where: { account: line.account, OR: [{ fingerprint: bridge }, { fingerprint: { startsWith: `${bridge}::` } }] },
+    select: { id: true, roundId: true, fingerprint: true, memberNumber: true, carriedAmount: true },
+  });
+  const key = memberNumberKey(memberNumber ?? "");
+  const own = rows.filter(
+    (r) => r.fingerprint === bridge && key !== null && memberNumberKey(r.memberNumber ?? "") === key
+  );
+  if (own.length === 0) return null;
+  if (rows.some((r) => r.fingerprint !== bridge) || own.some((r) => r.carriedAmount > 0.005)) {
+    return "ยอดนี้ในรอบถูกแบ่ง ตัดออก หรือใช้ชำระข้ามเดือนไปบางส่วนแล้ว — แก้ที่แถบเทียบ Statement ก่อน แล้วค่อยลบรายการ";
+  }
+  const roundIds = [...new Set(own.map((r) => r.roundId))];
+  const closed = await prisma.statementRound.findFirst({
+    where: { id: { in: roundIds }, closedAt: { not: null } },
+    select: { label: true },
+  });
+  if (closed) return `รอบ ${closed.label} ที่นับยอดนี้ปิดไปแล้ว — ต้องเปิดรอบอีกครั้งก่อนจึงจะลบรายการได้`;
+  await prisma.statementTransfer.deleteMany({ where: { id: { in: own.map((r) => r.id) } } });
+  for (const roundId of roundIds) await recomputeRoundPayments(roundId);
+  return null;
+}
