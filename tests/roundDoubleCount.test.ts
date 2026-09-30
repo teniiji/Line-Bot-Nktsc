@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { countedElsewhere, describeDoubleCount } from "../lib/roundDoubleCount";
-import { EXCLUDE_REASONS, IN_RESULT_REASON, OTHER_ROUND_REASON, excludeReasonLabel } from "../lib/statementSlipHints";
+import { EXCLUDE_REASONS, IN_RESULT_REASON, OTHER_ROUND_REASON, autoSlipReasons, excludeReasonLabel } from "../lib/statementSlipHints";
 
 const mine = (id: string, fingerprint: string, counts = true) => ({ id, fingerprint, counts });
 const other = (fingerprint: string, label: string, counts = true) => ({
@@ -96,5 +96,45 @@ describe("excludeReasonLabel", () => {
     expect(EXCLUDE_REASONS).toContain(IN_RESULT_REASON);
     expect(excludeReasonLabel(IN_RESULT_REASON)).toBe("✅ รวมอยู่ในผลการหักแล้ว");
     expect(excludeReasonLabel("ซื้อหุ้น")).toBe("ไม่เกี่ยวกับรอบนี้ — ซื้อหุ้น");
+  });
+});
+
+describe("autoSlipReasons", () => {
+  const t = (id: string, amount: number, at: string) => ({
+    id,
+    memberNumber: "21730",
+    amount,
+    transferredAt: new Date(at),
+  });
+  const slip = (amount: number, date: string, category: string) => ({
+    memberNumber: "21730",
+    amount,
+    date: new Date(date),
+    category,
+  });
+
+  it("sets aside a transfer the member's own slip that day filed as something else", () => {
+    // 21730: ฿400,000 sent as ฝากเงิน, the bank line the same afternoon.
+    expect(
+      autoSlipReasons([t("a", 400000, "2026-09-25T13:11:00Z")], [slip(400000, "2026-09-25T13:20:00Z", "ฝากเงิน")])
+    ).toEqual(new Map([["a", "ฝากเงิน"]]));
+  });
+
+  it("leaves it as a hint when the slip is days away, or filed under a purpose the round keeps for itself", () => {
+    expect(
+      autoSlipReasons([t("a", 400000, "2026-09-25T13:11:00Z")], [slip(400000, "2026-09-27T13:20:00Z", "ฝากเงิน")]).size
+    ).toBe(0);
+    expect(
+      autoSlipReasons([t("a", 400000, "2026-09-25T13:11:00Z")], [slip(400000, "2026-09-25T13:20:00Z", "อื่นๆ")]).size
+    ).toBe(0);
+  });
+
+  it("never takes a slip filed as the deduction payment itself", () => {
+    expect(
+      autoSlipReasons(
+        [t("a", 2000, "2026-09-25T13:11:00Z")],
+        [slip(2000, "2026-09-25T13:20:00Z", "ชำระเก็บไม่ได้รายเดือน")]
+      ).size
+    ).toBe(0);
   });
 });

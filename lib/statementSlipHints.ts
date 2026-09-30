@@ -145,3 +145,30 @@ export function matchSlipHints(
 
   return hints;
 }
+
+// Where the hint above is strong enough to act on: the member's own slip for
+// the same amount, sent the day the money arrived (or the day either side),
+// under a purpose the round sets aside. 21730 sent a slip for ฿400,000 as
+// ฝากเงิน on 25 ก.ย., the bank line landed 25 ก.ย. 13:11, and staff still
+// had to tell the round what the member had already told the bot. Only the
+// purposes a member files through the bot are taken this way — never the
+// round's own reasons (already counted, another round, อื่นๆ).
+const SLIP_DAY_WINDOW_MS = DAY_MS;
+const ROUND_ONLY_REASONS = new Set([IN_RESULT_REASON, OTHER_ROUND_REASON, "อื่นๆ"]);
+
+export function autoSlipReasons(
+  transfers: TransferForHint[],
+  slips: SlipRecord[]
+): Map<string, string> {
+  const out = new Map<string, string>();
+  const hints = matchSlipHints(transfers, slips);
+  const byId = new Map(transfers.map((t) => [t.id, t]));
+  for (const [id, hint] of hints) {
+    const t = byId.get(id);
+    if (!t?.transferredAt) continue;
+    if (!EXCLUDE_REASONS.includes(hint.category) || ROUND_ONLY_REASONS.has(hint.category)) continue;
+    if (Math.abs(t.transferredAt.getTime() - new Date(hint.date).getTime()) > SLIP_DAY_WINDOW_MS) continue;
+    out.set(id, hint.category);
+  }
+  return out;
+}

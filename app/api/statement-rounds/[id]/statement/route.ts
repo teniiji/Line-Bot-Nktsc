@@ -130,7 +130,7 @@ export async function POST(
   // guarantee the per-line duplicate check gave.
   const existing = await prisma.statementTransfer.findMany({
     where: { roundId: round.id, fingerprint: { in: fingerprints } },
-    select: { fingerprint: true, excludedReason: true, manualMemberNumber: true },
+    select: { fingerprint: true, excludedReason: true, reasonSource: true, manualMemberNumber: true },
   });
   // Carried across the refresh: this is staff's own work, not something the
   // statement can tell us again.
@@ -139,6 +139,7 @@ export async function POST(
       .filter((row) => row.excludedReason)
       .map((row) => [row.fingerprint, row.excludedReason])
   );
+  const reasonSources = new Map(existing.map((row) => [row.fingerprint, row.reasonSource]));
   // A row staff have made a manual call about (split off to another member,
   // or left holding less than the bank line after one) is skipped entirely
   // here — not deleted, not rewritten — because the ordinary refresh below
@@ -176,6 +177,7 @@ export async function POST(
         fingerprint,
         sourceFile: checked.file.name,
         excludedReason: reasons.get(fingerprint) ?? null,
+        reasonSource: reasonSources.get(fingerprint) ?? null,
         carriedAmount: carried.get(fingerprint) ?? 0,
       })),
     }),

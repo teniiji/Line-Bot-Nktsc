@@ -5,6 +5,7 @@ import { countedAmount } from "@/lib/carriedDebt";
 import { sameStanding } from "@/lib/roundStanding";
 import { overstatedParents, parentOfPiece } from "@/lib/statementSplitTransfer";
 import { isUnitRemittance } from "@/lib/unitRemittance";
+import { DEDUCTION_CATEGORY, autoSlipReasons } from "@/lib/statementSlipHints";
 
 // Recomputes every member's payment total for a round from the transfer rows
 // that are currently stored.
@@ -16,6 +17,7 @@ import { isUnitRemittance } from "@/lib/unitRemittance";
 // click through to.
 export async function recomputeRoundPayments(roundId: string): Promise<void> {
   await mendOverstatedParents(roundId);
+  await applySlipReasons(roundId);
 
   const [members, transfers] = await Promise.all([
     prisma.statementMember.findMany({
@@ -415,6 +417,61 @@ async function mendOverstatedParents(roundId: string): Promise<void> {
     await prisma.statementTransfer.updateMany({
       where: { roundId, fingerprint: fix.fingerprint },
       data: { amount: fix.amount, manualMemberNumber: true },
+    });
+  }
+}
+
+// A transfer the member's own slip says was for something else (ฝากเงิน,
+// ซื้อหุ้น …) is set aside under that, without staff having to say it again
+// here (autoSlipReasons). Kept in step with the slip — gone if the slip goes —
+// and never over a person's own choice either way (reasonSource "staff", or a
+// reason set before this was recorded). Rows staff placed or cut, and rows
+// already paying a carried debt, are left alone.
+async function applySlipReasons(roundId: string): Promise<void> {
+  const transfers = await prisma.statementTransfer.findMany({
+    where: { roundId, memberNumber: { not: null } },
+    select: {
+      id: true,
+      memberNumber: true,
+      amount: true,
+      transferredAt: true,
+      excludedReason: true,
+      reasonSource: true,
+      manualMemberNumber: true,
+      fingerprint: true,
+      carriedAmount: true,
+    },
+  });
+  const open = transfers.filter(
+    (t) =>
+      t.reasonSource !== "staff" &&
+      !(t.excludedReason && t.reasonSource !== "slip") &&
+      !t.manualMemberNumber &&
+      !t.fingerprint.includes("::") &&
+      t.carriedAmount <= 0.005
+  );
+  if (open.length === 0) return;
+  const members = [...new Set(open.map((t) => t.memberNumber as string))];
+  const slips: { memberNumber: string | null; amount: number; date: Date; category: string }[] = [];
+  for (let i = 0; i < members.length; i += 1000) {
+    slips.push(
+      ...(await prisma.expense.findMany({
+        where: { memberNumber: { in: members.slice(i, i + 1000) }, category: { not: DEDUCTION_CATEGORY } },
+        select: { memberNumber: true, amount: true, date: true, category: true },
+      }))
+    );
+  }
+  const reasons = autoSlipReasons(
+    open.map((t) => ({ id: t.id, memberNumber: t.memberNumber, amount: t.amount, transferredAt: t.transferredAt })),
+    slips.map((s) => ({ memberNumber: s.memberNumber as string, amount: s.amount, date: s.date, category: s.category }))
+  );
+  for (const t of open) {
+    const want = reasons.get(t.id) ?? null;
+    const have = t.reasonSource === "slip" ? t.excludedReason : null;
+    if (want === have) continue;
+    await prisma.statementTransfer.update({
+      where: { id: t.id },
+      data: { excludedReason: want, reasonSource: want ? "slip" : null },
     });
   }
 }
