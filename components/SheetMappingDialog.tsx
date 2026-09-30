@@ -4,6 +4,8 @@ import { formatAmount } from "@/lib/format";
 import { SHEET_FIELDS, type SheetField, type SheetMapping } from "@/lib/sheetColumns";
 
 export interface SheetPreview {
+  // Earlier uploads of this same file into the round (lib/uploadHistory.ts).
+  previousUploads?: { kind: string; fileName: string; uploadedAt: string; sameContent: boolean }[];
   // Every page in the workbook, and which one this reading came from. A
   // unit's file carries "หน่วย" beside "สรุป" and sometimes a third with the
   // results on it — reading page one and finding no amounts looked like a
@@ -65,6 +67,7 @@ export default function SheetMappingDialog({
   onCancel,
   busy,
   confirmLabel,
+  warning,
 }: {
   open: boolean;
   fileName: string;
@@ -76,6 +79,9 @@ export default function SheetMappingDialog({
   onCancel: () => void;
   busy: boolean;
   confirmLabel: string;
+  // Said above everything else: this file has been loaded into the round
+  // before.
+  warning?: string | null;
 }) {
   if (!open || !preview) return null;
 
@@ -100,6 +106,11 @@ export default function SheetMappingDialog({
       >
         <div>
           <h3 className="font-semibold text-lg">ตรวจการอ่านไฟล์ก่อนนำเข้า</h3>
+          {warning && (
+            <p className="mt-2 text-sm border border-amber-300 bg-amber-50 text-amber-900 rounded px-3 py-2">
+              {warning}
+            </p>
+          )}
           {/* Offered whenever the workbook has more than one page, because
               which page holds the results is not something the file says. */}
           {preview.sheets.length > 1 && (

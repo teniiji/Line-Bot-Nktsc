@@ -1,5 +1,6 @@
 "use client";
 
+import { previousUploadWarning } from "@/lib/uploadHistory";
 import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 import {
   formatAmount,
@@ -3398,6 +3399,15 @@ export default function StatementReconcilePanel() {
         busy={busy}
         confirmLabel={
           pendingSheet?.kind === "list" ? "นำเข้ารายการหัก" : "บันทึกผลการหัก"
+        }
+        warning={
+          pendingSheet
+            ? previousUploadWarning(
+                pendingSheet.preview.previousUploads ?? [],
+                pendingSheet.kind === "list" ? "list" : "results",
+                (iso) => cooperativeDateTime(new Date(iso))
+              )
+            : null
         }
       />
 

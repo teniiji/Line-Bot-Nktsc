@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { rememberUpload } from "@/lib/uploadHistoryStore";
 import { prisma } from "@/lib/prisma";
 import { ROUND_CLOSED_ERROR } from "@/lib/carriedDebt";
 import {
@@ -160,6 +161,7 @@ export async function POST(
       where: { roundId: round.id, accountNumber: null, deductionResult: "uncollected" },
     });
 
+    await rememberUpload(round.id, checked.file, "results");
     return NextResponse.json({
       applied: true,
       imported: progress.members,
@@ -220,6 +222,7 @@ export async function POST(
     const filled = await applyRoundSheet(round.id, plan);
     const progress = await refreshRoundProgress(round.id);
 
+    await rememberUpload(round.id, checked.file, "results");
     return NextResponse.json({
       applied: true,
       appended: true,
@@ -296,6 +299,7 @@ export async function POST(
   const missingAccount = await prisma.statementMember.count({
     where: { roundId: round.id, accountNumber: null },
   });
+  await rememberUpload(round.id, checked.file, "results");
   return NextResponse.json({
     imported,
     // What this upload changed about the round's population, so the notice

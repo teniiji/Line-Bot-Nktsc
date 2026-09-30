@@ -32,6 +32,7 @@ import {
 } from "@/lib/dailySections";
 import PanelHelp from "@/components/PanelHelp";
 import DateField from "@/components/DateField";
+import { recordCheckNotes, type RecordCheck, type RecordCheckNote } from "@/lib/recordCheck";
 import LineSplitDialog from "@/components/LineSplitDialog";
 import { suggestedPayerName } from "@/lib/unitPayer";
 import {
@@ -2162,6 +2163,51 @@ interface RecordActions {
   onSplit?: (lineId: string) => void;
 }
 
+// What the round already knows about the member being typed in, fetched as
+// the number settles (lib/recordCheck.ts) — so a line meant for someone the
+// results file already has as หักได้ครบ, or who has already paid, says so
+// before it is recorded.
+const MemberCheckNotes = ({ lineId, memberNumber }: { lineId: string; memberNumber: string }) => {
+  const [notes, setNotes] = useState<RecordCheckNote[]>([]);
+  useEffect(() => {
+    const number = memberNumber.trim();
+    setNotes([]);
+    if (number.replace(/\D/g, "").length < 4) return;
+    let live = true;
+    const timer = setTimeout(async () => {
+      try {
+        const res = await fetch(
+          `/api/statement-lines/${lineId}/member-check?memberNumber=${encodeURIComponent(number)}`
+        );
+        if (!res.ok || !live) return;
+        const check = (await res.json()) as RecordCheck;
+        if (live) setNotes(recordCheckNotes(check));
+      } catch {
+        // A note that failed to load is no note; recording still works.
+      }
+    }, 400);
+    return () => {
+      live = false;
+      clearTimeout(timer);
+    };
+  }, [lineId, memberNumber]);
+  if (notes.length === 0) return null;
+  return (
+    <div className="w-full space-y-0.5">
+      {notes.map((n, i) => (
+        <p
+          key={i}
+          className={`text-xs ${
+            n.tone === "warn" ? "text-amber-800" : n.tone === "ok" ? "text-emerald-700" : "text-slate-600"
+          }`}
+        >
+          {n.text}
+        </p>
+      ))}
+    </div>
+  );
+};
+
 // The form itself, shared by both tables that offer it so the two cannot
 // drift on what a recording asks for.
 const ActionForm = ({
@@ -2280,6 +2326,7 @@ const ActionForm = ({
       <button onClick={actions.close} className="text-slate-500 hover:underline">
         ยกเลิก
       </button>
+      {mode === "record" && <MemberCheckNotes lineId={targetId} memberNumber={actions.memberNumber} />}
     </div>
   );
 };
