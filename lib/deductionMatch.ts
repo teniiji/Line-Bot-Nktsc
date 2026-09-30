@@ -1,3 +1,5 @@
+import { formatAmount } from "./format";
+
 // What a member still owes on the month's หักไม่ได้ round, put beside the
 // money they just transferred in.
 //
@@ -41,6 +43,11 @@ export interface DeductionHint {
   // Only set for "counted": what the round currently makes of this member,
   // so the label can say why this is not — or not yet — "เก็บไม่ได้ … ชำระแล้ว".
   deductionResult?: string;
+  // Only for "settled": what the member has paid in the round less what
+  // payroll failed to take — 0 settled exactly, above 0 overpaid, below 0
+  // still short. So "ชำระแล้ว" says whether it was paid off, over, or only
+  // in part, without opening เทียบ Statement.
+  balance?: number;
 }
 
 // Money is equal when it is equal to the satang. Two figures a rounding error
@@ -79,7 +86,14 @@ export function deductionHint(
 export function describeDeductionHint(hint: DeductionHint): string {
   const month = hint.label || hint.period;
   if (hint.match === "exact") return `ตรงยอดเก็บไม่ได้ ${month}`;
-  if (hint.match === "settled") return `เก็บไม่ได้ ${month} ชำระแล้ว`;
+  if (hint.match === "settled") {
+    const base = `เก็บไม่ได้ ${month} ชำระแล้ว`;
+    if (hint.balance === undefined) return base;
+    if (Math.abs(hint.balance) < 0.01) return `${base} · ครบ`;
+    return hint.balance > 0
+      ? `${base} · เกิน ${formatAmount(hint.balance)}`
+      : `${base} · ยังขาด ${formatAmount(-hint.balance)}`;
+  }
   if (hint.match === "counted") {
     // "เก็บไม่ได้ … ชำระแล้ว" presupposes payroll already failed to deduct
     // this member — true for "settled" above, not for these two: 25823 was
@@ -118,10 +132,18 @@ export function describeDeductionHint(hint: DeductionHint): string {
 // paid off when nothing has failed yet.
 export function deductionSettled(
   round: { period: string; label: string },
-  deductionResult: string
+  deductionResult: string,
+  // The member's figures in that round, when the caller has them.
+  totals?: { amountDue: number; amountPaid: number }
 ): DeductionHint {
   if (deductionResult === "uncollected") {
-    return { match: "settled", outstanding: 0, period: round.period, label: round.label };
+    return {
+      match: "settled",
+      outstanding: 0,
+      period: round.period,
+      label: round.label,
+      ...(totals ? { balance: Math.round((totals.amountPaid - totals.amountDue) * 100) / 100 } : {}),
+    };
   }
   return { match: "counted", outstanding: 0, period: round.period, label: round.label, deductionResult };
 }
