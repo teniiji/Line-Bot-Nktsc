@@ -11,6 +11,8 @@ import { DEDUCTION_CATEGORY } from "@/lib/statementSlipHints";
 import { memberNumberKey } from "@/lib/memberNumber";
 import { periodOfDate } from "@/lib/deductionPeriod";
 import { otherMonthRecordings, unbridgedRecordings } from "@/lib/unbridgedRecordings";
+import { splitSharesOutside } from "@/lib/splitSharesOutside";
+import { splitFingerprint } from "@/lib/unitPayer";
 import { isUnitRemittance, unitRemittanceByMember } from "@/lib/unitRemittance";
 import { summarizeStatementFiles } from "@/lib/roundStatementFiles";
 import { transferOrigins, type Person } from "@/lib/transferOrigin";
@@ -426,7 +428,78 @@ export async function GET(
       roundLabel: otherRoundLabel.get(t.roundId) ?? "",
     }))
   );
-  const recordedOutside = [...sameMonth, ...otherMonth];
+  // Shares of a unit's lump transfer divided on the daily page that this
+  // round does not hold — see lib/splitSharesOutside.ts.
+  const shareSpellings = [...new Set([...memberKeys, ...roundNumberByKey.values()])];
+  const splitRows: Awaited<ReturnType<typeof prisma.statementLineSplit.findMany>> = [];
+  for (let i = 0; i < shareSpellings.length; i += CHUNK) {
+    splitRows.push(
+      ...(await prisma.statementLineSplit.findMany({
+        where: { memberNumber: { in: shareSpellings.slice(i, i + CHUNK) } },
+      }))
+    );
+  }
+  const splitLines = splitRows.length
+    ? await prisma.statementLine.findMany({
+        where: { id: { in: [...new Set(splitRows.map((r) => r.lineId))] } },
+        select: { id: true, fingerprint: true, postedAt: true, amount: true },
+      })
+    : [];
+  const splitLineById = new Map(splitLines.map((l) => [l.id, l]));
+  const shares = splitRows.flatMap((r) => {
+    const line = splitLineById.get(r.lineId);
+    const roundMemberNumber = roundNumberByKey.get(memberNumberKey(r.memberNumber) ?? "");
+    if (!line || !roundMemberNumber) return [];
+    return [
+      {
+        splitId: r.id,
+        lineId: line.id,
+        lineFingerprint: line.fingerprint,
+        memberNumber: r.memberNumber,
+        roundMemberNumber,
+        amount: r.amount,
+        postedAt: line.postedAt,
+        createdAt: r.createdAt,
+        payerName: r.payerName,
+        lineAmount: line.amount,
+      },
+    ];
+  });
+  const sharePlaced = shares.length
+    ? await prisma.statementTransfer.findMany({
+        where: { fingerprint: { in: shares.map((s) => splitFingerprint(s.lineFingerprint, s.memberNumber)) } },
+        select: { fingerprint: true, roundId: true },
+      })
+    : [];
+  const shareRoundIds = [...new Set(sharePlaced.map((p) => p.roundId).filter((id) => !otherRoundLabel.has(id)))];
+  if (shareRoundIds.length) {
+    for (const r of await prisma.statementRound.findMany({
+      where: { id: { in: shareRoundIds } },
+      select: { id: true, label: true },
+    })) {
+      otherRoundLabel.set(r.id, r.label);
+    }
+  }
+  // Named by their unit where the division did not give it a name.
+  const payerNames = new Map(
+    (
+      await prisma.unitPayer.findMany({
+        where: { id: { in: [...new Set(splitRows.map((r) => r.payerId).filter(Boolean))] as string[] } },
+        select: { id: true, name: true },
+      })
+    ).map((p) => [p.id, p.name])
+  );
+  for (const share of shares) {
+    const row = splitRows.find((r) => r.id === share.splitId);
+    if (!share.payerName && row?.payerId) share.payerName = payerNames.get(row.payerId) ?? null;
+  }
+  const outsideShares = splitSharesOutside(
+    shares,
+    sharePlaced,
+    round.id,
+    (id) => otherRoundLabel.get(id) ?? ""
+  );
+  const recordedOutside = [...sameMonth, ...otherMonth, ...outsideShares];
   // Parts staff booked under another category (lib/recordingAside.ts).
   const asideRows = recordedOutside.length
     ? await prisma.expense.findMany({
