@@ -37,4 +37,21 @@ describe("recordCheckNotes", () => {
       text: "⚠️ มียอด ฿30,960.75 ของคนนี้แล้ว (25/9/2569 · บันทึกไว้แล้ว) — อาจเป็นเงินก้อนเดียวกัน",
     });
   });
+
+  it("says the round already counts this very line, instead of warning it may be a second payment", () => {
+    // 29571: ฿4,840 read into the round from its statement, then opened on the daily page.
+    const notes = recordCheckNotes({
+      ...base,
+      thisLineCounted: true,
+      deductionResult: "uncollected",
+      amountDue: 4840,
+      amountPaid: 4840,
+    });
+    expect(notes).toEqual([
+      {
+        tone: "ok",
+        text: "✅ ยอดนี้นับในรอบ ก.ย. 2569 แล้ว · ครบ — ไม่ต้องบันทึกซ้ำ ถ้าต้องการให้มีในแถบธุรกรรมของสมาชิก บันทึกได้ ระบบไม่นับซ้ำ",
+      },
+    ]);
+  });
 });
