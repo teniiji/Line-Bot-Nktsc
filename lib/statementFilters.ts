@@ -33,7 +33,17 @@ export type StatementSort =
   | "memberNumber"
   | "hCode"
   | "unitName"
-  | "paidAt";
+  | "paidAt"
+  // The ส่วนต่าง column: most overpaid first, or furthest short first.
+  | "differenceDesc"
+  | "differenceAsc";
+
+// The two directions of ส่วนต่าง are one ordering asked two ways — choosing
+// one takes the other out rather than stacking a sort that can never apply.
+export const OPPOSITE_SORT: Partial<Record<StatementSort, StatementSort>> = {
+  differenceDesc: "differenceAsc",
+  differenceAsc: "differenceDesc",
+};
 
 const digitsOnly = (value: string) => value.replace(/\D/g, "");
 
@@ -195,6 +205,10 @@ const COMPARATORS: Record<Exclude<StatementSort, "default">, Comparator> = {
   unitName: (a, b) =>
     compareCode(a.unitCode, b.unitCode) || compareUnitName(a.unitName, b.unitName),
   paidAt: (a, b) => comparePaidAt(a.paidAt, b.paidAt),
+  // The same figure the ส่วนต่าง column shows (memberDifference), so the order
+  // on screen is the order of the numbers staff are reading.
+  differenceDesc: (a, b) => memberDifference(b) - memberDifference(a),
+  differenceAsc: (a, b) => memberDifference(a) - memberDifference(b),
 };
 
 // Several orderings at once, applied in the order they were chosen: หน่วยคุม
