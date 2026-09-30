@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { statedMemberNumber } from "@/lib/memberIdentity";
 import { staffCategoryProblem } from "@/lib/categories";
+import { unbridgeRecording } from "@/lib/lineBridgeStore";
 
 export async function PUT(
   request: NextRequest,
@@ -95,9 +96,19 @@ export async function DELETE(
 ) {
   const expense = await prisma.expense.findUnique({
     where: { id: params.id },
-    select: { id: true, amount: true, statementLineId: true, asideFromLineId: true },
+    select: { id: true, amount: true, statementLineId: true, asideFromLineId: true, memberNumber: true },
   });
   if (!expense) return NextResponse.json({ error: "ไม่พบรายการ" }, { status: 404 });
+
+  // Off the round too, where recording it put it on its member.
+  if (expense.statementLineId) {
+    const line = await prisma.statementLine.findUnique({
+      where: { id: expense.statementLineId },
+      select: { account: true, fingerprint: true },
+    });
+    const problem = line ? await unbridgeRecording(line, expense.memberNumber) : null;
+    if (problem) return NextResponse.json({ error: problem }, { status: 409 });
+  }
 
   // A recording and the parts set aside from it (lib/recordingAside.ts) add up
   // to one bank line: the recording takes its parts with it, and a part on
