@@ -43,7 +43,7 @@ export async function GET(request: NextRequest, { params }: { params: { id: stri
             excludedReason: null,
             NOT: { fingerprint: { startsWith: `line:${line.fingerprint}` } },
           },
-          select: { amount: true, transferredAt: true },
+          select: { amount: true, transferredAt: true, accountNumber: true },
         })
       : Promise.resolve([]),
     prisma.expense.findMany({
@@ -56,7 +56,21 @@ export async function GET(request: NextRequest, { params }: { params: { id: stri
     }),
   ]);
 
+  // The round's own copy of this very line — read from the round's statement
+  // upload: same paying account, amount and day. That is this money already
+  // counted, not other money of the same amount (29571: ฿4,840 counted from
+  // the statement file, and the form warned it might be a second payment).
+  const isThisLine = (t: { amount: number; transferredAt: Date | null; accountNumber: string }) =>
+    line.senderAccount !== null &&
+    t.accountNumber === line.senderAccount &&
+    same(t.amount) &&
+    t.transferredAt !== null &&
+    line.postedAt !== null &&
+    t.transferredAt.toISOString().slice(0, 10) === line.postedAt.toISOString().slice(0, 10);
+  const thisLineCounted = inRound.some(isThisLine);
+
   const check: RecordCheck = {
+    thisLineCounted,
     roundLabel: round?.label ?? null,
     onRound: member !== null,
     deductionResult: member?.deductionResult,
@@ -65,7 +79,7 @@ export async function GET(request: NextRequest, { params }: { params: { id: stri
     amountPaid: member?.amountPaid,
     sameAmount: [
       ...inRound
-        .filter((t) => same(t.amount))
+        .filter((t) => same(t.amount) && !isThisLine(t))
         .map((t) => ({ amount: t.amount, date: (t.transferredAt ?? line.postedAt ?? new Date()).toISOString(), where: "round" as const })),
       ...recorded
         .filter((e) => same(e.amount))

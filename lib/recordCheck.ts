@@ -7,6 +7,9 @@ import { formatAmount } from "./format";
 // was only found out on เทียบ Statement afterwards.
 
 export interface RecordCheck {
+  // The round already counts this very bank line (its statement upload read
+  // it): recording it here files the transaction and counts nothing again.
+  thisLineCounted?: boolean;
   roundLabel: string | null;
   onRound: boolean;
   deductionResult?: string;
@@ -30,7 +33,25 @@ const day = (iso: string) => {
 
 export function recordCheckNotes(c: RecordCheck): RecordCheckNote[] {
   const notes: RecordCheckNote[] = [];
-  if (!c.roundLabel) {
+  if (c.roundLabel && c.thisLineCounted) {
+    const due = c.amountDue ?? 0;
+    const paid = c.amountPaid ?? 0;
+    const balance = Math.round((paid - due) * 100) / 100;
+    const standing =
+      c.deductionResult !== "uncollected"
+        ? ""
+        : Math.abs(balance) < 0.01
+          ? " · ครบ"
+          : balance > 0
+            ? ` · เกิน ${formatAmount(balance)}`
+            : ` · ยังขาด ${formatAmount(-balance)}`;
+    notes.push({
+      tone: "ok",
+      text:
+        `✅ ยอดนี้นับในรอบ ${c.roundLabel} แล้ว${standing} — ไม่ต้องบันทึกซ้ำ ` +
+        "ถ้าต้องการให้มีในแถบธุรกรรมของสมาชิก บันทึกได้ ระบบไม่นับซ้ำ",
+    });
+  } else if (!c.roundLabel) {
     notes.push({ tone: "info", text: "ยังไม่มีรอบหักไม่ได้ของเดือนที่เงินเข้า" });
   } else if (!c.onRound) {
     notes.push({ tone: "info", text: `ℹ️ ไม่มีชื่อในรอบ ${c.roundLabel} — ไม่ได้อยู่ในรายชื่อหักไม่ได้เดือนนี้` });
