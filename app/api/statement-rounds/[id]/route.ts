@@ -10,7 +10,7 @@ import { isSetAsidePiece } from "@/lib/transferSetAside";
 import { DEDUCTION_CATEGORY } from "@/lib/statementSlipHints";
 import { memberNumberKey } from "@/lib/memberNumber";
 import { periodOfDate } from "@/lib/deductionPeriod";
-import { unbridgedRecordings } from "@/lib/unbridgedRecordings";
+import { otherMonthRecordings, unbridgedRecordings } from "@/lib/unbridgedRecordings";
 import { isUnitRemittance, unitRemittanceByMember } from "@/lib/unitRemittance";
 import { summarizeStatementFiles } from "@/lib/roundStatementFiles";
 import { transferOrigins, type Person } from "@/lib/transferOrigin";
@@ -344,35 +344,89 @@ export async function GET(
       if (p.fingerprint) carriedOfLine.set(p.fingerprint, p._sum.amount ?? 0);
     }
   }
-  const recordedOutside = unbridgedRecordings(
-    recordings.flatMap((r) => {
-      const line = lineById.get(r.statementLineId as string);
-      const memberNumber = roundNumberByKey.get(memberNumberKey(r.memberNumber) ?? "");
-      if (!line || !memberNumber) return [];
-      // The same month rule the record route bridges by: a payment belongs to
-      // the round whose period its own bank date falls in.
-      if (periodOfDate(line.postedAt ?? r.createdAt) !== round.period) return [];
-      return [
-        {
-          expenseId: r.id,
-          memberNumber,
-          amount: r.amount,
-          postedAt: line.postedAt,
-          createdAt: r.createdAt,
-          lineFingerprint: line.fingerprint,
-          senderAccount: line.senderAccount,
-          lineId: line.id,
-          carried: carriedOfLine.get(`${LINE_FINGERPRINT_PREFIX}${line.fingerprint}`) ?? 0,
-        },
-      ];
-    }),
-    transfers.map((t) => ({
+  const recordingRows = recordings.flatMap((r) => {
+    const line = lineById.get(r.statementLineId as string);
+    const memberNumber = roundNumberByKey.get(memberNumberKey(r.memberNumber) ?? "");
+    if (!line || !memberNumber) return [];
+    return [
+      {
+        expenseId: r.id,
+        memberNumber,
+        amount: r.amount,
+        postedAt: line.postedAt,
+        createdAt: r.createdAt,
+        lineFingerprint: line.fingerprint,
+        senderAccount: line.senderAccount,
+        lineId: line.id,
+        carried: carriedOfLine.get(`${LINE_FINGERPRINT_PREFIX}${line.fingerprint}`) ?? 0,
+        // The same month rule the record route bridges by: a payment belongs
+        // to the round whose period its own bank date falls in.
+        period: periodOfDate(line.postedAt ?? r.createdAt),
+      },
+    ];
+  });
+  const roundTransferRefs = transfers.map((t) => ({
+    fingerprint: t.fingerprint,
+    accountNumber: t.accountNumber,
+    amount: t.amount,
+    transferredAt: t.transferredAt,
+  }));
+  const sameMonth = unbridgedRecordings(
+    recordingRows.filter((r) => r.period === round.period),
+    roundTransferRefs
+  );
+  // Paid in another month: listed with the round that counts it, if any —
+  // unless that is this round, where it already shows as a transfer.
+  const notHere = new Set(
+    unbridgedRecordings(
+      recordingRows.filter((r) => r.period !== round.period),
+      roundTransferRefs
+    ).map((r) => r.lineId)
+  );
+  const otherRows = recordingRows.filter((r) => r.period !== round.period && notHere.has(r.lineId));
+  const otherSenders = [...new Set(otherRows.map((r) => r.senderAccount).filter(Boolean))] as string[];
+  const [otherBridged, otherReal] = otherRows.length
+    ? await Promise.all([
+        prisma.statementTransfer.findMany({
+          where: { fingerprint: { in: otherRows.map((r) => `line:${r.lineFingerprint}`) } },
+          select: { fingerprint: true, roundId: true },
+        }),
+        otherSenders.length
+          ? prisma.statementTransfer.findMany({
+              where: { accountNumber: { in: otherSenders }, manualMemberNumber: false },
+              select: {
+                fingerprint: true,
+                accountNumber: true,
+                amount: true,
+                transferredAt: true,
+                roundId: true,
+              },
+            })
+          : Promise.resolve([]),
+      ])
+    : [[], []];
+  const otherRoundIds = [...new Set([...otherBridged, ...otherReal].map((t) => t.roundId))];
+  const otherRoundLabel = new Map(
+    (otherRoundIds.length
+      ? await prisma.statementRound.findMany({
+          where: { id: { in: otherRoundIds } },
+          select: { id: true, label: true },
+        })
+      : []
+    ).map((r) => [r.id, r.label])
+  );
+  const otherMonth = otherMonthRecordings(
+    otherRows,
+    otherBridged.map((t) => ({ fingerprint: t.fingerprint, roundLabel: otherRoundLabel.get(t.roundId) ?? "" })),
+    otherReal.map((t) => ({
       fingerprint: t.fingerprint,
       accountNumber: t.accountNumber,
       amount: t.amount,
       transferredAt: t.transferredAt,
+      roundLabel: otherRoundLabel.get(t.roundId) ?? "",
     }))
   );
+  const recordedOutside = [...sameMonth, ...otherMonth];
   // Parts staff booked under another category (lib/recordingAside.ts).
   const asideRows = recordedOutside.length
     ? await prisma.expense.findMany({

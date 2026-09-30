@@ -1099,13 +1099,19 @@ export default function StatementReconcilePanel() {
     </button>
   );
 
-  const countRecordingInRound = async (lineId: string, amount: number) => {
+  // otherMonth: money that landed in another month, counted in this round
+  // by choice rather than by its own date.
+  const countRecordingInRound = async (lineId: string, amount: number, otherMonth = false) => {
     if (!selectedId) return;
     setBusy(true);
     setError(null);
     setNotice(null);
     try {
-      const res = await fetch(`/api/statement-lines/${lineId}/bridge`, { method: "POST" });
+      const res = await fetch(`/api/statement-lines/${lineId}/bridge`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(otherMonth ? { roundId: selectedId } : {}),
+      });
       const body = await res.json();
       if (!res.ok) {
         setError(body.error || "นับเข้ารอบไม่สำเร็จ");
@@ -2331,7 +2337,11 @@ export default function StatementReconcilePanel() {
                                     >
                                       <DateTimeCell iso={latest.date} />
                                       <span className="block text-[11px] text-slate-400">
-                                        {isCollectedRemittance(latest, m.deductionResult)
+                                        {latest.otherPeriod
+                                          ? latest.countedIn
+                                            ? `📒 นับในรอบ ${latest.countedIn}`
+                                            : `📒 โอนเดือน ${describeDeductionPeriod(latest.otherPeriod)} · ยังไม่นับ`
+                                          : isCollectedRemittance(latest, m.deductionResult)
                                           ? "✅ ตามผลการหัก"
                                           : latest.carried > 0
                                             ? "↪ ชำระค้างข้ามเดือน"
@@ -2711,13 +2721,15 @@ export default function StatementReconcilePanel() {
                                     into the round: the member was already
                                     settled when it was filed. Read-only. */}
                                 {recordedOutsideOf(m.memberNumber).map((r) => {
-                                  const remittance = isCollectedRemittance(r, m.deductionResult);
+                                  const remittance = !r.otherPeriod && isCollectedRemittance(r, m.deductionResult);
                                   return (
                                   <div
                                     key={r.id}
                                     className="flex flex-wrap items-center gap-3 text-sm py-1 border-t border-slate-200 text-slate-500"
                                     title={
-                                      remittance
+                                      r.otherPeriod
+                                        ? "บันทึกเป็นชำระเก็บไม่ได้รายเดือนที่หน้าเงินเข้าประจำวันแล้ว แต่วันที่โอนอยู่คนละเดือนกับรอบนี้ ระบบจึงนับให้รอบของเดือนที่โอน"
+                                        : remittance
                                         ? "หน่วยงานหักจากเงินเดือนแล้วโอนมาให้สหกรณ์ — เป็นเงินก้อนเดียวกับที่ไฟล์ผลการหักบอกว่า หักได้ครบ จึงไม่นับเพิ่มในรอบ และไม่ใช้ชำระค้างข้ามเดือน"
                                         : "บันทึกเป็นชำระเก็บไม่ได้รายเดือนที่หน้าเงินเข้าประจำวันแล้ว แต่ตอนบันทึกสมาชิกคนนี้มีสถานะครบในรอบนี้อยู่แล้ว จึงไม่นับซ้ำในรอบ — ดู/แก้รายการได้ที่หน้าเงินเข้าประจำวันหรือแถบธุรกรรม"
                                     }
@@ -2728,7 +2740,33 @@ export default function StatementReconcilePanel() {
                                     <span className="num whitespace-nowrap">
                                       {formatStatementDateTime(r.date)}
                                     </span>
-                                    {remittance ? (
+                                    {r.otherPeriod ? (
+                                      // Landed in another month, so its own
+                                      // month's round is where it went — 27591.
+                                      r.countedIn ? (
+                                        <span className="text-xs text-slate-500">
+                                          📒 โอนเดือน {describeDeductionPeriod(r.otherPeriod)} · นับอยู่ในรอบ{" "}
+                                          <strong>{r.countedIn}</strong> แล้ว
+                                        </span>
+                                      ) : (
+                                        <>
+                                          <span className="text-xs text-amber-700">
+                                            📒 โอนเดือน {describeDeductionPeriod(r.otherPeriod)} · ยังไม่ได้นับในรอบไหน
+                                          </span>
+                                          {canBridgeToRound(m) && (
+                                            <button
+                                              type="button"
+                                              onClick={() => countRecordingInRound(r.lineId, r.amount, true)}
+                                              disabled={busy || frozen}
+                                              className="text-xs text-white bg-emerald-700 rounded px-2 py-1 hover:bg-emerald-800 disabled:opacity-50"
+                                              title={`ยอดนี้โอนเข้ามาเดือน ${describeDeductionPeriod(r.otherPeriod)} ระบบจึงไม่นับในรอบนี้เอง (รอบของเดือนนั้นไม่มี หรือไม่มีสมาชิกคนนี้) — ถ้าเป็นเงินชำระยอดที่ค้างในรอบนี้ กดเพื่อนับเข้ารอบนี้`}
+                                            >
+                                              ➕ นับเข้ารอบนี้
+                                            </button>
+                                          )}
+                                        </>
+                                      )
+                                    ) : remittance ? (
                                       <>
                                       <span className="text-xs text-emerald-700">
                                         ✅ เงินที่หน่วยงานโอนตามผลการหัก · รวมอยู่ใน "หักได้ครบ" แล้ว
