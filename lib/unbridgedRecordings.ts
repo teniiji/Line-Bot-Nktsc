@@ -50,6 +50,11 @@ export interface UnbridgedRecording {
   // No paying account on the line: a unit's office sending money on for its
   // people (lib/unitPayer.ts), not the member transferring it themselves.
   fromUnit: boolean;
+  // Set for a payment whose bank date falls in another month (its MMYY
+  // code) — see otherMonthRecordings.
+  otherPeriod?: string;
+  // The round that counts it already, by label; null when none does.
+  countedIn?: string | null;
 }
 
 // A recording is already on screen the ordinary way when the round holds its
@@ -80,6 +85,43 @@ export function unbridgedRecordings(
       available: Math.max(0, Math.round((r.amount - r.carried) * 100) / 100),
       fromUnit: !r.senderAccount,
     }));
+}
+
+// This member's recordings whose money landed in another month. The month
+// rule (periodOfDate) sends each to that month's round, so the round being
+// looked at never listed them — 27591: ฿3,200 filed as ชำระเก็บไม่ได้รายเดือน
+// and matched to their slip, while their round row sat on ❌ ยังค้าง with
+// an empty transfer list and nothing to say where the money had gone. When
+// that month has no round, or the member is not on it, nothing counts it at
+// all; this lists it with where it stands, so staff can count it here.
+export function otherMonthRecordings(
+  recorded: (RecordedLine & { period: string })[],
+  // Rounds that already hold a line: bridged under "line:<fingerprint>".
+  bridged: { fingerprint: string; roundLabel: string }[],
+  // Real statement transfers in any round, for the same line uploaded there.
+  realTransfers: (RoundTransferRef & { roundLabel: string })[]
+): UnbridgedRecording[] {
+  const bridgedIn = new Map(bridged.map((b) => [b.fingerprint, b.roundLabel]));
+  return recorded.map((r) => {
+    const covering =
+      r.senderAccount && r.postedAt
+        ? realTransfers.find((t) => coveredByRealTransfer([t], r.senderAccount as string, r.amount, r.postedAt as Date))
+        : undefined;
+    const countedIn = bridgedIn.get(`line:${r.lineFingerprint}`) ?? covering?.roundLabel ?? null;
+    return {
+      id: `expense:${r.expenseId}`,
+      memberNumber: r.memberNumber,
+      amount: Math.round(r.amount * 100) / 100,
+      date: r.postedAt ?? r.createdAt,
+      lineId: r.lineId,
+      carried: Math.round(r.carried * 100) / 100,
+      // Counted by another round, none of it is free for a debt here.
+      available: countedIn ? 0 : Math.max(0, Math.round((r.amount - r.carried) * 100) / 100),
+      fromUnit: !r.senderAccount,
+      otherPeriod: r.period,
+      countedIn,
+    };
+  });
 }
 
 // A unit's transfer for a member the round already has as หักได้ครบ is that

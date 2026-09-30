@@ -41,7 +41,11 @@ export async function bridgeLineToRound(
   memberNumber: string,
   // What to count: the line's amount, less anything set aside from its
   // recording under another category (lib/recordingAside.ts).
-  amount: number = line.amount
+  amount: number = line.amount,
+  // A round staff chose for money that landed in another month — see
+  // otherMonthRecordings in lib/unbridgedRecordings.ts. Without it, the
+  // round is the one for the month the payment's own date falls in.
+  targetRoundId?: string
 ): Promise<BridgeOutcome> {
   // A line that names no account — a unit's remittance, cash paid in at the
   // counter — is still this member's deduction paid: staff chose the member
@@ -52,20 +56,28 @@ export async function bridgeLineToRound(
   if (!line.postedAt) return { bridged: false, reason: "บรรทัดนี้ไม่มีวันที่โอน" };
 
   const round = await prisma.statementRound.findUnique({
-    where: { period: periodOfDate(line.postedAt) },
+    where: targetRoundId ? { id: targetRoundId } : { period: periodOfDate(line.postedAt) },
     select: { id: true, period: true, label: true, closedAt: true },
   });
-  if (!round) return { bridged: false, reason: "ยังไม่มีรอบของเดือนที่โอน" };
+  if (!round) return { bridged: false, reason: targetRoundId ? "ไม่พบรอบนี้" : "ยังไม่มีรอบของเดือนที่โอน" };
   if (round.closedAt) {
     return { bridged: false, reason: `รอบ ${round.label} ปิดแล้ว — ใช้ชำระที่แถบ "ชำระข้ามเดือน" แทน` };
   }
 
   const fingerprint = `line:${line.fingerprint}`;
+  // Chosen by hand, the line may already sit in its own month's round:
+  // counting it here as well would be the same money twice.
   const already = await prisma.statementTransfer.findFirst({
-    where: { roundId: round.id, fingerprint },
-    select: { id: true },
+    where: targetRoundId ? { fingerprint } : { roundId: round.id, fingerprint },
+    select: { roundId: true },
   });
-  if (already) return { bridged: false, reason: `ยอดนี้นับอยู่ในรอบ ${round.label} แล้ว` };
+  if (already) {
+    const holder =
+      already.roundId === round.id
+        ? round
+        : await prisma.statementRound.findUnique({ where: { id: already.roundId }, select: { label: true } });
+    return { bridged: false, reason: `ยอดนี้นับอยู่ในรอบ ${holder?.label ?? ""} แล้ว` };
+  }
 
   const key = memberNumberKey(memberNumber);
   const onRound = await prisma.statementMember.findMany({
@@ -84,7 +96,12 @@ export async function bridgeLineToRound(
   // way, and writing it again would double it.
   if (line.senderAccount) {
     const realTransfers = await prisma.statementTransfer.findMany({
-      where: { roundId: round.id, accountNumber: line.senderAccount, amount: line.amount, manualMemberNumber: false },
+      where: {
+        ...(targetRoundId ? {} : { roundId: round.id }),
+        accountNumber: line.senderAccount,
+        amount: line.amount,
+        manualMemberNumber: false,
+      },
       select: { accountNumber: true, amount: true, transferredAt: true },
     });
     if (coveredByRealTransfer(realTransfers, line.senderAccount, line.amount, line.postedAt)) {

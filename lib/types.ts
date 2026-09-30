@@ -332,6 +332,10 @@ export interface RecordedOutsideRow {
   fromUnit: boolean;
   // Parts booked under another category (lib/recordingAside.ts).
   asides: { id: string; amount: number; category: string }[];
+  // Money that landed in another month (MMYY), and the round counting it
+  // if any — see otherMonthRecordings in lib/unbridgedRecordings.ts.
+  otherPeriod?: string;
+  countedIn?: string | null;
 }
 
 // A transfer that matched nobody on the round's list — money that arrived

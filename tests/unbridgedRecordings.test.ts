@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { isCollectedRemittance, unbridgedRecordings, type RecordedLine } from "../lib/unbridgedRecordings";
+import {
+  isCollectedRemittance,
+  otherMonthRecordings,
+  unbridgedRecordings,
+  type RecordedLine,
+} from "../lib/unbridgedRecordings";
 
 const recorded = (over: Partial<RecordedLine> = {}): RecordedLine => ({
   expenseId: "e1",
@@ -116,5 +121,67 @@ describe("isCollectedRemittance", () => {
     const [row] = unbridgedRecordings([recorded()], []);
     expect(isCollectedRemittance(row, "uncollected")).toBe(false);
     expect(isCollectedRemittance(row, "awaiting")).toBe(false);
+  });
+});
+
+describe("otherMonthRecordings", () => {
+  // 27591: ฿3,200 paid in September for the round they owe on.
+  const september = (over: Partial<RecordedLine> = {}) => ({
+    ...recorded({
+      amount: 3200,
+      senderAccount: "4193098281",
+      postedAt: new Date("2026-09-15T09:24:48Z"),
+      lineFingerprint: "fp-27591",
+      ...over,
+    }),
+    period: "0969",
+  });
+
+  it("says a payment no round counts is counted nowhere, and leaves all of it free", () => {
+    const [row] = otherMonthRecordings([september()], [], []);
+    expect(row).toMatchObject({ otherPeriod: "0969", countedIn: null, amount: 3200, available: 3200 });
+  });
+
+  it("names the round that took it in by its line", () => {
+    const [row] = otherMonthRecordings(
+      [september()],
+      [{ fingerprint: "line:fp-27591", roundLabel: "ก.ย. 2569" }],
+      []
+    );
+    expect(row).toMatchObject({ countedIn: "ก.ย. 2569", available: 0 });
+  });
+
+  it("names the round whose uploaded statement carries the same transfer", () => {
+    const [row] = otherMonthRecordings(
+      [september()],
+      [],
+      [
+        {
+          fingerprint: "413|4193098281|3200.00|2026-09-15|1|0",
+          accountNumber: "4193098281",
+          amount: 3200,
+          transferredAt: new Date("2026-09-15T00:00:00Z"),
+          roundLabel: "ก.ย. 2569",
+        },
+      ]
+    );
+    expect(row.countedIn).toBe("ก.ย. 2569");
+  });
+
+  it("does not take another day's transfer from the same account for this one", () => {
+    const [row] = otherMonthRecordings(
+      [september()],
+      [],
+      [
+        {
+          fingerprint: "x",
+          accountNumber: "4193098281",
+          amount: 3200,
+          transferredAt: new Date("2026-08-15T00:00:00Z"),
+          roundLabel: "ส.ค. 2569",
+        },
+      ]
+    );
+    expect(row.countedIn).toBeNull();
   });
 });
