@@ -5,6 +5,7 @@ import { countedAmount } from "@/lib/carriedDebt";
 import { sameStanding } from "@/lib/roundStanding";
 import { overstatedParents, parentOfPiece } from "@/lib/statementSplitTransfer";
 import { isUnitRemittance } from "@/lib/unitRemittance";
+import { isManualPaymentBranch } from "@/lib/manualPayment";
 import { DEDUCTION_CATEGORY, autoSlipReasons } from "@/lib/statementSlipHints";
 
 // Recomputes every member's payment total for a round from the transfer rows
@@ -143,7 +144,7 @@ export async function recomputeRoundPayments(roundId: string): Promise<void> {
         // money they were never asked for.
         status:
           member.deductionResult === "awaiting"
-            ? paid?.branches.has("เงินสด") || paid?.staffPlaced
+            ? [...(paid?.branches ?? [])].some(isManualPaymentBranch) || paid?.staffPlaced
               ? calcPaymentStatus(amountPaid, member.expectedAmount ?? 0).status
               : "awaiting"
             : member.deductionResult === "collected"

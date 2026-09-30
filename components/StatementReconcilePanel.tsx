@@ -31,6 +31,7 @@ import { controlUnitLabel } from "@/lib/controlUnits";
 import { describeDeductionPeriod } from "@/lib/deductionPeriod";
 import { downloadStatementMembersCsv } from "@/lib/csv";
 import { EXCLUDE_REASONS, IN_RESULT_REASON, excludeReasonLabel } from "@/lib/statementSlipHints";
+import { MANUAL_PAYMENT_LABEL, type ManualPaymentMethod, manualPaymentMethodOf } from "@/lib/manualPayment";
 import { SET_ASIDE_CATEGORIES } from "@/lib/transferSetAside";
 import { isCollectedRemittance } from "@/lib/unbridgedRecordings";
 import { canBridgeToRound } from "@/lib/roundReach";
@@ -216,6 +217,9 @@ export default function StatementReconcilePanel() {
   const [cashAmount, setCashAmount] = useState("");
   const [cashDate, setCashDate] = useState(cooperativeToday());
   const [cashError, setCashError] = useState<string | null>(null);
+  // Which kind of payment the open form records: cash at the office, or an
+  // internal transfer from the member's own account — see lib/manualPayment.ts.
+  const [cashMethod, setCashMethod] = useState<ManualPaymentMethod>("cash");
   // Without "file", the whole account.
   const [pendingClear, setPendingClear] = useState<{
     account: string;
@@ -430,8 +434,9 @@ export default function StatementReconcilePanel() {
     }
   };
 
-  const openCash = (memberNumber: string) => {
+  const openCash = (memberNumber: string, method: ManualPaymentMethod) => {
     setCashMember(memberNumber);
+    setCashMethod(method);
     setCashAmount("");
     setCashDate(cooperativeToday());
     setCashError(null);
@@ -454,11 +459,12 @@ export default function StatementReconcilePanel() {
           memberNumber,
           amount: Number(cashAmount),
           transferredAt: cashDate,
+          method: cashMethod,
         }),
       });
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
-        setCashError(body.error || "บันทึกเงินสดไม่สำเร็จ");
+        setCashError(body.error || `บันทึก${MANUAL_PAYMENT_LABEL[cashMethod]}ไม่สำเร็จ`);
         return;
       }
       closeCash();
@@ -1862,10 +1868,10 @@ export default function StatementReconcilePanel() {
                   <FilterChip
                     active={statusFilter === "cash"}
                     onClick={() => setStatusFilter(statusFilter === "cash" ? "all" : "cash")}
-                    label="💵 จ่ายเงินสด"
+                    label="💵 เงินสด / โอนภายใน"
                     count={cashCount}
                     countClass="text-sky-700"
-                    title="มีอย่างน้อยหนึ่งรายการที่บันทึกว่าจ่ายเป็นเงินสด ไม่ใช่จากไฟล์ Statement"
+                    title="มีอย่างน้อยหนึ่งรายการที่บันทึกว่าจ่ายเป็นเงินสดหรือโอนภายใน ไม่ใช่จากไฟล์ Statement"
                   />
                 )}
                 {manyAccountsCount > 0 && (
@@ -2424,9 +2430,9 @@ export default function StatementReconcilePanel() {
                                         </strong>{" "}
                                         · ยอดรวม {formatAmount(t.splitFrom.total)} ({t.splitFrom.memberCount} คน)
                                       </span>
-                                    ) : t.manualMemberNumber && t.accountNumber === "เงินสด" ? (
+                                    ) : manualPaymentMethodOf(t) ? (
                                       <span className="text-xs text-sky-700" title="ไม่มีบรรทัดในสเตทเมนต์ธนาคาร — บันทึกตรงจากหน้านี้">
-                                        💵 เงินสด
+                                        {manualPaymentMethodOf(t) === "internal" ? "🔁 โอนภายใน" : "💵 เงินสด"}
                                       </span>
                                     ) : t.origin?.origin?.kind === "splitFrom" ? (
                                       <span
@@ -2851,23 +2857,37 @@ export default function StatementReconcilePanel() {
                                       ไม่มีรายการโอนของสมาชิกคนนี้ในรอบนี้
                                     </p>
                                   )}
-                                <div className="pt-2 mt-1 border-t border-slate-200">
-                                  <button
-                                    type="button"
-                                    onClick={() =>
-                                      cashMember === m.memberNumber
-                                        ? closeCash()
-                                        : openCash(m.memberNumber)
-                                    }
-                                    disabled={busy || frozen}
-                                    className="text-xs text-slate-600 border border-slate-300 rounded px-2 py-1 hover:bg-slate-50 disabled:opacity-50"
-                                    title="สมาชิกจ่ายเป็นเงินสดที่สำนักงาน — ไม่มีบรรทัดในสเตทเมนต์ธนาคารให้จับคู่ ต้องบันทึกตรงนี้"
-                                  >
-                                    {cashMember === m.memberNumber ? "ยกเลิกบันทึกเงินสด" : "บันทึกว่าจ่ายเงินสดแล้ว"}
-                                  </button>
+                                <div className="pt-2 mt-1 border-t border-slate-200 flex flex-wrap items-center gap-2">
+                                  {(["cash", "internal"] as const).map((method) => {
+                                    const open = cashMember === m.memberNumber && cashMethod === method;
+                                    return (
+                                      <button
+                                        key={method}
+                                        type="button"
+                                        onClick={() => (open ? closeCash() : openCash(m.memberNumber, method))}
+                                        disabled={busy || frozen}
+                                        className={`text-xs border rounded px-2 py-1 hover:bg-slate-50 disabled:opacity-50 ${
+                                          open ? "border-slate-500 text-slate-900" : "border-slate-300 text-slate-600"
+                                        }`}
+                                        title={
+                                          method === "cash"
+                                            ? "สมาชิกจ่ายเป็นเงินสดที่สำนักงาน — ไม่มีบรรทัดในสเตทเมนต์ธนาคารให้จับคู่ ต้องบันทึกตรงนี้"
+                                            : "โอนภายในสหกรณ์ (เช่น จากบัญชีเงินฝากของสมาชิก) — ไม่มีบรรทัดในสเตทเมนต์ธนาคารให้จับคู่ ต้องบันทึกตรงนี้"
+                                        }
+                                      >
+                                        {open
+                                          ? `ยกเลิกบันทึก${MANUAL_PAYMENT_LABEL[method]}`
+                                          : method === "cash"
+                                            ? "บันทึกว่าจ่ายเงินสดแล้ว"
+                                            : "บันทึกว่าโอนภายในแล้ว"}
+                                      </button>
+                                    );
+                                  })}
                                   {cashMember === m.memberNumber && (
                                     <div className="w-full flex flex-wrap items-center gap-2 pt-2">
-                                      <span className="text-xs text-slate-500">ยอด</span>
+                                      <span className="text-xs text-slate-500">
+                                        {cashMethod === "internal" ? "🔁 โอนภายใน ยอด" : "💵 เงินสด ยอด"}
+                                      </span>
                                       <input
                                         type="number"
                                         inputMode="decimal"
@@ -2877,7 +2897,9 @@ export default function StatementReconcilePanel() {
                                         className="border border-slate-300 rounded px-2 py-1 text-xs w-24"
                                         autoFocus
                                       />
-                                      <span className="text-xs text-slate-500">บาท วันที่จ่าย</span>
+                                      <span className="text-xs text-slate-500">
+                                        {cashMethod === "internal" ? "บาท วันที่โอน" : "บาท วันที่จ่าย"}
+                                      </span>
                                       <input
                                         type="date"
                                         value={cashDate}
@@ -2890,7 +2912,7 @@ export default function StatementReconcilePanel() {
                                         disabled={busy || !cashAmount.trim() || !cashDate}
                                         className="text-xs text-white bg-slate-900 rounded px-2.5 py-1 disabled:opacity-50"
                                       >
-                                        บันทึกเงินสด
+                                        บันทึก{MANUAL_PAYMENT_LABEL[cashMethod]}
                                       </button>
                                       {cashError && (
                                         <p className="w-full text-xs text-red-600">{cashError}</p>

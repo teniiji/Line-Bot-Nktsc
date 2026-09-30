@@ -5,6 +5,7 @@ import { ROUND_CLOSED_ERROR } from "@/lib/carriedDebt";
 import { memberNumberKey } from "@/lib/memberNumber";
 import { dayStart, cooperativeToday } from "@/lib/cooperativeClock";
 import { recomputeRoundPayments } from "@/lib/statementRecompute";
+import { MANUAL_PAYMENT, parseManualPaymentMethod } from "@/lib/manualPayment";
 
 export const dynamic = "force-dynamic";
 
@@ -21,6 +22,10 @@ export const dynamic = "force-dynamic";
 // dropdown) if somebody mistypes the amount. account/branch are "cash"/
 // "เงินสด" rather than 413/447 so it never reads as belonging to either
 // account's own Statement — see the บัญชี filter on ส่งออก CSV.
+//
+// method "internal" records a transfer made inside the cooperative (from the
+// member's own deposit account) the same way — also money no bank Statement
+// will carry. See lib/manualPayment.ts.
 export async function POST(
   request: NextRequest,
   { params }: { params: { id: string } }
@@ -34,6 +39,8 @@ export async function POST(
   }
 
   const body = await request.json();
+  const method = parseManualPaymentMethod(body.method);
+  const shape = MANUAL_PAYMENT[method];
   const memberNumber = memberNumberKey(String(body.memberNumber ?? ""));
   if (!memberNumber) {
     return NextResponse.json({ error: "ต้องระบุเลขสมาชิก" }, { status: 400 });
@@ -66,15 +73,15 @@ export async function POST(
     data: {
       roundId: round.id,
       memberNumber: member.memberNumber,
-      accountNumber: "เงินสด",
+      accountNumber: shape.accountNumber,
       amount,
       transferredAt,
-      account: "cash",
-      branch: "เงินสด",
-      description: "ชำระเงินสดที่สำนักงาน",
+      account: shape.account,
+      branch: shape.branch,
+      description: shape.description,
       // Never read off a bank line, so given its own identity rather than
       // one derived from a file — the same approach a split's new row uses.
-      fingerprint: `cash:${round.id}:${member.memberNumber}:${randomUUID()}`,
+      fingerprint: `${method}:${round.id}:${member.memberNumber}:${randomUUID()}`,
       manualMemberNumber: true,
     },
     select: { id: true, amount: true, transferredAt: true },
@@ -87,5 +94,6 @@ export async function POST(
     memberNumber: member.memberNumber,
     memberName: member.name,
     amount: created.amount,
+    method,
   });
 }

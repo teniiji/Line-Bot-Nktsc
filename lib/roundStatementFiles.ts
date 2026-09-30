@@ -1,3 +1,5 @@
+import { isManualPaymentAccount } from "./manualPayment";
+
 // The statement files a หักไม่ได้ round was built from, one row per file, so
 // a single file loaded by mistake can be taken back out without clearing the
 // whole account.
@@ -47,8 +49,8 @@ const dayOf = (value: Date | string | null): string | null => {
 export function summarizeStatementFiles(transfers: FileTransfer[]): RoundStatementFile[] {
   const files = new Map<string, RoundStatementFile>();
   for (const t of transfers) {
-    // Cash was never a file.
-    if (t.account === "cash") continue;
+    // Cash and internal transfers were never a file.
+    if (isManualPaymentAccount(t.account)) continue;
     const bridged = isBridgedFingerprint(t.fingerprint);
     const key = JSON.stringify([t.account, t.sourceFile, bridged]);
     const file =
