@@ -1,6 +1,7 @@
 import { StatementMemberRow } from "./types";
 import { stripHonorific } from "./nameMatch";
 import { remittanceOverlap } from "./unitRemittance";
+import { memberDifference } from "./statementReconcile";
 
 // Filtering/sorting for the เทียบ Statement table. Kept out of the component
 // because these are the rules staff actually reason about ("who in this unit
@@ -116,8 +117,20 @@ function matchesSearch(m: StatementMemberRow, search: string): boolean {
 // Exported so the chips above the table can be counted by the very rule
 // they filter by. Counting one way and filtering another is how a chip comes
 // to promise rows that are not there.
+// Money beyond what the round asked of a member, wherever it sits: an
+// หักไม่ได้ member who transferred more than they owed (⚠️ ชำระเกิน), and a
+// member payroll deducted in full who transferred money as well (✅ หักได้ครบ
+// with a ส่วนต่าง). Staff chasing overpayments had to read both tabs of the
+// round to find them all — 132 under ชำระเกิน, and more hidden among 6,194
+// หักได้ครบ. 0 when there is none.
+export function excessOf(m: StatementMemberRow): number {
+  const diff = memberDifference(m);
+  return diff > 0.005 ? diff : 0;
+}
+
 export function matchesStatus(m: StatementMemberRow, status: string): boolean {
   if (status === "all") return true;
+  if (status === "excess") return excessOf(m) > 0;
   // Not a status the reconciliation produces, but the bucket staff most need
   // to act on: without an account number the transfer can never match, so
   // these would otherwise sit in "ยังค้าง" looking like people who did not pay.

@@ -53,6 +53,7 @@ import {
 import {
   StatementSort,
   filterStatementMembers,
+  excessOf,
   hCodesOf,
   matchesStatus,
   parseSubUnit,
@@ -290,10 +291,17 @@ export default function StatementReconcilePanel() {
     return body.data as StatementRoundSummary[] | undefined;
   }, []);
 
+  // The round last asked for. A slow answer for a round staff have already
+  // clicked away from must not land on top of the one they are looking at —
+  // a big round loading behind a small one filled the small one's table with
+  // the big one's 1,173 members.
+  const latestRoundRequest = useRef<string | null>(null);
   const fetchRound = useCallback(async (roundId: string) => {
+    latestRoundRequest.current = roundId;
     setLoadingRound(true);
     const res = await fetch(`/api/statement-rounds/${roundId}`);
     const body = await res.json();
+    if (latestRoundRequest.current !== roundId) return;
     setMembers(body.data ?? []);
     setUnmatched(body.unmatched ?? []);
     setOutsideRound(body.outsideRound ?? []);
@@ -1316,6 +1324,8 @@ export default function StatementReconcilePanel() {
   const missingAccountCount = countMatching("no_account");
   const manyAccountsCount = countMatching("many_accounts");
   const cashCount = countMatching("cash");
+  const excessCount = countMatching("excess");
+  const shownExcess = Math.round(shown.reduce((sum, m) => sum + excessOf(m), 0) * 100) / 100;
   const unitCollectedCount = countMatching("unit_collected");
   const unitUncollectedCount = countMatching("unit_uncollected");
 
@@ -1831,6 +1841,16 @@ export default function StatementReconcilePanel() {
                   count={selected.overpaidMembers}
                   countClass="text-amber-700"
                 />
+                {excessCount > 0 && (
+                  <FilterChip
+                    active={statusFilter === "excess"}
+                    onClick={() => setStatusFilter(statusFilter === "excess" ? "all" : "excess")}
+                    label="💰 เงินเกินทั้งหมด"
+                    count={excessCount}
+                    countClass="text-amber-700"
+                    title="รวมทุกคนที่มีเงินเข้ามาเกินในหน้าเดียว — ทั้งคนที่หักไม่ได้แล้วโอนเกินยอด (ชำระเกิน) และคนที่หักเงินเดือนได้ครบแล้วแต่ยังมีเงินโอนเข้ามา"
+                  />
+                )}
                 <FilterChip
                   active={statusFilter === "unpaid"}
                   onClick={() => setStatusFilter(statusFilter === "unpaid" ? "all" : "unpaid")}
@@ -2025,6 +2045,12 @@ export default function StatementReconcilePanel() {
                 {filtered && (
                   <span className="num text-slate-400">
                     (ทั้งรอบ: คงเหลือ {formatAmount(totals.outstanding)})
+                  </span>
+                )}
+                {statusFilter === "excess" && (
+                  <span className="text-slate-500">
+                    เงินเกินรวม{" "}
+                    <strong className="num font-semibold text-amber-700">{formatAmount(shownExcess)}</strong>
                   </span>
                 )}
                 {/* Folding three tables of this size one heading at a time is

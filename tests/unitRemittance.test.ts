@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { isUnitRemittance, remittanceOverlap, unitRemittanceByMember } from "../lib/unitRemittance";
-import { matchesStatus } from "../lib/statementFilters";
+import { excessOf, matchesStatus } from "../lib/statementFilters";
 import type { StatementMemberRow } from "../lib/types";
 
 const unitLine = "Pathumthani 2/สำนักงานเขตพื้นที่การศึกษา";
@@ -53,5 +53,27 @@ describe("remittanceOverlap", () => {
     const m = { deductionResult: "uncollected", unitRemittance: 2600, status: "paid" } as StatementMemberRow;
     expect(matchesStatus(m, "unit_uncollected")).toBe(true);
     expect(matchesStatus(m, "unit_collected")).toBe(false);
+  });
+});
+
+describe("excess filter", () => {
+  const row = (over: Partial<StatementMemberRow>) =>
+    ({ amountDue: 0, amountPaid: 0, expectedAmount: null, deductionResult: "uncollected", status: "unpaid", ...over }) as StatementMemberRow;
+
+  it("gathers overpaid หักไม่ได้ members and fully-deducted members who transferred as well", () => {
+    // 27318: ฿11,920 against ฿11,500 still owed — ⚠️ ชำระเกิน.
+    const over = row({ amountDue: 11500, amountPaid: 11920, status: "overpaid" });
+    // 27114: payroll took it all, and ฿10,000 came in besides.
+    const collected = row({ deductionResult: "collected", status: "collected", amountPaid: 10000, expectedAmount: 10429.25 });
+    expect(matchesStatus(over, "excess")).toBe(true);
+    expect(excessOf(over)).toBe(420);
+    expect(matchesStatus(collected, "excess")).toBe(true);
+    expect(excessOf(collected)).toBe(10000);
+  });
+
+  it("leaves out members paid exactly, still owing, or deducted with nothing on top", () => {
+    expect(matchesStatus(row({ amountDue: 5000, amountPaid: 5000, status: "paid" }), "excess")).toBe(false);
+    expect(matchesStatus(row({ amountDue: 5000, amountPaid: 1000 }), "excess")).toBe(false);
+    expect(matchesStatus(row({ deductionResult: "collected", status: "collected" }), "excess")).toBe(false);
   });
 });
