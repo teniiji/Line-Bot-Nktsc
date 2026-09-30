@@ -270,7 +270,11 @@ export async function GET(request: NextRequest) {
       deduction:
         latestRound && !slip
           ? isSettledByRound(line.senderAccount, line.amount)
-            ? deductionSettled(latestRound, owedByNumber.get(key)?.deductionResult ?? "uncollected")
+            ? deductionSettled(
+                latestRound,
+                owedByNumber.get(key)?.deductionResult ?? "uncollected",
+                owedByNumber.get(key)
+              )
             : deductionHint(line.amount, (() => {
                 const owed = owedByNumber.get(key);
                 return owed

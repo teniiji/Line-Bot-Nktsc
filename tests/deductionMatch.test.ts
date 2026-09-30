@@ -143,3 +143,19 @@ describe("describeDeductionHint", () => {
     expect(describeDeductionHint(hint)).toContain("0669");
   });
 });
+
+describe("settled with the member's figures", () => {
+  const round = { period: "0969", label: "ก.ย. 2569" };
+  const label = (amountDue: number, amountPaid: number) =>
+    describeDeductionHint(deductionSettled(round, "uncollected", { amountDue, amountPaid }));
+
+  it("says whether the round is paid off, over, or still short, and by how much", () => {
+    expect(label(5000, 5000)).toBe("เก็บไม่ได้ ก.ย. 2569 ชำระแล้ว · ครบ");
+    expect(label(31140, 31560)).toBe("เก็บไม่ได้ ก.ย. 2569 ชำระแล้ว · เกิน ฿420.00");
+    expect(label(5000, 4000)).toBe("เก็บไม่ได้ ก.ย. 2569 ชำระแล้ว · ยังขาด ฿1,000.00");
+  });
+
+  it("keeps the figures to members payroll failed to deduct", () => {
+    expect(deductionSettled(round, "collected", { amountDue: 0, amountPaid: 2000 })).not.toHaveProperty("balance");
+  });
+});
