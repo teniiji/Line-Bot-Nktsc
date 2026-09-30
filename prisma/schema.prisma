@@ -1073,3 +1073,21 @@ model StatementLine {
   @@index([postedAt])
   @@index([channel, postedAt])
 }
+
+// A รายการหัก or ผลการหัก file uploaded into a round — kept so uploading the
+// same file again (same content, or the same name) says when it was loaded
+// before, rather than quietly applying it a second time. See
+// lib/uploadHistory.ts.
+model StatementFileUpload {
+  id         String   @id @default(cuid())
+  roundId    String
+  // "results" (ผลการหัก, the members route) or "list" (รายการหัก).
+  kind       String
+  fileName   String
+  // SHA-256 of the file's bytes: the same file under another name is still
+  // the same file.
+  fileHash   String
+  uploadedAt DateTime @default(now())
+
+  @@index([roundId])
+}

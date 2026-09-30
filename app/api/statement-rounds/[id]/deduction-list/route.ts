@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { rememberUpload } from "@/lib/uploadHistoryStore";
 import { prisma } from "@/lib/prisma";
 import { ROUND_CLOSED_ERROR } from "@/lib/carriedDebt";
 import {
@@ -87,6 +88,7 @@ export async function POST(
   const filled = await applyRoundSheet(round.id, plan);
   const progress = await refreshRoundProgress(round.id);
 
+  await rememberUpload(round.id, checked.file, "list");
   return NextResponse.json({
     added: plan.create.length,
     updated: plan.update.length,

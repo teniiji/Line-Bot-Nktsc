@@ -8,6 +8,7 @@ import {
 import { columnSamples, detectSheetColumns } from "@/lib/sheetColumns";
 import { readMappedSheet } from "@/lib/mappedSheet";
 import { parseConfirmedUpload } from "@/lib/uploadMapping";
+import { previousUploads } from "@/lib/uploadHistoryStore";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -25,7 +26,7 @@ export const dynamic = "force-dynamic";
 // So the file is read once here, the reading is shown beside the first rows
 // it produced, and a person confirms or corrects it before any of it is
 // saved. The same mapping then goes back with the real upload.
-export async function POST(request: NextRequest) {
+export async function POST(request: NextRequest, { params }: { params: { id: string } }) {
   const form = await request.formData();
   const checked = checkUploadedFile(form.get("file"));
   if ("error" in checked) {
@@ -71,6 +72,9 @@ export async function POST(request: NextRequest) {
   const read = readMappedSheet(rows, reading.firstDataRow, reading.mapping);
 
   return NextResponse.json({
+    // Loaded into this round before? Said in the preview, before anything
+    // is applied (lib/uploadHistory.ts).
+    previousUploads: await previousUploads(params.id, checked.file),
     sheets,
     sheetIndex,
     headerRow: reading.headerRow,
