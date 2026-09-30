@@ -336,6 +336,8 @@ export interface RecordedOutsideRow {
   // if any — see otherMonthRecordings in lib/unbridgedRecordings.ts.
   otherPeriod?: string;
   countedIn?: string | null;
+  // A share of a unit's lump transfer — see lib/splitSharesOutside.ts.
+  splitShare?: { payerName: string | null; lineAmount: number; memberNumber: string };
 }
 
 // A transfer that matched nobody on the round's list — money that arrived

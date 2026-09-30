@@ -1127,6 +1127,30 @@ export default function StatementReconcilePanel() {
     }
   };
 
+  // A share of a divided line that no round holds, counted in this one.
+  const placeShareInRound = async (lineId: string, memberNumber: string, amount: number) => {
+    if (!selectedId) return;
+    setBusy(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const res = await fetch(`/api/statement-lines/${lineId}/split/place`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ memberNumber, roundId: selectedId }),
+      });
+      const body = await res.json();
+      if (!res.ok) {
+        setError(body.error || "นับเข้ารอบไม่สำเร็จ");
+        return;
+      }
+      setNotice(`นับส่วนแบ่ง ${formatAmount(body.amount ?? amount)} เข้ารอบ ${body.roundLabel ?? ""} แล้ว`);
+      await Promise.all([fetchRound(selectedId), fetchRounds()]);
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const payDebtFromRecording = async (debt: CarriedDebtRow, lineId: string, amount: number) => {
     if (!selectedId) return;
     setBusy(true);
@@ -2388,7 +2412,11 @@ export default function StatementReconcilePanel() {
                                     >
                                       <DateTimeCell iso={latest.date} />
                                       <span className="block text-[11px] text-slate-400">
-                                        {latest.otherPeriod
+                                        {latest.splitShare
+                                          ? latest.countedIn
+                                            ? `🏢 นับในรอบ ${latest.countedIn}`
+                                            : "🏢 ส่วนแบ่ง · ยังไม่นับ"
+                                          : latest.otherPeriod
                                           ? latest.countedIn
                                             ? `📒 นับในรอบ ${latest.countedIn}`
                                             : `📒 โอนเดือน ${describeDeductionPeriod(latest.otherPeriod)} · ยังไม่นับ`
@@ -2778,7 +2806,9 @@ export default function StatementReconcilePanel() {
                                     key={r.id}
                                     className="flex flex-wrap items-center gap-3 text-sm py-1 border-t border-slate-200 text-slate-500"
                                     title={
-                                      r.otherPeriod
+                                      r.splitShare
+                                        ? "ส่วนแบ่งจากยอดที่หน่วยงานโอนมาก้อนเดียว ซึ่งแบ่งไว้ที่หน้าเงินเข้าประจำวัน — แก้ยอดที่แบ่งได้ที่หน้าเงินเข้าประจำวัน (กดแบ่งใหม่)"
+                                        : r.otherPeriod
                                         ? "บันทึกเป็นชำระเก็บไม่ได้รายเดือนที่หน้าเงินเข้าประจำวันแล้ว แต่วันที่โอนอยู่คนละเดือนกับรอบนี้ ระบบจึงนับให้รอบของเดือนที่โอน"
                                         : remittance
                                         ? "หน่วยงานหักจากเงินเดือนแล้วโอนมาให้สหกรณ์ — เป็นเงินก้อนเดียวกับที่ไฟล์ผลการหักบอกว่า หักได้ครบ จึงไม่นับเพิ่มในรอบ และไม่ใช้ชำระค้างข้ามเดือน"
@@ -2791,7 +2821,37 @@ export default function StatementReconcilePanel() {
                                     <span className="num whitespace-nowrap">
                                       {formatStatementDateTime(r.date)}
                                     </span>
-                                    {r.otherPeriod ? (
+                                    {r.splitShare ? (
+                                      // A share of a unit's lump transfer that
+                                      // dividing could not place here — 23321.
+                                      <>
+                                        <span className="text-xs text-sky-700">
+                                          🏢 แบ่งจาก{" "}
+                                          <strong>{r.splitShare.payerName ?? "ยอดโอนก้อนเดียว"}</strong> · ยอดรวม{" "}
+                                          {formatAmount(r.splitShare.lineAmount)}
+                                        </span>
+                                        {r.countedIn ? (
+                                          <span className="text-xs text-slate-500">
+                                            นับอยู่ในรอบ <strong>{r.countedIn}</strong> แล้ว
+                                          </span>
+                                        ) : (
+                                          <>
+                                            <span className="text-xs text-amber-700">ยังไม่ได้นับในรอบไหน</span>
+                                            {canBridgeToRound(m) && (
+                                              <button
+                                                type="button"
+                                                onClick={() => placeShareInRound(r.lineId, r.splitShare!.memberNumber, r.amount)}
+                                                disabled={busy || frozen}
+                                                className="text-xs text-white bg-emerald-700 rounded px-2 py-1 hover:bg-emerald-800 disabled:opacity-50"
+                                                title={`แบ่งยอดนี้ที่หน้าเงินเข้าประจำวันแล้ว แต่ตอนแบ่งรอบของเดือน ${describeDeductionPeriod(r.otherPeriod ?? "")} ไม่มี หรือไม่มีสมาชิกคนนี้ ส่วนแบ่งจึงยังไม่ถูกนับ — กดเพื่อนับเข้ารอบนี้`}
+                                              >
+                                                ➕ นับเข้ารอบนี้
+                                              </button>
+                                            )}
+                                          </>
+                                        )}
+                                      </>
+                                    ) : r.otherPeriod ? (
                                       // Landed in another month, so its own
                                       // month's round is where it went — 27591.
                                       r.countedIn ? (
@@ -2935,8 +2995,8 @@ export default function StatementReconcilePanel() {
                                             </button>
                                           );
                                         })}
-                                    {reassignButton(r.lineId)}
-                                    {reassignForm(r.lineId, r.amount, m.name)}
+                                    {!r.splitShare && reassignButton(r.lineId)}
+                                    {!r.splitShare && reassignForm(r.lineId, r.amount, m.name)}
                                   </div>
                                   );
                                 })}

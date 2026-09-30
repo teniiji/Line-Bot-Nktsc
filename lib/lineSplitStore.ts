@@ -274,6 +274,58 @@ export async function applySplit(lineId: string, payerName: string, parts: Split
   return { roundLabel: round?.label ?? null, placed, notOnRound, payerName: name };
 }
 
+// Counts one member's share in a round staff chose, for a share dividing
+// left out of every round: the month the money arrived had no open round,
+// or that round did not have the member (23321 — lib/splitSharesOutside.ts).
+export async function placeShareInRound(lineId: string, memberNumber: string, roundId: string) {
+  const line = await prisma.statementLine.findUnique({ where: { id: lineId } });
+  if (!line) throw new SplitError("ไม่พบรายการเงินเข้านี้", 404);
+  const key = memberNumberKey(memberNumber) ?? memberNumber.trim();
+  const share = (await prisma.statementLineSplit.findMany({ where: { lineId: line.id } })).find(
+    (s) => (memberNumberKey(s.memberNumber) ?? s.memberNumber) === key
+  );
+  if (!share) throw new SplitError("ไม่พบส่วนแบ่งของสมาชิกคนนี้ในยอดนี้", 404);
+
+  const round = await prisma.statementRound.findUnique({
+    where: { id: roundId },
+    select: { id: true, label: true, closedAt: true },
+  });
+  if (!round) throw new SplitError("ไม่พบรอบนี้", 404);
+  if (round.closedAt) throw new SplitError(`รอบ ${round.label} ปิดแล้ว`);
+
+  const fingerprint = splitFingerprint(line.fingerprint, share.memberNumber);
+  const already = await prisma.statementTransfer.findFirst({ where: { fingerprint }, select: { roundId: true } });
+  if (already) {
+    const holder = await prisma.statementRound.findUnique({ where: { id: already.roundId }, select: { label: true } });
+    throw new SplitError(`ส่วนแบ่งนี้นับอยู่ในรอบ ${holder?.label ?? ""} แล้ว`);
+  }
+  const member = (
+    await prisma.statementMember.findMany({
+      where: { roundId: round.id, memberNumber: { in: spellings([share.memberNumber]) } },
+      select: { memberNumber: true },
+    })
+  )[0];
+  if (!member) throw new SplitError(`สมาชิกคนนี้ไม่อยู่ในรอบ ${round.label}`);
+
+  await prisma.statementTransfer.create({
+    data: {
+      roundId: round.id,
+      memberNumber: member.memberNumber,
+      accountNumber: line.senderAccount ?? "",
+      amount: share.amount,
+      transferredAt: line.postedAt,
+      account: line.account,
+      branch: line.branch,
+      description: `${line.description} (แบ่งจาก ${formatAmount(line.amount)})`,
+      fingerprint,
+      sourceFile: line.sourceFile,
+      manualMemberNumber: true,
+    },
+  });
+  await recomputeRoundPayments(round.id);
+  return { roundLabel: round.label, amount: share.amount };
+}
+
 export async function undoSplit(lineId: string) {
   const line = await prisma.statementLine.findUnique({ where: { id: lineId } });
   if (!line) throw new SplitError("ไม่พบรายการเงินเข้านี้", 404);

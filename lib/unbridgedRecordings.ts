@@ -55,6 +55,9 @@ export interface UnbridgedRecording {
   otherPeriod?: string;
   // The round that counts it already, by label; null when none does.
   countedIn?: string | null;
+  // One member's share of a unit's lump transfer divided on the daily page
+  // (lib/splitSharesOutside.ts) rather than a whole line recorded for them.
+  splitShare?: { payerName: string | null; lineAmount: number; memberNumber: string };
 }
 
 // A recording is already on screen the ordinary way when the round holds its
