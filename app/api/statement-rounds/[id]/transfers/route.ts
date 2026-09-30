@@ -63,7 +63,8 @@ export async function PATCH(
 
   const updated = await prisma.statementTransfer.update({
     where: { id: transfer.id },
-    data: { excludedReason },
+    // A person's call, set aside or counted, which the slip no longer changes.
+    data: { excludedReason, reasonSource: "staff" },
     select: { id: true, amount: true, memberNumber: true, excludedReason: true },
   });
 

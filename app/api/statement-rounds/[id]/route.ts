@@ -283,6 +283,7 @@ export async function GET(
     branch: t.branch,
     description: t.description,
     excludedReason: t.excludedReason,
+    reasonSource: t.reasonSource,
     manualMemberNumber: t.manualMemberNumber,
     carriedAmount: t.carriedAmount,
     slipHint: hints.get(t.id) ?? null,

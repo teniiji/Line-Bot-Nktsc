@@ -276,6 +276,9 @@ export interface StatementTransferRow {
   description: string | null;
   // Set once staff say this money was for ซื้อหุ้น, ชำระหนี้, ฝากเงิน …
   excludedReason: string | null;
+  // "slip" when the round took excludedReason from the member's own slip,
+  // "staff" when a person chose it.
+  reasonSource?: string | null;
   // True once staff have said directly who this money belongs to — a whole
   // or partial transfer moved to a different member — rather than it being
   // read off the account. See lib/statementSplitTransfer.ts.

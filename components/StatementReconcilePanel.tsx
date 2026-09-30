@@ -2450,6 +2450,14 @@ export default function StatementReconcilePanel() {
                                         </span>
                                       )
                                     )}
+                                    {t.reasonSource === "slip" && t.excludedReason && (
+                                      <span
+                                        className="text-xs text-sky-700"
+                                        title="สมาชิกส่งสลิปยอดเดียวกันวันเดียวกันผ่าน LINE และเลือกหมวดนี้ไว้ ระบบจึงไม่นับเป็นจ่ายค่าหักไม่ได้ให้เอง — ถ้าไม่ใช่ เลือก &quot;นับเป็นจ่ายค่าหักไม่ได้&quot; ในช่องด้านขวา"
+                                      >
+                                        🧾 ตามสลิปของสมาชิก: {t.excludedReason}
+                                      </span>
+                                    )}
                                     {m.deductionResult === "collected" &&
                                       !t.excludedReason &&
                                       !t.unitRemittance &&

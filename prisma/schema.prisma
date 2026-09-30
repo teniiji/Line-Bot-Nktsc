@@ -991,6 +991,12 @@ model StatementTransfer {
   // transfers stop counting toward payment and leave the follow-up list, but
   // are kept and totalled: the money did arrive.
   excludedReason String?
+  // Who set excludedReason: "slip" when the round read it off the member's
+  // own slip for this same payment (lib/statementSlipHints.ts — autoSlipReasons),
+  // "staff" when a person chose it, or chose to count the money after all.
+  // A slip's reason is kept up to date with the slip; a person's is never
+  // touched. Null on rows from before, treated as a person's.
+  reasonSource   String?
   // True once staff have made a manual call about this exact row — its
   // memberNumber, its amount, or both — rather than either being read off
   // the bank line. Two automatic passes would otherwise undo that call the
