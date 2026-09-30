@@ -52,6 +52,7 @@ import {
 } from "@/lib/statementSections";
 import {
   StatementSort,
+  OPPOSITE_SORT,
   filterStatementMembers,
   excessOf,
   hCodesOf,
@@ -71,6 +72,8 @@ const SORT_OPTIONS: { value: StatementSort; label: string }[] = [
   { value: "hCode", label: "หน่วยคุม" },
   { value: "unitName", label: "หน่วยคุมย่อย" },
   { value: "outstanding", label: "ยอดค้างมาก → น้อย" },
+  { value: "differenceDesc", label: "ส่วนต่าง เกินมาก → ขาดมาก" },
+  { value: "differenceAsc", label: "ส่วนต่าง ขาดมาก → เกินมาก" },
   { value: "paidAt", label: "วันที่โอน (ล่าสุดก่อน)" },
   { value: "name", label: "ชื่อ ก-ฮ" },
   { value: "memberNumber", label: "เลขสมาชิก" },
@@ -1430,7 +1433,24 @@ export default function StatementReconcilePanel() {
   // The orderings, in the order they were chosen. Picking one already in the
   // list removes it, so the same control both adds and takes away.
   const toggleSort = (key: StatementSort) =>
-    setSort((prev) => (prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key]));
+    setSort((prev) =>
+      prev.includes(key)
+        ? prev.filter((k) => k !== key)
+        : [...prev.filter((k) => k !== OPPOSITE_SORT[key]), key]
+    );
+
+  // The ส่วนต่าง header sorts the table by that column alone — clicking a
+  // column is "order by this", not "add this under หน่วยคุม". Each click
+  // turns it over: เกินมากก่อน, then ขาดมากก่อน, then back to the usual order.
+  const differenceSort = sort[0] === "differenceDesc" || sort[0] === "differenceAsc" ? sort[0] : null;
+  const cycleDifferenceSort = () =>
+    setSort(
+      differenceSort === "differenceDesc"
+        ? ["differenceAsc"]
+        : differenceSort === "differenceAsc"
+          ? DEFAULT_SORT
+          : ["differenceDesc"]
+    );
 
   return (
     <div className="bg-white rounded-lg shadow">
@@ -2154,7 +2174,38 @@ export default function StatementReconcilePanel() {
                         <th className="px-4 py-2.5 font-semibold">เลขบัญชี</th>
                         <th className="px-4 py-2.5 font-semibold text-right">ยอดหักไม่ได้</th>
                         <th className="px-4 py-2.5 font-semibold text-right">โอนมาแล้ว</th>
-                        <th className="px-4 py-2.5 font-semibold text-right">ส่วนต่าง</th>
+                        <th
+                          className="px-4 py-2.5 font-semibold text-right"
+                          aria-sort={
+                            differenceSort === "differenceDesc"
+                              ? "descending"
+                              : differenceSort === "differenceAsc"
+                                ? "ascending"
+                                : "none"
+                          }
+                        >
+                          <button
+                            type="button"
+                            onClick={cycleDifferenceSort}
+                            title={
+                              differenceSort === "differenceDesc"
+                                ? "เรียงเกินมากก่อนอยู่ — กดเพื่อเรียงขาดมากก่อน"
+                                : differenceSort === "differenceAsc"
+                                  ? "เรียงขาดมากก่อนอยู่ — กดเพื่อกลับไปเรียงตามหน่วยคุม"
+                                  : "กดเพื่อเรียงตามส่วนต่าง (เกินมากก่อน)"
+                            }
+                            className="inline-flex items-center gap-1 uppercase tracking-wide hover:text-slate-900"
+                          >
+                            ส่วนต่าง
+                            <span className={differenceSort ? "text-slate-700" : "text-slate-400"}>
+                              {differenceSort === "differenceDesc"
+                                ? "▼"
+                                : differenceSort === "differenceAsc"
+                                  ? "▲"
+                                  : "↕"}
+                            </span>
+                          </button>
+                        </th>
                         <th className="px-4 py-2.5 font-semibold">วันเวลาที่โอน</th>
                         <th className="px-4 py-2.5 font-semibold">สถานะ</th>
                       </tr>

@@ -273,6 +273,28 @@ describe("sortStatementMembers", () => {
     ]);
   });
 
+  it("sorts by ส่วนต่าง either way, by the same figure the column shows", () => {
+    const mixed = [
+      member({ memberNumber: "short", amountDue: 5000, amountPaid: 1000 }), // -4000
+      member({ memberNumber: "over", amountDue: 1000, amountPaid: 1500 }), // +500
+      member({ memberNumber: "even", amountDue: 1000, amountPaid: 1000 }), // 0
+      // หักได้ครบ with money still coming in: nothing due, all of it excess.
+      member({ memberNumber: "collected", deductionResult: "collected", amountDue: 0, amountPaid: 10000 }),
+    ];
+    expect(sortStatementMembers(mixed, "differenceDesc").map((m) => m.memberNumber)).toEqual([
+      "collected",
+      "over",
+      "even",
+      "short",
+    ]);
+    expect(sortStatementMembers(mixed, "differenceAsc").map((m) => m.memberNumber)).toEqual([
+      "short",
+      "even",
+      "over",
+      "collected",
+    ]);
+  });
+
   it("leaves the API's order alone when every ordering has been taken away", () => {
     expect(sortStatementMembers(rows, [])).toBe(rows);
     expect(sortStatementMembers(rows, ["default"])).toBe(rows);

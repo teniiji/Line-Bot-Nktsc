@@ -33,11 +33,12 @@ export const OTHER_ROUND_REASON = "ชำระของรอบอื่น";
 // money on top of it. Left out of what they paid, like any other reason.
 export const IN_RESULT_REASON = "รวมอยู่ในผลการหักแล้ว";
 
-// How a reason reads in the "เป็นเงินอะไร" choices: every other one takes
-// the money out of this round as being for something else, this one says
-// the round has already counted it.
+// How a reason reads in the "เป็นเงินอะไร" choices: the reason itself —
+// "ซื้อหุ้น" already says what the money was for, and a "ไม่เกี่ยวกับรอบนี้ —"
+// in front of every choice only made the list harder to read. The one that
+// says the round has already counted the money is marked apart.
 export function excludeReasonLabel(reason: string): string {
-  return reason === IN_RESULT_REASON ? `✅ ${reason}` : `ไม่เกี่ยวกับรอบนี้ — ${reason}`;
+  return reason === IN_RESULT_REASON ? `✅ ${reason}` : reason;
 }
 
 export const EXCLUDE_REASONS = [
