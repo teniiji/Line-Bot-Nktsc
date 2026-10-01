@@ -11,6 +11,8 @@ import { memberNumberKey } from "@/lib/memberNumber";
 import { DEDUCTION_CATEGORY } from "@/lib/statementSlipHints";
 import { rememberUnitMember } from "@/lib/unitPayerStore";
 import { bridgeLineToRound } from "@/lib/lineBridgeStore";
+import { parseRecordTarget } from "@/lib/recordCheck";
+import { DebtPaymentError, payDebtFromLine } from "@/lib/carriedDebtFromLine";
 
 export const dynamic = "force-dynamic";
 
@@ -39,6 +41,9 @@ export async function POST(
   // be unnameable — and so unverifiable, which is exactly how a ฿1,800,000
   // deposit got stuck in the review queue with nothing to click.
   const statedName = String(body.memberName ?? "").trim() || null;
+  // Which month a deduction payment is for, when it is not the month it
+  // arrived in: an earlier open round, or a carried debt (lib/recordCheck.ts).
+  const target = category === DEDUCTION_CATEGORY ? parseRecordTarget(body.target) : null;
 
   const problem = recordProblem({ memberNumber, category, note: note ?? "" });
   if (problem) {
@@ -157,11 +162,32 @@ export async function POST(
   // Best-effort and never fatal to the recording above: the transaction just
   // filed is the thing staff came here for, and is real whether or not a
   // round happens to be watching this member right now.
+  //
+  // Staff may say which month it pays instead (30047: October money for a
+  // month already gone): an earlier round still open takes it as its own
+  // row, and a carried debt takes it as a payment — neither then also counts
+  // it in the month it arrived.
   let bridgedRound: { period: string; label: string } | null = null;
-  if (category === DEDUCTION_CATEGORY) {
+  let carriedDebt: { sourceLabel: string; amount: number } | null = null;
+  let targetProblem: string | null = null;
+  if (category === DEDUCTION_CATEGORY && target?.kind === "debt") {
     try {
-      const outcome = await bridgeLineToRound(line, memberNumber);
+      const debt = await prisma.carriedDebt.findUnique({
+        where: { id: target.id },
+        select: { amount: true, amountPaid: true },
+      });
+      const owed = debt ? Math.round((debt.amount - debt.amountPaid) * 100) / 100 : 0;
+      const paid = await payDebtFromLine(target.id, line.id, Math.min(line.amount, owed));
+      carriedDebt = { sourceLabel: paid.sourceLabel, amount: paid.amount };
+    } catch (err) {
+      if (err instanceof DebtPaymentError) targetProblem = err.message;
+      else console.error("statement line not paid to carried debt", err);
+    }
+  } else if (category === DEDUCTION_CATEGORY) {
+    try {
+      const outcome = await bridgeLineToRound(line, memberNumber, line.amount, target?.id);
       if (outcome.bridged) bridgedRound = { period: outcome.round.period, label: outcome.round.label };
+      else if (target) targetProblem = outcome.reason;
     } catch (err) {
       console.error("statement line not bridged to round", err);
     }
@@ -174,5 +200,8 @@ export async function POST(
     // typo, and staff should see it rather than have the work stopped.
     inRoster: rosterMatch !== null,
     bridgedRound,
+    carriedDebt,
+    // The month staff chose could not take it; the transaction stands.
+    targetProblem,
   });
 }

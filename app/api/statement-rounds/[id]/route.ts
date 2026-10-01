@@ -499,6 +499,33 @@ export async function GET(
     round.id,
     (id) => otherRoundLabel.get(id) ?? ""
   );
+  // This month's money staff counted in an earlier round instead — chosen
+  // when it was recorded (30047). Says where it went rather than offering to
+  // count it here as well.
+  const sameMonthFps = sameMonth.map((r) => `line:${recordingRows.find((x) => x.lineId === r.lineId)?.lineFingerprint}`);
+  const elsewhere = sameMonthFps.length
+    ? await prisma.statementTransfer.findMany({
+        where: { fingerprint: { in: sameMonthFps }, roundId: { not: round.id } },
+        select: { fingerprint: true, roundId: true },
+      })
+    : [];
+  if (elsewhere.length) {
+    const labels = new Map(
+      (
+        await prisma.statementRound.findMany({
+          where: { id: { in: [...new Set(elsewhere.map((t) => t.roundId))] } },
+          select: { id: true, label: true },
+        })
+      ).map((r) => [r.id, r.label])
+    );
+    const holderOf = new Map(elsewhere.map((t) => [t.fingerprint, labels.get(t.roundId) ?? ""]));
+    sameMonth.forEach((r, i) => {
+      const holder = holderOf.get(sameMonthFps[i]);
+      if (holder !== undefined) {
+        sameMonth[i] = { ...r, otherPeriod: round.period, countedIn: holder, available: 0 };
+      }
+    });
+  }
   const recordedOutside = [...sameMonth, ...otherMonth, ...outsideShares];
   // Parts staff booked under another category (lib/recordingAside.ts).
   const asideRows = recordedOutside.length

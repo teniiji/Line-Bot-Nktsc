@@ -32,7 +32,13 @@ import {
 } from "@/lib/dailySections";
 import PanelHelp from "@/components/PanelHelp";
 import DateField from "@/components/DateField";
-import { recordCheckNotes, type RecordCheck, type RecordCheckNote } from "@/lib/recordCheck";
+import {
+  recordCheckNotes,
+  recordTargetValue,
+  type RecordCheck,
+  type RecordCheckNote,
+  type RecordTarget,
+} from "@/lib/recordCheck";
 import LineSplitDialog from "@/components/LineSplitDialog";
 import { suggestedPayerName } from "@/lib/unitPayer";
 import {
@@ -266,6 +272,9 @@ export default function DailyReconcilePanel() {
   // most numbers are in the roster and the name comes from there, so making
   // it required would tax every recording for the sake of the few.
   const [actMemberName, setActMemberName] = useState("");
+  // Which month a deduction payment is for, when not the month it arrived in
+  // — "" for that month, else "round:<id>" or "debt:<id>" (lib/recordCheck.ts).
+  const [actTarget, setActTarget] = useState("");
   // What an "อื่นๆ" payment was actually for. Required only for that one
   // category, and written into the transaction's own description.
   const [actNote, setActNote] = useState("");
@@ -394,6 +403,7 @@ export default function DailyReconcilePanel() {
     setActMemberName("");
     setActCategory("");
     setActNote("");
+    setActTarget("");
   };
 
   // Opening one form closes whatever was open, and starts the fields from
@@ -416,6 +426,7 @@ export default function DailyReconcilePanel() {
     setActMemberName("");
     setActCategory(category ?? "");
     setActNote("");
+    setActTarget("");
   };
 
   // "That account is นาง X's" — a fact about an account, so it goes to the
@@ -478,6 +489,7 @@ export default function DailyReconcilePanel() {
           memberName: actMemberName.trim(),
           category: actCategory,
           note: actNote.trim(),
+          ...(actCategory === DEDUCTION_CATEGORY && actTarget ? { target: actTarget } : {}),
         }),
       });
       const body = await res.json();
@@ -500,9 +512,16 @@ export default function DailyReconcilePanel() {
       // lib/roundReach.ts), so the confirmation replaces the warning
       // wherever that happened.
       setRoundNote(
-        body.bridgedRound
-          ? recordBridgedRoundNote(body.bridgedRound, 1, 1)
-          : recordMissedRoundNote(actCategory, DEDUCTION_CATEGORY, data?.round ?? null)
+        body.carriedDebt
+          ? `↪ ใช้ชำระค้างข้ามเดือนรอบ ${body.carriedDebt.sourceLabel} ${formatAmount(body.carriedDebt.amount)} แล้ว` +
+              (body.carriedDebt.amount < body.amount - 0.005
+                ? ` — ส่วนที่เหลือ ${formatAmount(body.amount - body.carriedDebt.amount)} ยังไม่ได้นับที่ไหน`
+                : "")
+          : body.targetProblem
+            ? `⚠️ บันทึกรายการแล้ว แต่ยังไม่ได้นับเป็นยอดของเดือนที่เลือก: ${body.targetProblem}`
+            : body.bridgedRound
+              ? recordBridgedRoundNote(body.bridgedRound, 1, 1)
+              : recordMissedRoundNote(actCategory, DEDUCTION_CATEGORY, data?.round ?? null)
       );
 
       // Recording says what this one payment was. It does not teach the
@@ -861,6 +880,8 @@ export default function DailyReconcilePanel() {
     setCategory: setActCategory,
     note: actNote,
     setNote: setActNote,
+    target: actTarget,
+    setTarget: setActTarget,
     saving,
     onBind: bindAccount,
     onRecord: recordDeposit,
@@ -2145,6 +2166,9 @@ interface RecordActions {
   // Free text, and the only thing that says what an อื่นๆ payment was for.
   note: string;
   setNote: (value: string) => void;
+  // See actTarget.
+  target: string;
+  setTarget: (value: string) => void;
   saving: boolean;
   onBind: (accountNumber: string, memberNumber?: string) => void;
   onRecord: (depositId: string) => void;
@@ -2167,11 +2191,20 @@ interface RecordActions {
 // the number settles (lib/recordCheck.ts) — so a line meant for someone the
 // results file already has as หักได้ครบ, or who has already paid, says so
 // before it is recorded.
-const MemberCheckNotes = ({ lineId, memberNumber }: { lineId: string; memberNumber: string }) => {
+const MemberCheckNotes = ({
+  lineId,
+  memberNumber,
+  onOwed,
+}: {
+  lineId: string;
+  memberNumber: string;
+  onOwed?: (owed: RecordTarget[]) => void;
+}) => {
   const [notes, setNotes] = useState<RecordCheckNote[]>([]);
   useEffect(() => {
     const number = memberNumber.trim();
     setNotes([]);
+    onOwed?.([]);
     if (number.replace(/\D/g, "").length < 4) return;
     let live = true;
     const timer = setTimeout(async () => {
@@ -2181,7 +2214,10 @@ const MemberCheckNotes = ({ lineId, memberNumber }: { lineId: string; memberNumb
         );
         if (!res.ok || !live) return;
         const check = (await res.json()) as RecordCheck;
-        if (live) setNotes(recordCheckNotes(check));
+        if (live) {
+          setNotes(recordCheckNotes(check));
+          onOwed?.(check.otherOwed ?? []);
+        }
       } catch {
         // A note that failed to load is no note; recording still works.
       }
@@ -2190,6 +2226,8 @@ const MemberCheckNotes = ({ lineId, memberNumber }: { lineId: string; memberNumb
       live = false;
       clearTimeout(timer);
     };
+    // onOwed is a setter from the form; re-running for it would refetch.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [lineId, memberNumber]);
   if (notes.length === 0) return null;
   return (
@@ -2227,6 +2265,13 @@ const ActionForm = ({
   // click fills the number. Closest amount first.
   picks?: { memberNumber: string; name: string | null; amount: number | null }[] | null;
 }) => {
+  // Earlier months this member still owes, from the member check below.
+  const [owed, setOwed] = useState<RecordTarget[]>([]);
+  // A month chosen for one member is not another member's to pay.
+  useEffect(() => {
+    if (actions.target && !owed.some((o) => recordTargetValue(o) === actions.target)) actions.setTarget("");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [owed]);
   const detailMissing = categoryNeedsDetail(actions.category) && !actions.note.trim();
   const ready =
     actions.memberNumber.trim() !== "" &&
@@ -2326,7 +2371,26 @@ const ActionForm = ({
       <button onClick={actions.close} className="text-slate-500 hover:underline">
         ยกเลิก
       </button>
-      {mode === "record" && <MemberCheckNotes lineId={targetId} memberNumber={actions.memberNumber} />}
+      {mode === "record" && actions.category === DEDUCTION_CATEGORY && owed.length > 0 && (
+        <div className="w-full flex flex-wrap items-center gap-2 text-xs bg-amber-50 border border-amber-200 rounded px-2 py-1.5">
+          <span className="text-amber-900">สมาชิกคนนี้ยังค้างเดือนอื่นด้วย — ยอดนี้นับเป็นของ</span>
+          <select
+            value={actions.target}
+            onChange={(e) => actions.setTarget(e.target.value)}
+            className="border border-amber-300 rounded px-2 py-1 bg-white"
+          >
+            <option value="">เดือนที่เงินเข้า (ตามปกติ)</option>
+            {owed.map((o) => (
+              <option key={recordTargetValue(o)} value={recordTargetValue(o)}>
+                {o.kind === "debt" ? "ค้างข้ามเดือน " : ""}รอบ {o.label} — ค้าง {formatAmount(o.owed)}
+              </option>
+            ))}
+          </select>
+        </div>
+      )}
+      {mode === "record" && (
+        <MemberCheckNotes lineId={targetId} memberNumber={actions.memberNumber} onOwed={setOwed} />
+      )}
     </div>
   );
 };

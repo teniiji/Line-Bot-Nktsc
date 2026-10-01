@@ -69,7 +69,50 @@ export async function GET(request: NextRequest, { params }: { params: { id: stri
     t.transferredAt.toISOString().slice(0, 10) === line.postedAt.toISOString().slice(0, 10);
   const thisLineCounted = inRound.some(isThisLine);
 
+  // Earlier months still owed: open rounds other than this line's own where
+  // the member is หักไม่ได้ and short, and open carried debts.
+  const [otherRounds, debts] = await Promise.all([
+    prisma.statementMember.findMany({
+      where: {
+        memberNumber: { in: spellings },
+        deductionResult: "uncollected",
+        ...(round ? { roundId: { not: round.id } } : {}),
+      },
+      select: { roundId: true, amountDue: true, amountPaid: true },
+    }),
+    prisma.carriedDebt.findMany({
+      where: { memberNumber: { in: spellings }, status: "unpaid" },
+      select: { id: true, sourceLabel: true, amount: true, amountPaid: true },
+    }),
+  ]);
+  const openRounds = otherRounds.length
+    ? await prisma.statementRound.findMany({
+        where: { id: { in: otherRounds.map((m) => m.roundId) }, closedAt: null },
+        select: { id: true, label: true, period: true },
+      })
+    : [];
+  const roundOf = new Map(openRounds.map((r) => [r.id, r]));
+  const otherOwed: RecordCheck["otherOwed"] = [
+    ...otherRounds
+      .filter((m) => roundOf.has(m.roundId) && m.amountDue - m.amountPaid > 0.005)
+      .map((m) => ({
+        kind: "round" as const,
+        id: m.roundId,
+        label: roundOf.get(m.roundId)!.label,
+        owed: Math.round((m.amountDue - m.amountPaid) * 100) / 100,
+      })),
+    ...debts
+      .filter((d) => d.amount - d.amountPaid > 0.005)
+      .map((d) => ({
+        kind: "debt" as const,
+        id: d.id,
+        label: d.sourceLabel,
+        owed: Math.round((d.amount - d.amountPaid) * 100) / 100,
+      })),
+  ];
+
   const check: RecordCheck = {
+    otherOwed,
     thisLineCounted,
     roundLabel: round?.label ?? null,
     onRound: member !== null,
