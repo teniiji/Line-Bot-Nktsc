@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { recordCheckNotes } from "../lib/recordCheck";
+import { parseRecordTarget, recordCheckNotes, recordTargetValue } from "../lib/recordCheck";
 
 const base = { roundLabel: "ก.ย. 2569", onRound: true, sameAmount: [] as { amount: number; date: string; where: "round" | "recorded" }[] };
 
@@ -53,5 +53,16 @@ describe("recordCheckNotes", () => {
         text: "✅ ยอดนี้นับในรอบ ก.ย. 2569 แล้ว · ครบ — ไม่ต้องบันทึกซ้ำ ถ้าต้องการให้มีในแถบธุรกรรมของสมาชิก บันทึกได้ ระบบไม่นับซ้ำ",
       },
     ]);
+  });
+});
+
+
+describe("record targets", () => {
+  it("round-trips a round or a carried debt, and nothing else", () => {
+    expect(parseRecordTarget(recordTargetValue({ kind: "round", id: "r1" }))).toEqual({ kind: "round", id: "r1" });
+    expect(parseRecordTarget("debt:cmx9")).toEqual({ kind: "debt", id: "cmx9" });
+    expect(parseRecordTarget("")).toBeNull();
+    expect(parseRecordTarget("member:1")).toBeNull();
+    expect(parseRecordTarget(undefined)).toBeNull();
   });
 });

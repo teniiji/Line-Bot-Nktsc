@@ -2935,9 +2935,10 @@ export default function StatementReconcilePanel() {
                                         );
                                       })()}
                                       </>
-                                    ) : canBridgeToRound(m) ? (
+                                    ) : canBridgeToRound(m) && r.available > 0 ? (
                                       // Turned away when recorded (settled, or no
-                                      // result yet) but owed now — 29375.
+                                      // result yet) but owed now — 29375. Not
+                                      // once all of it went to a carried debt.
                                       <>
                                         <span className="text-xs text-amber-700">
                                           📒 บันทึกจากหน้าเงินเข้าประจำวัน · ยังไม่ได้นับในรอบนี้
@@ -2955,9 +2956,11 @@ export default function StatementReconcilePanel() {
                                     ) : (
                                       <span className="text-xs text-slate-500">
                                         📒 บันทึกจากหน้าเงินเข้าประจำวัน · ไม่นับในรอบนี้
-                                        {m.deductionResult === "collected"
-                                          ? " (หักเงินเดือนได้ครบแล้ว)"
-                                          : " (ยอดครบแล้วตอนบันทึก)"}
+                                        {r.available <= 0 && r.carried > 0
+                                          ? ""
+                                          : m.deductionResult === "collected"
+                                            ? " (หักเงินเดือนได้ครบแล้ว)"
+                                            : " (ยอดครบแล้วตอนบันทึก)"}
                                       </span>
                                     )}
                                     {r.carried > 0 && (

@@ -19,6 +19,26 @@ export interface RecordCheck {
   // The member's other money for the same amount near this line's date: a
   // row already in the round, or a transaction already recorded.
   sameAmount: { amount: number; date: string; where: "round" | "recorded" }[];
+  // What else this member still owes, that the payment could be for instead
+  // of the month it arrived in: an earlier round still open where they are
+  // หักไม่ได้ and short, or a carried debt (ชำระข้ามเดือน) from a closed one.
+  // 30047: ฿4,870 arriving in October, for a member October was still
+  // awaiting a result on, paid for a month already gone.
+  otherOwed?: RecordTarget[];
+}
+
+export interface RecordTarget {
+  kind: "round" | "debt";
+  id: string;
+  label: string;
+  owed: number;
+}
+
+// The value the form sends for a target, and back.
+export const recordTargetValue = (t: { kind: string; id: string }) => `${t.kind}:${t.id}`;
+export function parseRecordTarget(value: unknown): { kind: "round" | "debt"; id: string } | null {
+  const match = /^(round|debt):(.+)$/.exec(typeof value === "string" ? value : "");
+  return match ? { kind: match[1] as "round" | "debt", id: match[2] } : null;
 }
 
 export interface RecordCheckNote {
