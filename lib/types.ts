@@ -26,6 +26,13 @@ export interface Expense {
 }
 
 export interface ExpenseSummary {
+  // The cooperative's today, within whatever the filters allow.
+  today?: {
+    date: string;
+    total: number;
+    count: number;
+    byCategory: { category: string; total: number; count: number }[];
+  };
   total: number;
   thisMonth: number;
   topCategory: string | null;
