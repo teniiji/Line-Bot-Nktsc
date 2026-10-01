@@ -116,3 +116,10 @@ export function monthWindow(day: string): { start: Date; end: Date } | null {
   const end = dayStart(shiftDay(endOfMonth(day), 1));
   return end ? { start, end } : null;
 }
+
+/** One day, as a half-open window of wall-clock instants. */
+export function dayWindow(day: string): { start: Date; end: Date } | null {
+  const start = dayStart(day);
+  const end = dayStart(shiftDay(day, 1));
+  return start && end ? { start, end } : null;
+}

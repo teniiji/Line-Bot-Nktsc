@@ -11,6 +11,13 @@ import {
 } from "recharts";
 import { formatAmount } from "@/lib/format";
 
+const compactBaht = (value: number) =>
+  value >= 1_000_000
+    ? `${(value / 1_000_000).toLocaleString("th-TH", { maximumFractionDigits: 1 })}M`
+    : value >= 1_000
+      ? `${(value / 1_000).toLocaleString("th-TH", { maximumFractionDigits: 0 })}K`
+      : String(value);
+
 interface TrendChartProps {
   data: { month: string; total: number }[];
 }
@@ -26,7 +33,9 @@ export default function TrendChart({ data }: TrendChartProps) {
           <BarChart data={data}>
             <CartesianGrid strokeDasharray="3 3" />
             <XAxis dataKey="month" />
-            <YAxis />
+            {/* Millions do not fit the axis written out — "000000" was all
+                that showed of ฿20,000,000. */}
+            <YAxis width={56} tickFormatter={compactBaht} />
             <Tooltip formatter={(value: number) => formatAmount(value)} />
             <Bar dataKey="total" fill="#3b82f6" radius={[4, 4, 0, 0]} />
           </BarChart>

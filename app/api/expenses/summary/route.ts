@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { buildExpenseWhere } from "@/lib/expenseFilters";
-import { cooperativeToday, monthWindow } from "@/lib/cooperativeClock";
+import { cooperativeToday, dayWindow, monthWindow } from "@/lib/cooperativeClock";
 
 // buildExpenseWhere's own shape: a half-open window, because a day is a day
 // and not the instant it begins (see lib/expenseFilters.ts).
@@ -18,16 +18,27 @@ function thisMonthWhere(
   where: Record<string, unknown>,
   now: Date = new Date()
 ): Record<string, unknown> {
-  const month = monthWindow(cooperativeToday(now));
-  if (!month) return where;
+  return withinWindow(where, monthWindow(cooperativeToday(now)));
+}
+
+// The same for the cooperative's today — "สรุปวันนี้" on the ธุรกรรม tab.
+function todayWhere(where: Record<string, unknown>, now: Date = new Date()): Record<string, unknown> {
+  return withinWindow(where, dayWindow(cooperativeToday(now)));
+}
+
+function withinWindow(
+  where: Record<string, unknown>,
+  window: { start: Date; end: Date } | null
+): Record<string, unknown> {
+  if (!window) return where;
   const existing = where.date as DateWhere | undefined;
 
-  const gte = existing?.gte && existing.gte > month.start ? existing.gte : month.start;
+  const gte = existing?.gte && existing.gte > window.start ? existing.gte : window.start;
   // The filter's own upper bound, when it is the tighter of the two. It used
   // to be read as `lte` — the shape this stopped being when the filters moved
   // to a half-open window — so the intersection had quietly become a no-op
   // and the month figure ignored the filter's end date entirely.
-  const lt = existing?.lt && existing.lt < month.end ? existing.lt : month.end;
+  const lt = existing?.lt && existing.lt < window.end ? existing.lt : window.end;
 
   return { ...where, date: { gte, lt } };
 }
@@ -36,7 +47,7 @@ export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
   const where = buildExpenseWhere(searchParams);
 
-  const [totalAgg, thisMonthAgg, categoryGroups, trendRows] = await Promise.all([
+  const [totalAgg, thisMonthAgg, categoryGroups, trendRows, todayGroups] = await Promise.all([
     prisma.expense.aggregate({ where, _sum: { amount: true } }),
     prisma.expense.aggregate({
       where: thisMonthWhere(where),
@@ -53,6 +64,12 @@ export async function GET(request: NextRequest) {
       where,
       select: { date: true, amount: true },
     }),
+    prisma.expense.groupBy({
+      by: ["category"],
+      where: todayWhere(where),
+      _sum: { amount: true },
+      _count: { _all: true },
+    }),
   ]);
 
   const byCategory = categoryGroups
@@ -68,7 +85,17 @@ export async function GET(request: NextRequest) {
     .sort(([a], [b]) => a.localeCompare(b))
     .map(([month, total]) => ({ month, total }));
 
+  const todayByCategory = todayGroups
+    .map((g) => ({ category: g.category, total: g._sum.amount ?? 0, count: g._count._all }))
+    .sort((a, b) => b.total - a.total);
+
   return NextResponse.json({
+    today: {
+      date: cooperativeToday(),
+      total: todayByCategory.reduce((sum, c) => sum + c.total, 0),
+      count: todayByCategory.reduce((sum, c) => sum + c.count, 0),
+      byCategory: todayByCategory,
+    },
     total: totalAgg._sum.amount ?? 0,
     thisMonth: thisMonthAgg._sum.amount ?? 0,
     topCategory: byCategory[0]?.category ?? null,

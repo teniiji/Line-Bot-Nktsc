@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  dayWindow,
   COOPERATIVE_OFFSET_MS,
   cooperativeDateTime,
   cooperativeNow,
@@ -144,5 +145,14 @@ describe("cooperativeDateTime", () => {
     const out = cooperativeDateTime(new Date("2026-09-04T16:30:00.000Z"));
     expect(out).toContain("23:30");
     expect(out).toContain("4");
+  });
+});
+
+describe("dayWindow", () => {
+  it("covers one wall-clock day, half-open, across a month end", () => {
+    const w = dayWindow("2026-09-30");
+    expect(w?.start.toISOString()).toBe("2026-09-30T00:00:00.000Z");
+    expect(w?.end.toISOString()).toBe("2026-10-01T00:00:00.000Z");
+    expect(dayWindow("not a day")).toBeNull();
   });
 });
