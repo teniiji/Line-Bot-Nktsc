@@ -5,7 +5,13 @@ import { formatAmount } from "@/lib/format";
 import { DeductionRoundSummary, DeductionUnitRow } from "@/lib/types";
 import ConfirmDialog from "@/components/ConfirmDialog";
 import { describeDeductionPeriod } from "@/lib/deductionPeriod";
-import { matchFileNameToUnit } from "@/lib/deductionFileMatch";
+import {
+  filesForPeriod,
+  isDeductionWorkbook,
+  keysToRemember,
+  matchFolderFile,
+  type MatchVia,
+} from "@/lib/deductionFileMatch";
 import {
   UNIT_FILTERS,
   UNIT_FILTER_LABELS,
@@ -15,7 +21,53 @@ import {
 
 interface BulkRow {
   file: File;
+  // Where it came from inside what was dropped or chosen — the folder names
+  // are what match most units (lib/deductionFileMatch.ts).
+  path: string;
   unitName: string | null;
+  via: MatchVia | "staff" | null;
+  keys: string[];
+  // Whether to upload it. Off by default for a unit that already has a file:
+  // uploading again would reset a file already sent back to ยังไม่ส่ง.
+  include: boolean;
+}
+
+const VIA_TEXT: Record<string, string> = {
+  remembered: "จำจากครั้งก่อน",
+  file: "จากชื่อไฟล์",
+  folder: "จากชื่อโฟลเดอร์",
+  staff: "เลือกเอง",
+};
+
+// Every file under what was dropped, folders included, with its path —
+// browsers hand a dropped folder over as an entry to walk, not as files.
+async function filesFromDrop(items: DataTransferItemList): Promise<{ file: File; path: string }[]> {
+  const out: { file: File; path: string }[] = [];
+  const walk = async (entry: FileSystemEntry, prefix: string): Promise<void> => {
+    if (entry.isFile) {
+      const file = await new Promise<File>((resolve, reject) =>
+        (entry as FileSystemFileEntry).file(resolve, reject)
+      );
+      out.push({ file, path: `${prefix}${entry.name}` });
+      return;
+    }
+    if (entry.isDirectory) {
+      const reader = (entry as FileSystemDirectoryEntry).createReader();
+      // readEntries hands back a batch at a time; empty means done.
+      for (;;) {
+        const batch = await new Promise<FileSystemEntry[]>((resolve, reject) =>
+          reader.readEntries(resolve, reject)
+        );
+        if (batch.length === 0) break;
+        for (const child of batch) await walk(child, `${prefix}${entry.name}/`);
+      }
+    }
+  };
+  const entries = Array.from(items)
+    .map((item) => item.webkitGetAsEntry?.())
+    .filter((e): e is FileSystemEntry => !!e);
+  for (const entry of entries) await walk(entry, "");
+  return out;
 }
 
 // Uploads run with limited concurrency instead of all at once — Vercel Blob
@@ -81,6 +133,11 @@ export default function DeductionRoundsPanel() {
   // (lib/deductionFileMatch.ts) and letting staff fix any file the matcher
   // wasn't confident about before anything is actually sent.
   const bulkFileInputRef = useRef<HTMLInputElement | null>(null);
+  const folderInputRef = useRef<HTMLInputElement | null>(null);
+  const [dragging, setDragging] = useState(false);
+  const [bulkFound, setBulkFound] = useState<{ total: number; inPeriod: boolean } | null>(null);
+  const [confirmSendAll, setConfirmSendAll] = useState(false);
+  const [sendingAll, setSendingAll] = useState<{ done: number; total: number } | null>(null);
   const [showBulk, setShowBulk] = useState(false);
   const [bulkRows, setBulkRows] = useState<BulkRow[]>([]);
   const [bulkUploading, setBulkUploading] = useState(false);
@@ -216,19 +273,86 @@ export default function DeductionRoundsPanel() {
     bulkFileInputRef.current?.click();
   };
 
-  const handleBulkFilesChosen = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = Array.from(e.target.files ?? []);
-    e.target.value = "";
-    if (files.length === 0) return;
+  const openFolderPicker = () => {
+    setBulkSummary(null);
+    folderInputRef.current?.click();
+  };
 
+  // Files from the picker, a chosen folder, or a drop: keep this month's
+  // workbooks, match each to a unit, and lay them out for a look first.
+  const ingest = async (entries: { file: File; path: string }[]) => {
+    const selectedRound = rounds.find((r) => r.id === selectedId);
+    const workbooks = entries.filter((e) => isDeductionWorkbook(e.file.name));
+    if (workbooks.length === 0) {
+      setError("ไม่พบไฟล์ Excel (.xlsx / .xls) ในที่เลือก");
+      return;
+    }
+    const chosen = selectedRound ? filesForPeriod(workbooks, selectedRound.period) : workbooks;
+    let remembered = new Map<string, string>();
+    try {
+      const res = await fetch("/api/deduction-rounds/aliases");
+      const body = await res.json();
+      remembered = new Map((body.data ?? []).map((a: { key: string; unitName: string }) => [a.key, a.unitName]));
+    } catch {
+      // Matching still works without the memory, just less of it.
+    }
     const unitNames = units.map((u) => u.unitName);
-    setBulkRows(files.map((file) => ({ file, unitName: matchFileNameToUnit(file.name, unitNames) })));
+    const hasFile = new Set(units.filter((u) => u.fileUrl).map((u) => u.unitName));
+    const rows: BulkRow[] = chosen.map(({ file, path }) => {
+      const match = matchFolderFile(path, unitNames, remembered);
+      return {
+        file,
+        path,
+        unitName: match.unitName,
+        via: match.via,
+        keys: match.keys,
+        include: !!match.unitName && !hasFile.has(match.unitName),
+      };
+    });
+    // The ones needing a person first, then by unit.
+    rows.sort((a, b) =>
+      a.unitName === b.unitName
+        ? a.path.localeCompare(b.path, "th")
+        : !a.unitName
+          ? -1
+          : !b.unitName
+            ? 1
+            : a.unitName.localeCompare(b.unitName, "th")
+    );
+    setError(null);
+    setBulkFound({ total: workbooks.length, inPeriod: chosen.length !== workbooks.length });
+    setBulkRows(rows);
     setBulkSummary(null);
     setShowBulk(true);
   };
 
+  const handleBulkFilesChosen = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files ?? []);
+    e.target.value = "";
+    if (files.length === 0) return;
+    // A chosen folder gives each file its path inside it.
+    void ingest(files.map((file) => ({ file, path: file.webkitRelativePath || file.name })));
+  };
+
+  const handleDrop = async (e: React.DragEvent) => {
+    e.preventDefault();
+    setDragging(false);
+    if (!selectedId) return;
+    const entries = await filesFromDrop(e.dataTransfer.items);
+    if (entries.length > 0) void ingest(entries);
+  };
+
   const updateBulkRowUnit = (index: number, unitName: string | null) => {
-    setBulkRows((prev) => prev.map((r, i) => (i === index ? { ...r, unitName } : r)));
+    const hasFile = new Set(units.filter((u) => u.fileUrl).map((u) => u.unitName));
+    setBulkRows((prev) =>
+      prev.map((r, i) =>
+        i === index ? { ...r, unitName, via: unitName ? "staff" : null, include: !!unitName && !hasFile.has(unitName) } : r
+      )
+    );
+  };
+
+  const toggleBulkRow = (index: number) => {
+    setBulkRows((prev) => prev.map((r, i) => (i === index ? { ...r, include: !r.include } : r)));
   };
 
   const removeBulkRow = (index: number) => {
@@ -239,6 +363,7 @@ export default function DeductionRoundsPanel() {
     setShowBulk(false);
     setBulkRows([]);
     setBulkSummary(null);
+    setBulkFound(null);
   };
 
   // Units assigned to more than one selected file — uploading would just let
@@ -248,7 +373,7 @@ export default function DeductionRoundsPanel() {
     const seen = new Set<string>();
     const dupes = new Set<string>();
     for (const row of bulkRows) {
-      if (!row.unitName) continue;
+      if (!row.unitName || !row.include) continue;
       if (seen.has(row.unitName)) dupes.add(row.unitName);
       seen.add(row.unitName);
     }
@@ -257,12 +382,13 @@ export default function DeductionRoundsPanel() {
 
   const runBulkUpload = async () => {
     if (!selectedId) return;
-    const toUpload = bulkRows.filter((r) => r.unitName && !duplicateUnitNames.has(r.unitName));
+    const toUpload = bulkRows.filter((r) => r.include && r.unitName && !duplicateUnitNames.has(r.unitName));
     if (toUpload.length === 0) return;
 
     setBulkUploading(true);
     setBulkProgress({ done: 0, total: toUpload.length });
     const failed: string[] = [];
+    const uploaded: BulkRow[] = [];
 
     let cursor = 0;
     const worker = async () => {
@@ -280,6 +406,8 @@ export default function DeductionRoundsPanel() {
           if (!res.ok) {
             const body = await res.json().catch(() => ({}));
             failed.push(`${row.unitName}: ${body.error || "อัปโหลดไม่สำเร็จ"}`);
+          } else {
+            uploaded.push(row);
           }
         } catch {
           failed.push(`${row.unitName}: เชื่อมต่อไม่สำเร็จ`);
@@ -292,9 +420,58 @@ export default function DeductionRoundsPanel() {
       Array.from({ length: Math.min(BULK_UPLOAD_CONCURRENCY, toUpload.length) }, worker)
     );
 
+    // Remember where each unit's file came from, so next month's match by
+    // themselves. Files left unmatched go in too, to keep a name they share
+    // from being remembered for one unit.
+    const aliases = keysToRemember([...uploaded, ...bulkRows.filter((r) => !r.unitName)]);
+    if (aliases.length > 0) {
+      await fetch("/api/deduction-rounds/aliases", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ aliases }),
+      }).catch(() => undefined);
+    }
+
     setBulkUploading(false);
     setBulkSummary({ ok: toUpload.length - failed.length, failed });
     setBulkRows([]);
+    setBulkFound(null);
+    setShowBulk(false);
+    await Promise.all([fetchUnits(selectedId), fetchRounds()]);
+  };
+
+  // Units with a file, a LINE to send it to, and not sent yet.
+  const readyForLine = units.filter(
+    (u) => u.fileUrl && u.hasLineId && (u.sendStatus === "pending" || u.sendStatus === "failed")
+  );
+  const sendAllLine = async () => {
+    if (!selectedId) return;
+    setConfirmSendAll(false);
+    setError(null);
+    setNotice(null);
+    const targets = readyForLine.map((u) => u.unitName);
+    const failed: string[] = [];
+    setSendingAll({ done: 0, total: targets.length });
+    // One at a time: these go out to a hundred people, and a failure
+    // partway is easier to read in order.
+    for (const unitName of targets) {
+      try {
+        const res = await fetch(`/api/deduction-rounds/${selectedId}/send`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ unitName, channel: "line" }),
+        });
+        if (!res.ok) failed.push(unitName);
+      } catch {
+        failed.push(unitName);
+      }
+      setSendingAll((prev) => (prev ? { ...prev, done: prev.done + 1 } : prev));
+    }
+    setSendingAll(null);
+    setNotice(
+      `ส่ง LINE สำเร็จ ${targets.length - failed.length} หน่วยงาน` +
+        (failed.length ? ` · ไม่สำเร็จ ${failed.length}: ${failed.join(", ")}` : "")
+    );
     await Promise.all([fetchUnits(selectedId), fetchRounds()]);
   };
 
@@ -464,9 +641,18 @@ export default function DeductionRoundsPanel() {
                 <span className="text-red-600">ส่งไม่สำเร็จ {selected.failedUnits}</span>
               )}
               {totalAmount > 0 && <span>ยอดรวมที่อัปโหลด {formatAmount(totalAmount)}</span>}
-              <button onClick={openBulkPicker} className="text-slate-900 hover:underline">
-                อัปโหลดหลายไฟล์พร้อมกัน
-              </button>
+              {readyForLine.length > 0 && (
+                <button
+                  onClick={() => setConfirmSendAll(true)}
+                  disabled={sendingAll !== null}
+                  className="text-white bg-green-700 rounded px-2.5 py-1 hover:bg-green-800 disabled:opacity-50"
+                  title="ส่งไฟล์ทาง LINE ให้ทุกหน่วยงานที่มีไฟล์แล้ว มี LINE และยังไม่ได้ส่ง (รวมที่ส่งไม่สำเร็จ)"
+                >
+                  {sendingAll
+                    ? `กำลังส่ง… (${sendingAll.done}/${sendingAll.total})`
+                    : `📤 ส่ง LINE ทุกหน่วยที่พร้อม (${readyForLine.length})`}
+                </button>
+              )}
               {unreadTotals > 0 && (
                 <button
                   onClick={readTotals}
@@ -508,70 +694,158 @@ export default function DeductionRoundsPanel() {
             </div>
           )}
 
-          {showBulk && (
-            <div className="mx-4 mt-3 border border-slate-200 rounded-lg p-3 bg-slate-50">
-              <div className="flex items-center justify-between gap-3 mb-2">
-                <div>
-                  <p className="text-sm font-medium">
-                    เลือกไฟล์ทั้งหมด {bulkRows.length} ไฟล์แล้ว จับคู่กับหน่วยงานให้อัตโนมัติจากชื่อไฟล์
-                  </p>
-                  <p className="text-xs text-slate-500">
-                    ไฟล์ไหนจับคู่ไม่ได้หรือผิด แก้ที่ช่องเลือกหน่วยงานของแถวนั้นได้เลยก่อนกดอัปโหลด
-                  </p>
-                </div>
+          {selected && !showBulk && (
+            <div
+              onDragOver={(e) => {
+                e.preventDefault();
+                setDragging(true);
+              }}
+              onDragLeave={() => setDragging(false)}
+              onDrop={handleDrop}
+              className={`mx-4 mt-3 rounded-lg border-2 border-dashed px-4 py-5 text-center text-sm transition-colors ${
+                dragging ? "border-slate-900 bg-slate-100" : "border-slate-300 bg-slate-50"
+              }`}
+            >
+              <p className="font-medium text-slate-700">
+                📁 ลากโฟลเดอร์รายการหักทั้งโฟลเดอร์มาวางที่นี่
+              </p>
+              <p className="text-xs text-slate-500 mt-1">
+                วางโฟลเดอร์ใหญ่ที่มีโฟลเดอร์ของทุกหน่วยงานได้เลย — ระบบหยิบเฉพาะไฟล์ในโฟลเดอร์เดือน{" "}
+                <strong>{selected.period}</strong> และจับคู่หน่วยงานจากชื่อไฟล์/ชื่อโฟลเดอร์ให้เอง
+              </p>
+              <div className="flex justify-center gap-2 mt-3">
+                <button
+                  onClick={openFolderPicker}
+                  className="text-sm px-3 py-1.5 bg-slate-900 text-white rounded"
+                >
+                  เลือกโฟลเดอร์
+                </button>
                 <button
                   onClick={openBulkPicker}
-                  disabled={bulkUploading}
-                  className="text-sm px-3 py-1.5 border border-slate-300 rounded whitespace-nowrap disabled:opacity-50"
+                  className="text-sm px-3 py-1.5 border border-slate-300 rounded bg-white"
                 >
-                  เลือกไฟล์ใหม่
+                  เลือกไฟล์
                 </button>
               </div>
+            </div>
+          )}
 
-              {bulkRows.length === 0 ? (
-                <p className="text-sm text-slate-500 py-4 text-center">
-                  ยังไม่ได้เลือกไฟล์ — กด "เลือกไฟล์ใหม่" แล้วเลือกได้หลายไฟล์พร้อมกัน (Ctrl/Shift คลิก)
-                </p>
-              ) : (
-                <div className="overflow-x-auto">
-                  <table className="w-full text-sm min-w-[700px]">
-                    <thead className="text-slate-500 text-left">
-                      <tr>
-                        <th className="px-2 py-1">ไฟล์</th>
-                        <th className="px-2 py-1">หน่วยงาน</th>
-                        <th className="px-2 py-1"></th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {bulkRows.map((row, i) => (
-                        <tr key={i} className="border-t border-slate-200">
-                          <td className="px-2 py-1 break-all">{row.file.name}</td>
-                          <td className="px-2 py-1">
+          {showBulk && (() => {
+            const matched = bulkRows.filter((r) => r.unitName).length;
+            const unmatched = bulkRows.length - matched;
+            const willUpload = bulkRows.filter(
+              (r) => r.include && r.unitName && !duplicateUnitNames.has(r.unitName)
+            ).length;
+            const covered = new Set([
+              ...units.filter((u) => u.fileUrl).map((u) => u.unitName),
+              ...bulkRows.filter((r) => r.include && r.unitName).map((r) => r.unitName as string),
+            ]);
+            const stillMissing = units.filter((u) => u.sendStatus !== "skipped" && !covered.has(u.unitName));
+            return (
+            <div className="mx-4 mt-3 border border-slate-200 rounded-lg p-3 bg-slate-50">
+              <div className="flex flex-wrap items-start justify-between gap-3 mb-2">
+                <div className="text-sm">
+                  <p className="font-medium">
+                    พบไฟล์ {bulkRows.length} ไฟล์
+                    {bulkFound?.inPeriod && (
+                      <span className="text-slate-500 font-normal">
+                        {" "}(เฉพาะโฟลเดอร์ {selected?.period} จากทั้งหมด {bulkFound.total} ไฟล์)
+                      </span>
+                    )}
+                  </p>
+                  <p className="mt-0.5">
+                    <span className="text-green-700">จับคู่ได้ {matched}</span>
+                    {unmatched > 0 && <span className="text-amber-700"> · ยังไม่ได้จับคู่ {unmatched}</span>}
+                    {duplicateUnitNames.size > 0 && (
+                      <span className="text-red-600"> · ซ้ำ {duplicateUnitNames.size} หน่วยงาน</span>
+                    )}
+                  </p>
+                  <p className="text-xs text-slate-500 mt-0.5">
+                    ไฟล์ที่ยังไม่ได้จับคู่อยู่บนสุด — เลือกหน่วยงานให้ ระบบจะจำไว้ใช้เดือนหน้า ·
+                    หน่วยงานที่มีไฟล์อยู่แล้วจะไม่ติ๊กไว้ เพื่อไม่ให้สถานะ &quot;ส่งแล้ว&quot; หาย
+                  </p>
+                </div>
+                <div className="flex gap-2">
+                  <button
+                    onClick={openFolderPicker}
+                    disabled={bulkUploading}
+                    className="text-sm px-3 py-1.5 border border-slate-300 rounded whitespace-nowrap bg-white disabled:opacity-50"
+                  >
+                    เลือกโฟลเดอร์ใหม่
+                  </button>
+                  <button
+                    onClick={openBulkPicker}
+                    disabled={bulkUploading}
+                    className="text-sm px-3 py-1.5 border border-slate-300 rounded whitespace-nowrap bg-white disabled:opacity-50"
+                  >
+                    เลือกไฟล์ใหม่
+                  </button>
+                </div>
+              </div>
+
+              <div className="overflow-x-auto max-h-[28rem] overflow-y-auto">
+                <table className="w-full text-sm min-w-[760px]">
+                  <thead className="text-slate-500 text-left sticky top-0 bg-slate-50">
+                    <tr>
+                      <th className="px-2 py-1 w-8"></th>
+                      <th className="px-2 py-1">ไฟล์</th>
+                      <th className="px-2 py-1">หน่วยงาน</th>
+                      <th className="px-2 py-1"></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {bulkRows.map((row, i) => {
+                      const hasFile = units.some((u) => u.unitName === row.unitName && u.fileUrl);
+                      return (
+                        <tr key={`${row.path}-${i}`} className="border-t border-slate-200 align-top">
+                          <td className="px-2 py-1.5">
+                            <input
+                              type="checkbox"
+                              checked={row.include}
+                              disabled={!row.unitName || bulkUploading}
+                              onChange={() => toggleBulkRow(i)}
+                              title={row.unitName ? "อัปโหลดไฟล์นี้" : "เลือกหน่วยงานก่อน"}
+                            />
+                          </td>
+                          <td className="px-2 py-1.5 break-all">
+                            {row.file.name}
+                            {row.path !== row.file.name && (
+                              <span className="block text-xs text-slate-400">{row.path}</span>
+                            )}
+                          </td>
+                          <td className="px-2 py-1.5">
                             <select
                               value={row.unitName ?? ""}
                               onChange={(e) => updateBulkRowUnit(i, e.target.value || null)}
+                              disabled={bulkUploading}
                               className={`border rounded px-2 py-1 text-sm w-64 ${
                                 !row.unitName
                                   ? "border-amber-300 bg-amber-50"
-                                  : duplicateUnitNames.has(row.unitName)
+                                  : row.include && duplicateUnitNames.has(row.unitName)
                                     ? "border-red-300 bg-red-50"
-                                    : "border-slate-300"
+                                    : "border-slate-300 bg-white"
                               }`}
                             >
-                              <option value="">— ไม่จับคู่ (จะไม่อัปโหลด) —</option>
+                              <option value="">— เลือกหน่วยงาน —</option>
                               {units.map((u) => (
                                 <option key={u.id} value={u.unitName}>
                                   {u.unitName}
                                 </option>
                               ))}
                             </select>
-                            {row.unitName && duplicateUnitNames.has(row.unitName) && (
-                              <p className="text-xs text-red-600 mt-0.5">
-                                มีไฟล์อื่นจับคู่หน่วยงานนี้ซ้ำ — เลือกให้เหลือไฟล์เดียว
-                              </p>
-                            )}
+                            <span className="block text-xs mt-0.5">
+                              {row.via && <span className="text-slate-400">{VIA_TEXT[row.via]}</span>}
+                              {hasFile && (
+                                <span className="text-amber-700">
+                                  {row.via ? " · " : ""}มีไฟล์อยู่แล้ว — ติ๊กถ้าจะแทนที่
+                                </span>
+                              )}
+                              {row.include && row.unitName && duplicateUnitNames.has(row.unitName) && (
+                                <span className="text-red-600"> · มีไฟล์อื่นจับคู่หน่วยงานนี้ซ้ำ — ติ๊กไว้ไฟล์เดียว</span>
+                              )}
+                            </span>
                           </td>
-                          <td className="px-2 py-1 text-right">
+                          <td className="px-2 py-1.5 text-right">
                             <button
                               onClick={() => removeBulkRow(i)}
                               disabled={bulkUploading}
@@ -581,28 +855,29 @@ export default function DeductionRoundsPanel() {
                             </button>
                           </td>
                         </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+
+              {stillMissing.length > 0 && (
+                <p className="text-xs text-slate-500 mt-2">
+                  หลังอัปโหลดยังไม่มีไฟล์ {stillMissing.length} หน่วยงาน:{" "}
+                  {stillMissing.slice(0, 12).map((u) => u.unitName).join(", ")}
+                  {stillMissing.length > 12 ? ` และอีก ${stillMissing.length - 12}` : ""}
+                </p>
               )}
 
               <div className="flex items-center gap-3 mt-3">
                 <button
                   onClick={runBulkUpload}
-                  disabled={
-                    bulkUploading ||
-                    bulkRows.filter((r) => r.unitName && !duplicateUnitNames.has(r.unitName))
-                      .length === 0
-                  }
+                  disabled={bulkUploading || willUpload === 0}
                   className="text-sm px-3 py-1.5 bg-slate-900 text-white rounded disabled:opacity-50"
                 >
                   {bulkUploading
                     ? `กำลังอัปโหลด… (${bulkProgress.done}/${bulkProgress.total})`
-                    : `อัปโหลดทั้งหมด (${
-                        bulkRows.filter((r) => r.unitName && !duplicateUnitNames.has(r.unitName))
-                          .length
-                      } ไฟล์)`}
+                    : `อัปโหลด ${willUpload} ไฟล์`}
                 </button>
                 <button
                   onClick={cancelBulk}
@@ -613,7 +888,8 @@ export default function DeductionRoundsPanel() {
                 </button>
               </div>
             </div>
-          )}
+            );
+          })()}
 
           {selected && !loadingUnits && units.length > 0 && (
             <div className="flex flex-wrap items-center gap-2 px-4 py-2.5 border-b border-slate-100 text-sm">
@@ -796,6 +1072,17 @@ export default function DeductionRoundsPanel() {
       />
 
       <input
+        ref={folderInputRef}
+        type="file"
+        multiple
+        onChange={handleBulkFilesChosen}
+        className="hidden"
+        // Not in React's typings, but every current browser takes it: the
+        // picker chooses a folder and hands back everything inside it.
+        {...({ webkitdirectory: "", directory: "" } as Record<string, string>)}
+      />
+
+      <input
         ref={bulkFileInputRef}
         type="file"
         accept=".xlsx,.xls"
@@ -803,6 +1090,25 @@ export default function DeductionRoundsPanel() {
         onChange={handleBulkFilesChosen}
         className="hidden"
       />
+
+      <ConfirmDialog
+        open={confirmSendAll}
+        title={`ส่ง LINE ให้ ${readyForLine.length} หน่วยงาน?`}
+        description="ส่งข้อความพร้อมลิงก์ไฟล์รายการหักถึงทุกหน่วยงานในรายการนี้ ทีละหน่วย — ส่งแล้วเรียกคืนไม่ได้"
+        confirmLabel="ส่งทั้งหมด"
+        tone="neutral"
+        onConfirm={sendAllLine}
+        onCancel={() => setConfirmSendAll(false)}
+      >
+        <ul className="text-sm max-h-60 overflow-y-auto list-disc pl-5">
+          {readyForLine.map((u) => (
+            <li key={u.id}>
+              {u.unitName}
+              {u.amount != null && <span className="text-slate-500"> · {formatAmount(u.amount)}</span>}
+            </li>
+          ))}
+        </ul>
+      </ConfirmDialog>
 
       <ConfirmDialog
         open={pendingDelete !== null}

@@ -653,6 +653,15 @@ model DeductionUnitFile {
   @@index([roundId])
 }
 
+// A file or folder name staff have uploaded a unit's รายการหัก under, keyed
+// without its month and year (aliasKey in lib/deductionFileMatch.ts), so the
+// next month's files from the same place match that unit by themselves.
+model DeductionFileAlias {
+  key       String   @id
+  unitName  String
+  updatedAt DateTime @updatedAt
+}
+
 // One month's Statement reconciliation — the step after รายการหัก where
 // staff work out which of the members payroll could NOT deduct from have
 // since transferred the money to the cooperative's bank accounts
