@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { put } from "@vercel/blob";
 import { prisma } from "@/lib/prisma";
+import { readFirstSheetRows } from "@/lib/excelUpload";
+import { deductionFileTotal, type DeductionFileTotal } from "@/lib/deductionFileTotal";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -85,13 +87,23 @@ export async function POST(
     return NextResponse.json({ error: "อัปโหลดไฟล์ไม่สำเร็จ" }, { status: 502 });
   }
 
+  // The total and head count, read off the file itself unless the caller
+  // gave them. A file the reader cannot make sense of is still stored and
+  // sendable — it just goes out without a total, as before.
+  let read: DeductionFileTotal | null = null;
+  try {
+    read = deductionFileTotal(await readFirstSheetRows(file));
+  } catch (err) {
+    console.warn("[deduction-rounds] could not read total:", err);
+  }
   const amountRaw = form.get("amount");
   const memberCountRaw = form.get("memberCount");
-  const amount = typeof amountRaw === "string" && amountRaw.trim() ? Number(amountRaw) : null;
+  const amount =
+    typeof amountRaw === "string" && amountRaw.trim() ? Number(amountRaw) : (read?.amount ?? null);
   const memberCount =
     typeof memberCountRaw === "string" && memberCountRaw.trim()
       ? Number(memberCountRaw)
-      : null;
+      : (read?.memberCount ?? null);
 
   const updated = await prisma.deductionUnitFile.update({
     where: { id: existing.id },
@@ -117,6 +129,8 @@ export async function POST(
     fileUrl: `/api/blob/${pathname}`,
     amount: updated.amount,
     memberCount: updated.memberCount,
+    // Which heading the total came from, for staff to check.
+    amountColumn: read?.column ?? null,
     sendStatus: updated.sendStatus,
   });
 }
