@@ -56,6 +56,8 @@ export default function DeductionRoundsPanel() {
   const [loadingRounds, setLoadingRounds] = useState(true);
   const [loadingUnits, setLoadingUnits] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // What the last upload read off its file — the total and where from.
+  const [notice, setNotice] = useState<string | null>(null);
   const [busyUnit, setBusyUnit] = useState<string | null>(null);
   const [pendingDelete, setPendingDelete] = useState<DeductionRoundSummary | null>(null);
 
@@ -158,6 +160,7 @@ export default function DeductionRoundsPanel() {
 
     setBusyUnit(unitName);
     setError(null);
+    setNotice(null);
     try {
       const form = new FormData();
       form.append("unitName", unitName);
@@ -171,7 +174,38 @@ export default function DeductionRoundsPanel() {
         setError(`${unitName}: ${body.error || "อัปโหลดไม่สำเร็จ"}`);
         return;
       }
+      setNotice(
+        body.amount != null
+          ? `${unitName}: ยอดรวม ${formatAmount(body.amount)}${
+              body.memberCount != null ? ` · ${body.memberCount} ราย` : ""
+            }${body.amountColumn ? ` (อ่านจากคอลัมน์ "${body.amountColumn}")` : ""}`
+          : `${unitName}: อัปโหลดแล้ว แต่หาคอลัมน์ยอดเงินในไฟล์ไม่เจอ จึงไม่มียอดรวม`
+      );
       await Promise.all([fetchUnits(selectedId), fetchRounds()]);
+    } finally {
+      setBusyUnit(null);
+    }
+  };
+
+  // Totals for files uploaded before they were read on upload.
+  const unreadTotals = units.filter((u) => u.fileUrl && u.amount == null).length;
+  const readTotals = async () => {
+    if (!selectedId) return;
+    setError(null);
+    setNotice(null);
+    setBusyUnit("*");
+    try {
+      const res = await fetch(`/api/deduction-rounds/${selectedId}/read-totals`, { method: "POST" });
+      const body = await res.json();
+      if (!res.ok) {
+        setError(body.error || "อ่านยอดไม่สำเร็จ");
+        return;
+      }
+      setNotice(
+        `อ่านยอดรวมได้ ${body.read} ไฟล์` +
+          (body.unreadable?.length ? ` · อ่านไม่ได้ ${body.unreadable.length} ไฟล์: ${body.unreadable.join(", ")}` : "")
+      );
+      await fetchUnits(selectedId);
     } finally {
       setBusyUnit(null);
     }
@@ -386,6 +420,9 @@ export default function DeductionRoundsPanel() {
       {error && (
         <p className="text-sm text-red-600 bg-red-50 rounded px-3 py-2 mx-4 mt-3">{error}</p>
       )}
+      {notice && (
+        <p className="text-sm text-green-700 bg-green-50 rounded px-3 py-2 mx-4 mt-3">{notice}</p>
+      )}
 
       {loadingRounds ? (
         <p className="text-slate-500 text-sm py-8 text-center">กำลังโหลด…</p>
@@ -430,6 +467,16 @@ export default function DeductionRoundsPanel() {
               <button onClick={openBulkPicker} className="text-slate-900 hover:underline">
                 อัปโหลดหลายไฟล์พร้อมกัน
               </button>
+              {unreadTotals > 0 && (
+                <button
+                  onClick={readTotals}
+                  disabled={busyUnit !== null}
+                  className="text-slate-900 hover:underline disabled:opacity-50"
+                  title="ไฟล์ที่อัปโหลดไว้ก่อนระบบอ่านยอดรวมได้ — อ่านจากไฟล์ที่เก็บไว้ ไม่ต้องอัปโหลดใหม่ และสถานะการส่งไม่เปลี่ยน"
+                >
+                  {busyUnit === "*" ? "กำลังอ่านยอด…" : `อ่านยอดจากไฟล์ที่อัปโหลดแล้ว (${unreadTotals})`}
+                </button>
+              )}
               <button
                 onClick={() => setPendingDelete(selected)}
                 className="ml-auto text-red-600 hover:underline"
@@ -658,6 +705,9 @@ export default function DeductionRoundsPanel() {
                       </td>
                       <td className="px-4 py-2 whitespace-nowrap">
                         {u.amount != null ? formatAmount(u.amount) : "—"}
+                        {u.memberCount != null && (
+                          <span className="block text-xs text-slate-400">{u.memberCount} ราย</span>
+                        )}
                       </td>
                       <td className="px-4 py-2">
                         <span
