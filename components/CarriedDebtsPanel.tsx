@@ -8,6 +8,7 @@ import type {
   CarriedDebtRow,
 } from "@/lib/types";
 import { formatAmount, formatStatementDate } from "@/lib/format";
+import type { DebtPaymentSource } from "@/lib/debtPaymentSearch";
 import { cooperativeToday } from "@/lib/cooperativeClock";
 import { stripHonorific } from "@/lib/nameMatch";
 import PanelHelp from "@/components/PanelHelp";
@@ -871,6 +872,16 @@ export default function CarriedDebtsPanel() {
                             </button>
                           </p>
                         )}
+                        <OtherMoneySearch
+                          debt={debt}
+                          outstanding={outstandingOf(debt)}
+                          onApplied={async (message) => {
+                            setError(null);
+                            setNotice(message);
+                            await refresh();
+                          }}
+                          onError={setError}
+                        />
                         <div className="flex flex-wrap items-center gap-2 pt-2 mt-1 border-t border-slate-200">
                           <span className="text-xs text-slate-500">บันทึกชำระเงินสด ยอด</span>
                           <input
@@ -916,5 +927,149 @@ export default function CarriedDebtsPanel() {
         </div>
       )}
     </section>
+  );
+}
+
+// Money for this debt from anywhere — another member transferring on the
+// debtor's behalf (11313 ชูศักดิ์ ฿18,000), which the candidates above never
+// list because they only read the debtor's own accounts. Found by amount or
+// account (lib/debtPaymentSearch.ts) and applied through the same routes:
+// a round's transfer by its carry route, a daily line by from-line.
+function OtherMoneySearch({
+  debt,
+  outstanding,
+  onApplied,
+  onError,
+}: {
+  debt: CarriedDebtRow;
+  outstanding: number;
+  onApplied: (message: string) => Promise<void>;
+  onError: (message: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const [results, setResults] = useState<DebtPaymentSource[] | null>(null);
+  const [amounts, setAmounts] = useState<Record<string, string>>({});
+  const [working, setWorking] = useState(false);
+
+  const search = async () => {
+    setWorking(true);
+    try {
+      const res = await fetch(`/api/carried-debts/${debt.id}/search?q=${encodeURIComponent(query)}`);
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        onError(body.error || "ค้นหาไม่สำเร็จ");
+        return;
+      }
+      setResults(body.data ?? []);
+    } finally {
+      setWorking(false);
+    }
+  };
+
+  const apply = async (s: DebtPaymentSource) => {
+    const amount = Number(amounts[s.id] ?? Math.min(s.available, outstanding));
+    setWorking(true);
+    try {
+      const res =
+        s.kind === "transfer"
+          ? await fetch(`/api/statement-rounds/${s.roundId}/transfers/${s.id}/carry`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ debtId: debt.id, amount }),
+            })
+          : await fetch(`/api/carried-debts/${debt.id}/from-line`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ lineId: s.id, amount }),
+            });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        onError(body.error || "ใช้ยอดนี้ไม่สำเร็จ");
+        return;
+      }
+      setResults(null);
+      setQuery("");
+      setOpen(false);
+      await onApplied(
+        `ใช้ยอดโอน ${formatAmount(amount)}` +
+          (s.memberNumber && s.memberNumber !== debt.memberNumber ? ` (เงินที่ ${s.memberNumber} ${s.memberName ?? ""} โอนมา)` : "") +
+          ` ชำระหนี้ ${debt.sourceLabel} ของ ${debt.memberNumber} ${debt.name} แล้ว`
+      );
+    } finally {
+      setWorking(false);
+    }
+  };
+
+  if (!open) {
+    return (
+      <button
+        onClick={() => setOpen(true)}
+        className="text-xs text-sky-700 hover:underline pt-2"
+        title="เช่น สมาชิกอีกคนโอนชำระแทน — ยอดจากบัญชีของคนอื่นจะไม่ขึ้นในรายการด้านบน"
+      >
+        🔎 หายอดโอนอื่น (คนอื่นโอนแทน / บัญชีอื่น)
+      </button>
+    );
+  }
+  return (
+    <div className="pt-2 mt-1 border-t border-slate-200 space-y-1.5">
+      <div className="flex flex-wrap items-center gap-2 text-xs">
+        <span className="text-slate-500">หายอดโอนจาก ยอดเงิน หรือ เลขบัญชีที่โอนมา</span>
+        <input
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          onKeyDown={(e) => e.key === "Enter" && query.trim() && search()}
+          placeholder="เช่น 18000 หรือ 4301008047"
+          autoFocus
+          className="border border-slate-300 rounded px-2 py-1 w-52"
+        />
+        <button
+          onClick={search}
+          disabled={working || !query.trim()}
+          className="text-white bg-slate-900 rounded px-2.5 py-1 disabled:opacity-50"
+        >
+          ค้นหา
+        </button>
+        <button onClick={() => setOpen(false)} className="text-slate-500 hover:underline">
+          ปิด
+        </button>
+      </div>
+      {results && results.length === 0 && (
+        <p className="text-xs text-slate-500">ไม่พบยอดโอนที่ตรง — ลองค้นด้วยเลขบัญชี หรือยอดอื่น</p>
+      )}
+      {results?.map((s) => (
+        <div key={`${s.kind}:${s.id}`} className="flex flex-wrap items-center gap-2 text-xs border-t border-slate-100 pt-1">
+          <span className="num font-medium">{formatAmount(s.amount)}</span>
+          <span className="num text-slate-500">{s.date ? formatStatementDate(s.date) : "—"}</span>
+          {s.accountNumber && <span className="num text-slate-500">บัญชี {s.accountNumber}</span>}
+          <span className="text-slate-500">
+            {s.kind === "transfer" ? `รอบ ${s.roundLabel}` : "เงินเข้าประจำวัน (ยังไม่อยู่ในรอบ)"}
+            {s.memberNumber ? ` · ตอนนี้นับเป็นของ ${s.memberNumber} ${s.memberName ?? ""}` : " · ยังไม่มีเจ้าของ"}
+          </span>
+          {s.available > 0.005 ? (
+            <span className="ml-auto inline-flex items-center gap-1.5">
+              <input
+                type="number"
+                step="0.01"
+                value={amounts[s.id] ?? String(Math.min(s.available, outstanding))}
+                onChange={(e) => setAmounts((prev) => ({ ...prev, [s.id]: e.target.value }))}
+                className="border border-slate-300 rounded px-1.5 py-0.5 w-24"
+              />
+              <button
+                onClick={() => apply(s)}
+                disabled={working || !(Number(amounts[s.id] ?? Math.min(s.available, outstanding)) > 0)}
+                className="text-amber-800 border border-amber-300 bg-amber-50 rounded px-2 py-0.5 hover:bg-amber-100 disabled:opacity-50"
+                title="ใช้ยอดนี้ชำระหนี้ข้ามเดือนของสมาชิกคนนี้ — ยอดส่วนนี้จะไม่นับเป็นของคนที่โอนมาในรอบนั้นแล้ว"
+              >
+                ↪ ใช้ชำระหนี้นี้
+              </button>
+            </span>
+          ) : (
+            <span className="ml-auto text-slate-400">ใช้ไปหมดแล้ว</span>
+          )}
+        </div>
+      ))}
+    </div>
   );
 }
