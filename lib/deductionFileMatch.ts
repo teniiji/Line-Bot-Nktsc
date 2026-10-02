@@ -150,3 +150,20 @@ export function keysToRemember(
     .filter(([, units]) => units.size === 1)
     .map(([key, units]) => ({ key, unitName: [...units][0] }));
 }
+
+// A unit's name read off a file that matches none in the round — a recipient
+// the unit list does not have yet (ศึกษาธิการเลย, under ส่งเขต ตจว3): the file
+// name without its extension, the words every file carries ("รายการหัก",
+// "เดือน"), its month and its year. Staff confirm or edit it before it
+// becomes a unit.
+export function suggestUnitName(fileName: string): string {
+  let name = fileName.replace(/\.(xlsx|xls)$/i, "").replace(/[_]+/g, " ");
+  for (const month of THAI_MONTHS) name = name.split(month).join(" ");
+  return name
+    .replace(/รายการหัก(เงิน)?/g, " ")
+    .replace(/เดือน/g, " ")
+    .replace(/\d{4,}/g, " ")
+    .replace(/\s+/g, " ")
+    .replace(/^[\s\-–]+|[\s\-–]+$/g, "")
+    .trim();
+}

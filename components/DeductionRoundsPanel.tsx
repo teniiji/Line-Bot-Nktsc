@@ -10,6 +10,7 @@ import {
   isDeductionWorkbook,
   keysToRemember,
   matchFolderFile,
+  suggestUnitName,
   type MatchVia,
 } from "@/lib/deductionFileMatch";
 import {
@@ -137,6 +138,9 @@ export default function DeductionRoundsPanel() {
   const [dragging, setDragging] = useState(false);
   const [bulkFound, setBulkFound] = useState<{ total: number; inPeriod: boolean } | null>(null);
   const [confirmSendAll, setConfirmSendAll] = useState(false);
+  // The name a file with no unit to match would be added under, by row.
+  const [newUnitNames, setNewUnitNames] = useState<Record<number, string>>({});
+  const [addingUnit, setAddingUnit] = useState<number | null>(null);
   const [sendingAll, setSendingAll] = useState<{ done: number; total: number } | null>(null);
   const [showBulk, setShowBulk] = useState(false);
   const [bulkRows, setBulkRows] = useState<BulkRow[]>([]);
@@ -321,6 +325,7 @@ export default function DeductionRoundsPanel() {
     );
     setError(null);
     setBulkFound({ total: workbooks.length, inPeriod: chosen.length !== workbooks.length });
+    setNewUnitNames({});
     setBulkRows(rows);
     setBulkSummary(null);
     setShowBulk(true);
@@ -351,6 +356,32 @@ export default function DeductionRoundsPanel() {
     );
   };
 
+  // A file for a recipient the round does not list yet: add it, then put the
+  // file on it (app/api/deduction-rounds/[id]/units).
+  const addUnitForRow = async (index: number, name: string) => {
+    if (!selectedId || !name.trim()) return;
+    setAddingUnit(index);
+    setError(null);
+    try {
+      const res = await fetch(`/api/deduction-rounds/${selectedId}/units`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setError(body.error || "เพิ่มหน่วยงานไม่สำเร็จ");
+        return;
+      }
+      await Promise.all([fetchUnits(selectedId), fetchRounds()]);
+      setBulkRows((prev) =>
+        prev.map((r, i) => (i === index ? { ...r, unitName: body.unitName, via: "staff", include: true } : r))
+      );
+    } finally {
+      setAddingUnit(null);
+    }
+  };
+
   const toggleBulkRow = (index: number) => {
     setBulkRows((prev) => prev.map((r, i) => (i === index ? { ...r, include: !r.include } : r)));
   };
@@ -360,6 +391,7 @@ export default function DeductionRoundsPanel() {
   };
 
   const cancelBulk = () => {
+    setNewUnitNames({});
     setShowBulk(false);
     setBulkRows([]);
     setBulkSummary(null);
@@ -844,6 +876,36 @@ export default function DeductionRoundsPanel() {
                                 <span className="text-red-600"> · มีไฟล์อื่นจับคู่หน่วยงานนี้ซ้ำ — ติ๊กไว้ไฟล์เดียว</span>
                               )}
                             </span>
+                            {/* Also for a file the folder put on a unit together with
+                                others ("ส่งเขต ตจว3/…" holding several agencies'
+                                files): each is likely a recipient of its own. */}
+                            {(!row.unitName ||
+                              (row.via === "folder" && row.include && duplicateUnitNames.has(row.unitName))) && (
+                              <span className="flex flex-wrap items-center gap-1.5 mt-1 text-xs">
+                                <span className="text-slate-500">
+                                  {row.unitName ? "หรือแยกเป็นหน่วยงานของไฟล์นี้:" : "ไม่มีในรายชื่อ? เพิ่มเป็นหน่วยงานใหม่:"}
+                                </span>
+                                <input
+                                  value={newUnitNames[i] ?? suggestUnitName(row.file.name)}
+                                  onChange={(e) => setNewUnitNames((prev) => ({ ...prev, [i]: e.target.value }))}
+                                  disabled={bulkUploading || addingUnit !== null}
+                                  className="border border-slate-300 rounded px-1.5 py-0.5 w-48 bg-white"
+                                />
+                                <button
+                                  type="button"
+                                  onClick={() => addUnitForRow(i, newUnitNames[i] ?? suggestUnitName(row.file.name))}
+                                  disabled={
+                                    bulkUploading ||
+                                    addingUnit !== null ||
+                                    !(newUnitNames[i] ?? suggestUnitName(row.file.name)).trim()
+                                  }
+                                  className="border border-sky-300 text-sky-800 bg-sky-50 rounded px-2 py-0.5 hover:bg-sky-100 disabled:opacity-50"
+                                  title="เพิ่มหน่วยงานนี้ในรอบนี้และรอบถัดไป แล้วจับคู่ไฟล์นี้ให้ — ใส่ LINE / อีเมลของหน่วยงานได้ที่ ผู้รับรายการหัก ด้านล่าง"
+                                >
+                                  {addingUnit === i ? "กำลังเพิ่ม…" : "➕ เพิ่มหน่วยงาน"}
+                                </button>
+                              </span>
+                            )}
                           </td>
                           <td className="px-2 py-1.5 text-right">
                             <button
