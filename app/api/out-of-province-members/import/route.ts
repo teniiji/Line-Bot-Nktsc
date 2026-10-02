@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { checkUploadedFile, describeReadError, readFirstSheetRows } from "@/lib/excelUpload";
-import { syncOfficeMembers } from "@/lib/unitPayerOfficeStore";
+import { autoLinkOffices, syncOfficeMembers } from "@/lib/unitPayerOfficeStore";
 import {
   OutOfProvinceSheetError,
   dedupeByMember,
@@ -110,8 +110,11 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  // Offices already linked to a statement unit pick up their new members.
+  // Offices already linked to a statement unit pick up their new members,
+  // and units whose office the list now makes plain are linked and filled
+  // (lib/unitPayerOfficeStore.ts autoLinkOffices) — no unit-by-unit clicking.
   const unitSync = await syncOfficeMembers();
+  const autoLinked = await autoLinkOffices();
 
   // Not refused — the roster is imported separately and may lag — but a
   // member number nobody recognises is usually a typo, so it is named.
@@ -124,7 +127,8 @@ export async function POST(request: NextRequest) {
     moved,
     unchanged: incoming.length - added - moved,
     unconfirmed: sheet.unconfirmed,
-    addedToUnits: unitSync.added,
+    addedToUnits: unitSync.added + autoLinked.added,
+    unitsLinked: autoLinked.linked.length,
     blankRows: sheet.blankRows,
     problemCount: sheet.problems.length,
     problems: sheet.problems.slice(0, 20),

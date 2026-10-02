@@ -35,6 +35,8 @@ interface ImportResult {
   unchanged: number;
   unconfirmed: number;
   addedToUnits: number;
+  // Units linked to their office by this import (autoLinkOffices).
+  unitsLinked?: number;
   problemCount: number;
   problems: { rowNumber: number; reason: string }[];
   unknownMemberCount: number;
@@ -444,6 +446,9 @@ export default function OutOfProvincePanel() {
             <div className="text-sm text-green-800 bg-green-50 rounded px-3 py-2">
               นำเข้าแล้ว {result.imported} คน — เพิ่มใหม่ {result.added} · ย้ายหน่วยงาน {result.moved} · เหมือนเดิม{" "}
               {result.unchanged}
+              {(result.unitsLinked ?? 0) > 0 && (
+                <span> · ผูกหน่วยงานที่โอนเงินให้อัตโนมัติ {result.unitsLinked} หน่วย</span>
+              )}
               {result.addedToUnits > 0 && (
                 <span> · เพิ่มเข้าหน่วยงานที่ผูกไว้ {result.addedToUnits} คน</span>
               )}
