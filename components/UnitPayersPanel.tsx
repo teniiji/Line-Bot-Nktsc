@@ -171,6 +171,25 @@ export default function UnitPayersPanel() {
     }
   };
 
+  // Units the out-of-province list makes plain — one office ahead of any
+  // other by shared members (planAutoLinks in lib/unitPayerOffices.ts).
+  const autoLinkable = units.filter(
+    (u) =>
+      u.offices.length === 0 &&
+      u.suggestions.length > 0 &&
+      (u.suggestions.length === 1 || u.suggestions[0].overlap > u.suggestions[1].overlap)
+  ).length;
+  const autoLink = async () => {
+    const body = await call("/api/unit-payers/auto-link", { method: "POST" });
+    if (body) {
+      setNotice(
+        body.linked.length > 0
+          ? `ผูกหน่วยงานหักเงินอัตโนมัติ ${body.linked.length} หน่วยงาน — เพิ่มสมาชิกจากรายชื่อต่างจังหวัด ${body.added} คน`
+          : "ไม่มีหน่วยงานที่ผูกอัตโนมัติได้ — ที่เหลือมีหน่วยงานหักเงินที่เป็นไปได้มากกว่าหนึ่ง ให้เลือกเองที่ \"จัดการสมาชิก\""
+      );
+    }
+  };
+
   const unlinkOffice = async (unit: Unit, office: string) => {
     const body = await call(`/api/unit-payers/${unit.id}/offices?office=${encodeURIComponent(office)}`, {
       method: "DELETE",
@@ -216,6 +235,16 @@ export default function UnitPayersPanel() {
             <span className="text-xs text-slate-500">
               {loading ? "กำลังโหลด…" : `${units.length} หน่วยงาน`}
             </span>
+            {autoLinkable > 0 && (
+              <button
+                onClick={autoLink}
+                disabled={busy}
+                className="ml-auto text-sm px-3 py-1.5 rounded bg-violet-700 text-white hover:bg-violet-800 disabled:opacity-50"
+                title="ผูกทุกหน่วยงานกับหน่วยงานหักเงินในรายชื่อสมาชิกย้ายไปต่างจังหวัด ที่สมาชิกตรงกันชัดเจน แล้วเพิ่มสมาชิกทั้งหน่วยให้ — หน่วยงานที่ยังไม่ชัดจะไม่ถูกผูก"
+              >
+                🔗 ผูกอัตโนมัติและเพิ่มสมาชิกทั้งหน่วย ({autoLinkable})
+              </button>
+            )}
           </div>
 
           {error && <p className="text-sm text-red-700 bg-red-50 rounded px-3 py-2">{error}</p>}

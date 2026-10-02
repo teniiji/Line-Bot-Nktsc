@@ -1,5 +1,5 @@
 import { prisma } from "@/lib/prisma";
-import { planOfficeSync } from "@/lib/unitPayerOffices";
+import { planAutoLinks, planOfficeSync } from "@/lib/unitPayerOffices";
 
 // Brings every unit's members in line with the offices linked to it (see
 // lib/unitPayerOffices.ts). The tables are a few hundred rows each, so it
@@ -27,4 +27,34 @@ export async function syncOfficeMembers(): Promise<{ added: number; removed: num
     }),
   ]);
   return { added: plan.add.length, removed: plan.remove.length };
+}
+
+// Links every unit that can be linked without a person's judgment
+// (planAutoLinks), then brings their members in — after an out-of-province
+// list is imported, and from "ผูกอัตโนมัติ" on the unit list.
+export async function autoLinkOffices(): Promise<{ linked: { payerId: string; office: string }[]; added: number }> {
+  const [payers, members, links, officeMembers] = await Promise.all([
+    prisma.unitPayer.findMany({ select: { id: true } }),
+    prisma.unitPayerMember.findMany({ select: { payerId: true, memberNumber: true } }),
+    prisma.unitPayerOffice.findMany({ select: { payerId: true, deductingUnit: true } }),
+    prisma.outOfProvinceMember.findMany({ select: { memberNumber: true, deductingUnit: true } }),
+  ]);
+  const linkedPayers = new Set(links.map((l) => l.payerId));
+  const plan = planAutoLinks(
+    payers.map((p) => ({
+      payerId: p.id,
+      memberNumbers: members.filter((m) => m.payerId === p.id).map((m) => m.memberNumber),
+      linked: linkedPayers.has(p.id),
+    })),
+    officeMembers.map((m) => ({ memberNumber: m.memberNumber, office: m.deductingUnit })),
+    new Set(links.map((l) => l.deductingUnit))
+  );
+  if (plan.length > 0) {
+    await prisma.unitPayerOffice.createMany({
+      data: plan.map((p) => ({ payerId: p.payerId, deductingUnit: p.office })),
+      skipDuplicates: true,
+    });
+  }
+  const { added } = await syncOfficeMembers();
+  return { linked: plan.map((p) => ({ payerId: p.payerId, office: p.office })), added };
 }

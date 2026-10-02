@@ -101,3 +101,28 @@ export function officeSuggestions(
     .map(([office, members]) => ({ office, overlap: members.length, size: size.get(office) ?? members.length, matched: members }))
     .sort((a, b) => b.overlap - a.overlap || a.office.localeCompare(b.office, "th"));
 }
+
+// Links worth making without asking, for every unit not linked yet: its best
+// office by shared members, when nothing ties with it — and an office two
+// units would both take goes to the one sharing more, or to neither on a tie.
+// The units' members came from real transfers recorded for them, so one
+// shared member already names the office (a member is at one office at a
+// time); a tie is the case left for a person.
+export function planAutoLinks(
+  units: { payerId: string; memberNumbers: string[]; linked: boolean }[],
+  officeMembers: OfficeMember[],
+  linkedOffices: Set<string>
+): (OfficeLink & { overlap: number })[] {
+  const picks = units.flatMap((u) => {
+    if (u.linked) return [];
+    const [best, next] = officeSuggestions(u.memberNumbers, officeMembers, linkedOffices);
+    if (!best || (next && next.overlap >= best.overlap)) return [];
+    return [{ payerId: u.payerId, office: best.office, overlap: best.overlap }];
+  });
+  const byOffice = new Map<string, typeof picks>();
+  for (const p of picks) byOffice.set(p.office, [...(byOffice.get(p.office) ?? []), p]);
+  return [...byOffice.values()].flatMap((claims) => {
+    const sorted = [...claims].sort((a, b) => b.overlap - a.overlap);
+    return sorted.length === 1 || sorted[0].overlap > sorted[1].overlap ? [sorted[0]] : [];
+  });
+}

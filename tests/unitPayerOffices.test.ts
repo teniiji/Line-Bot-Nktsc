@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { officeSuggestions, planOfficeSync, type UnitMemberRow } from "../lib/unitPayerOffices";
+import { planAutoLinks, officeSuggestions, planOfficeSync, type UnitMemberRow } from "../lib/unitPayerOffices";
 
 const um = (over: Partial<UnitMemberRow> & { id: string; memberNumber: string }): UnitMemberRow => ({
   payerId: "udon",
@@ -100,5 +100,68 @@ describe("officeSuggestions", () => {
 
   it("leaves out offices already linked anywhere, and offices sharing nobody", () => {
     expect(officeSuggestions(["28864"], office, new Set(["อุดรธานี 1"]))).toEqual([]);
+  });
+});
+
+describe("planAutoLinks", () => {
+  const offices = [
+    { memberNumber: "31132", office: "ศธจ.กาฬสินธุ์" },
+    { memberNumber: "40001", office: "ศธจ.กาฬสินธุ์" },
+    { memberNumber: "26659", office: "วิทยาลัยสารพัดช่างนครปฐม" },
+    { memberNumber: "29375", office: "สพม.ปทุมธานี" },
+    { memberNumber: "29376", office: "สพป.ปทุมธานี 2" },
+  ];
+
+  it("links each unit to the one office its members point at", () => {
+    const plan = planAutoLinks(
+      [
+        { payerId: "kalasin", memberNumbers: ["31132"], linked: false },
+        { payerId: "nakhonpathom", memberNumbers: ["026659"], linked: false },
+      ],
+      offices,
+      new Set()
+    );
+    expect(plan.map((p) => `${p.payerId}=${p.office}`).sort()).toEqual([
+      "kalasin=ศธจ.กาฬสินธุ์",
+      "nakhonpathom=วิทยาลัยสารพัดช่างนครปฐม",
+    ]);
+  });
+
+  it("leaves a unit whose members split evenly between offices, one already linked, or one with no member on the list", () => {
+    const plan = planAutoLinks(
+      [
+        { payerId: "pathum", memberNumbers: ["29375", "29376"], linked: false },
+        { payerId: "done", memberNumbers: ["31132"], linked: true },
+        { payerId: "unknown", memberNumbers: ["99999"], linked: false },
+      ],
+      offices,
+      new Set()
+    );
+    expect(plan).toEqual([]);
+  });
+
+  it("gives an office two units want to the one sharing more, and to neither on a tie", () => {
+    const more = planAutoLinks(
+      [
+        { payerId: "a", memberNumbers: ["31132", "40001"], linked: false },
+        { payerId: "b", memberNumbers: ["31132"], linked: false },
+      ],
+      offices,
+      new Set()
+    );
+    expect(more.map((p) => p.payerId)).toEqual(["a"]);
+    const tie = planAutoLinks(
+      [
+        { payerId: "a", memberNumbers: ["31132"], linked: false },
+        { payerId: "b", memberNumbers: ["40001"], linked: false },
+      ],
+      offices,
+      new Set()
+    );
+    expect(tie).toEqual([]);
+  });
+
+  it("never takes an office already linked elsewhere", () => {
+    expect(planAutoLinks([{ payerId: "a", memberNumbers: ["31132"], linked: false }], offices, new Set(["ศธจ.กาฬสินธุ์"]))).toEqual([]);
   });
 });
