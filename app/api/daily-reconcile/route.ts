@@ -185,7 +185,7 @@ export async function GET(request: NextRequest) {
   const isSettledByRound = (accountNumber: string | null, amount: number) =>
     accountNumber !== null && settledKeys.has(`${accountNumber}|${amount.toFixed(2)}`);
 
-  const [rosterRows, loggedNames, owedRows] = numbersOnPage.length
+  const [rosterRows, loggedNames, owedRows, placedRows] = numbersOnPage.length
     ? await Promise.all([
         prisma.memberRoster.findMany({
           where: { memberNumber: { in: numbersOnPage } },
@@ -208,8 +208,20 @@ export async function GET(request: NextRequest) {
               select: { memberNumber: true, amountDue: true, amountPaid: true, deductionResult: true },
             })
           : Promise.resolve([]),
+        // Where each member sits — หน่วยคุม and รหัสสังกัด — which only the
+        // round lists carry (the roster has the unit's name alone). The
+        // newest round that says, one row per member; for the CSV export.
+        prisma.statementMember.findMany({
+          where: {
+            memberNumber: { in: numbersOnPage },
+            OR: [{ hCode: { not: null } }, { unitCode: { not: null } }],
+          },
+          orderBy: { createdAt: "desc" },
+          distinct: ["memberNumber"],
+          select: { memberNumber: true, hCode: true, unitCode: true, unitName: true },
+        }),
       ])
-    : [[], [], []];
+    : [[], [], [], []];
   const rosterByNumber = new Map(
     rosterRows.map((row) => [memberNumberKey(row.memberNumber) ?? row.memberNumber, row])
   );
@@ -217,6 +229,9 @@ export async function GET(request: NextRequest) {
     loggedNames
       .filter((row) => row.memberNumber && row.memberFullName)
       .map((row) => [memberNumberKey(row.memberNumber) ?? "", row.memberFullName as string])
+  );
+  const placedByNumber = new Map(
+    placedRows.map((row) => [memberNumberKey(row.memberNumber) ?? row.memberNumber, row])
   );
   const owedByNumber = new Map(
     owedRows.map((row) => [memberNumberKey(row.memberNumber) ?? row.memberNumber, row])
@@ -252,7 +267,9 @@ export async function GET(request: NextRequest) {
       // slip is last and usually the same row as the one above it.
       memberName:
         entry?.memberName ?? loggedNameByNumber.get(key) ?? slip?.memberFullName ?? null,
-      unitName: entry?.unitName ?? null,
+      unitName: entry?.unitName ?? placedByNumber.get(key)?.unitName ?? null,
+      unitCode: placedByNumber.get(key)?.unitCode ?? null,
+      hCode: placedByNumber.get(key)?.hCode ?? null,
       // Only ever from the paired slip: the bank line says an amount arrived,
       // never what for.
       category: slip?.category ?? null,

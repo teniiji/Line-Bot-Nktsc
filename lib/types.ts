@@ -468,6 +468,10 @@ export interface DailyStatementRow {
   memberName: string | null;
   // The member's unit, which is who staff contact about an unclaimed payment.
   unitName: string | null;
+  // รหัสสังกัด and หน่วยคุม, from the newest round list that carries them.
+  // Optional: older clients and tests build rows without them.
+  unitCode?: string | null;
+  hCode?: string | null;
   // What the payment was for, off the slip that was paired with this line —
   // ฝากเงิน, ชำระหนี้, ซื้อหุ้น. Null while nothing has been paired with it,
   // which is most lines on a day nobody has worked through yet.

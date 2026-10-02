@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { statementLinesCsvRows } from "../lib/csv";
 import type { DailyStatementRow } from "../lib/types";
+import { controlUnitName } from "../lib/controlUnits";
+
+const CONTROL_70 = controlUnitName("70") ?? "";
 
 const line = (over: Partial<DailyStatementRow>): DailyStatementRow => ({
   id: "l1",
@@ -17,6 +20,8 @@ const line = (over: Partial<DailyStatementRow>): DailyStatementRow => ({
   memberNumber: "13411",
   memberName: "นายสมบูรณ์ วิชิต",
   unitName: "บำนาญ บึงกาฬ อ.ศรีวิไล",
+  unitCode: "707012",
+  hCode: "70",
   category: "ฝากเงิน",
   deduction: null,
   ...over,
@@ -27,18 +32,18 @@ describe("statementLinesCsvRows", () => {
     const [header, row] = statementLinesCsvRows([line({})]);
     expect(header).toEqual([
       "วันที่", "เวลา", "รหัส", "รายละเอียด", "บัญชีผู้โอน", "ยอด", "คงเหลือ", "บัญชี",
-      "เลขสมาชิก", "ชื่อสมาชิก", "หน่วยงาน", "ทำรายการ", "สถานะ",
+      "เลขสมาชิก", "ชื่อสมาชิก", "รหัสหน่วยงาน", "หน่วยงาน", "รหัสหน่วยคุม", "ชื่อหน่วยคุม", "ทำรายการ", "สถานะ",
     ]);
     expect(row).toEqual([
       "2026-10-02", "06:37:32", "NBSDT", "TR fr 4301336796", "4301336796", "30000.00", "43802301.23",
-      "หนองคาย", "13411", "นายสมบูรณ์ วิชิต", "บำนาญ บึงกาฬ อ.ศรีวิไล", "ฝากเงิน", "ตรงกับสลิป",
+      "หนองคาย", "13411", "นายสมบูรณ์ วิชิต", "707012", "บำนาญ บึงกาฬ อ.ศรีวิไล", "70", CONTROL_70, "ฝากเงิน", "ตรงกับสลิป",
     ]);
   });
 
   it("leaves blanks for what a line has not got yet", () => {
     const [, row] = statementLinesCsvRows([
-      line({ memberNumber: null, memberName: null, unitName: null, category: null, balance: null, senderAccount: null, status: "unknownPayer" }),
+      line({ memberNumber: null, memberName: null, unitName: null, unitCode: null, hCode: null, category: null, balance: null, senderAccount: null, status: "unknownPayer" }),
     ]);
-    expect(row.slice(4)).toEqual(["", "30000.00", "", "หนองคาย", "", "", "", "", "ยังไม่รู้ว่าใครโอน"]);
+    expect(row.slice(4)).toEqual(["", "30000.00", "", "หนองคาย", "", "", "", "", "", "", "", "ยังไม่รู้ว่าใครโอน"]);
   });
 });
