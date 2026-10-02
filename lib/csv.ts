@@ -1,5 +1,6 @@
 import { controlUnitName } from "./controlUnits";
-import { Expense, MemberBankAccountEntry, MemberRosterEntry, StatementMemberRow } from "./types";
+import { DailyStatementRow, Expense, MemberBankAccountEntry, MemberRosterEntry, StatementMemberRow } from "./types";
+import { STATUS_LABELS } from "./statementDayView";
 // The day the file was exported, in Thailand — a download at one in the
 // morning carried yesterday's date in its name.
 import { cooperativeToday } from "./cooperativeClock";
@@ -200,5 +201,51 @@ export function downloadBankAccountsCsv(entries: MemberBankAccountEntry[]) {
   downloadCsv(
     [header, ...rows],
     `nktsc-bank-accounts-${cooperativeToday()}.csv`
+  );
+}
+
+// The เงินเข้าประจำวัน page's "รายการทั้งหมดในสเตทเมนต์" list, line for line
+// as it is on screen (search applied), for reading against the printed
+// statement or handing on. Date and time come out as the bank wrote them —
+// wall clock, stored as UTC (lib/cooperativeClock.ts) — and amounts as plain
+// numbers, so a spreadsheet can add them up.
+export function statementLinesCsvRows(lines: DailyStatementRow[]): string[][] {
+  const header = [
+    "วันที่",
+    "เวลา",
+    "รหัส",
+    "รายละเอียด",
+    "บัญชีผู้โอน",
+    "ยอด",
+    "คงเหลือ",
+    "บัญชี",
+    "เลขสมาชิก",
+    "ชื่อสมาชิก",
+    "หน่วยงาน",
+    "ทำรายการ",
+    "สถานะ",
+  ];
+  const rows = lines.map((l) => [
+    l.postedAt ? l.postedAt.slice(0, 10) : "",
+    l.postedAt ? l.postedAt.slice(11, 19) : "",
+    l.txnCode,
+    l.description,
+    l.senderAccount ?? "",
+    l.amount.toFixed(2),
+    l.balance === null ? "" : l.balance.toFixed(2),
+    l.branch,
+    l.memberNumber ?? "",
+    l.memberName ?? "",
+    l.unitName ?? "",
+    l.category ?? "",
+    STATUS_LABELS[l.status] ?? l.status,
+  ]);
+  return [header, ...rows];
+}
+
+export function downloadStatementLinesCsv(lines: DailyStatementRow[], from: string, to: string) {
+  downloadCsv(
+    statementLinesCsvRows(lines),
+    from === to ? `nktsc-statement-${from}.csv` : `nktsc-statement-${from}_${to}.csv`
   );
 }
