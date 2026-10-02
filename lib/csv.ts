@@ -221,7 +221,10 @@ export function statementLinesCsvRows(lines: DailyStatementRow[]): string[][] {
     "บัญชี",
     "เลขสมาชิก",
     "ชื่อสมาชิก",
+    "รหัสหน่วยงาน",
     "หน่วยงาน",
+    "รหัสหน่วยคุม",
+    "ชื่อหน่วยคุม",
     "ทำรายการ",
     "สถานะ",
   ];
@@ -236,7 +239,10 @@ export function statementLinesCsvRows(lines: DailyStatementRow[]): string[][] {
     l.branch,
     l.memberNumber ?? "",
     l.memberName ?? "",
+    l.unitCode ?? "",
     l.unitName ?? "",
+    l.hCode ?? "",
+    l.hCode ? (controlUnitName(l.hCode) ?? "") : "",
     l.category ?? "",
     STATUS_LABELS[l.status] ?? l.status,
   ]);
