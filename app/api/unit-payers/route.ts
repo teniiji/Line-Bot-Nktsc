@@ -4,6 +4,7 @@ import { memberNumberKey } from "@/lib/memberNumber";
 import { isUnitPayerLine, payerKey, suggestedPayerName, unitMatchMode } from "@/lib/unitPayer";
 import { markUnitLines } from "@/lib/unitPayerStore";
 import { officeSuggestions } from "@/lib/unitPayerOffices";
+import { compareUnitNames } from "@/lib/unitPayerOrder";
 
 export const dynamic = "force-dynamic";
 
@@ -15,7 +16,7 @@ export async function GET(request: NextRequest) {
   const search = new URL(request.url).searchParams.get("search")?.trim().toLowerCase() ?? "";
 
   const [payers, members, links, officeMembers] = await Promise.all([
-    prisma.unitPayer.findMany({ orderBy: { name: "asc" } }),
+    prisma.unitPayer.findMany(),
     prisma.unitPayerMember.findMany({ orderBy: { memberNumber: "asc" } }),
     prisma.unitPayerOffice.findMany({ orderBy: { deductingUnit: "asc" } }),
     prisma.outOfProvinceMember.findMany({ select: { memberNumber: true, deductingUnit: true } }),
@@ -33,7 +34,8 @@ export async function GET(request: NextRequest) {
     : [];
   const nameOf = new Map(roster.map((r) => [memberNumberKey(r.memberNumber) ?? r.memberNumber, r.memberName]));
 
-  const data = payers
+  const data = [...payers]
+    .sort((a, b) => compareUnitNames(a.name, b.name))
     .map((payer) => {
       const own = members
         .filter((m) => m.payerId === payer.id)
