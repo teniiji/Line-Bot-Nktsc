@@ -78,8 +78,14 @@ describe("folder uploads", () => {
     expect(match).toMatchObject({ unitName: "อบต.พระบาทนาสิงห์", via: "folder" });
   });
 
-  it("prefers the file name to the folder, and a remembered choice to both", () => {
+  it("prefers the file name to memory, and memory to the folder", () => {
     expect(matchFolderFile("ตจว1/0969/สพป.นค เขต 2.xlsx", unitNames, new Map()).unitName).toBe("สพป.นค เขต 2");
+    // Remembered for another unit, but the file names its own.
+    const stale = new Map([[aliasKey("สพป.นค เขต 2"), "ตจว1"]]);
+    expect(matchFolderFile("x/0969/สพป.นค เขต 2.xlsx", unitNames, stale)).toMatchObject({
+      unitName: "สพป.นค เขต 2",
+      via: "file",
+    });
     const remembered = new Map([[aliasKey("ไฟล์จากคุณสมศรี"), "ตจว1"]]);
     expect(matchFolderFile("ไฟล์จากคุณสมศรี/0969/อะไรก็ได้.xlsx", unitNames, remembered)).toMatchObject({
       unitName: "ตจว1",

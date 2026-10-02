@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { ROUND_CLOSED_ERROR } from "@/lib/carriedDebt";
 import { adoptLinePayments, carriedByFingerprint } from "@/lib/carriedDebtStore";
-import { absorbCoveredStandIns } from "@/lib/bridgeDedupeStore";
+import { absorbCoveredStandIns, setAsideCountedInOtherRound } from "@/lib/bridgeDedupeStore";
 import {
   checkUploadedFile,
   describeReadError,
@@ -183,6 +183,8 @@ export async function POST(
     }),
   ]);
   const refreshed = existing.length - protectedFingerprints.size;
+  const known = new Set(existing.map((row) => row.fingerprint));
+  const arrived = refreshableFingerprints.filter((fingerprint) => !known.has(fingerprint));
 
   // The same file, read a second way. The round only wants member transfers;
   // the daily reconciliation wants everything the account received, counter
@@ -208,6 +210,8 @@ export async function POST(
   // arrived a second time from the file — keep the file's row, with what
   // staff said about it, and drop the stand-in.
   await absorbCoveredStandIns(round.id);
+  // …and a line staff counted in another round already (lib/bridgeDedupeStore.ts).
+  await setAsideCountedInOtherRound(round.id, arrived);
   await recomputeRoundPayments(round.id);
 
   // Counted from what was actually stored, so the numbers describe the round

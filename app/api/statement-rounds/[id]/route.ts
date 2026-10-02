@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { matchSlipHints } from "@/lib/statementSlipHints";
 import { countedElsewhere } from "@/lib/roundDoubleCount";
+import { isStandIn, pairStandIns } from "@/lib/bridgeDedupe";
 import { recordedOwnersForAccounts } from "@/lib/roundRecordings";
 import { splitByBinding } from "@/lib/boundTransfers";
 import { LINE_FINGERPRINT_PREFIX, ROUND_CLOSED_ERROR, countedAmount } from "@/lib/carriedDebt";
@@ -213,6 +214,69 @@ export async function GET(
       counts: counts(t),
     }))
   );
+
+  // The same payment under two fingerprints: a daily line staff counted in
+  // one round (a "line:" stand-in) and the bank's own row for it uploaded into
+  // another. New uploads set their copy aside (setAsideCountedInOtherRound);
+  // this says so for any that came in before that, either way round.
+  const crossSelect = {
+    id: true,
+    fingerprint: true,
+    accountNumber: true,
+    amount: true,
+    transferredAt: true,
+    memberNumber: true,
+    manualMemberNumber: true,
+    roundId: true,
+  } as const;
+  const myReal = transfers.filter((t) => counts(t) && !t.fingerprint.startsWith("line:") && t.accountNumber);
+  const myStandIns = transfers.filter((t) => counts(t) && isStandIn(t.fingerprint) && t.accountNumber);
+  const [standInsElsewhere, realElsewhere] = await Promise.all([
+    myReal.length
+      ? prisma.statementTransfer.findMany({
+          where: {
+            roundId: { not: round.id },
+            manualMemberNumber: true,
+            excludedReason: null,
+            memberNumber: { not: null },
+            fingerprint: { startsWith: "line:" },
+            accountNumber: { in: [...new Set(myReal.map((t) => t.accountNumber))] },
+          },
+          select: crossSelect,
+        })
+      : Promise.resolve([]),
+    myStandIns.length
+      ? prisma.statementTransfer.findMany({
+          where: {
+            roundId: { not: round.id },
+            excludedReason: null,
+            memberNumber: { not: null },
+            NOT: { fingerprint: { startsWith: "line:" } },
+            accountNumber: { in: [...new Set(myStandIns.map((t) => t.accountNumber))] },
+          },
+          select: crossSelect,
+        })
+      : Promise.resolve([]),
+  ]);
+  const crossPairs = [
+    ...pairStandIns(standInsElsewhere, myReal).map(({ bridge, real }) => ({ id: real.id, roundId: bridge.roundId })),
+    ...pairStandIns(myStandIns, realElsewhere).map(({ bridge, real }) => ({ id: bridge.id, roundId: real.roundId })),
+  ];
+  if (crossPairs.length) {
+    const crossLabels = new Map(
+      (
+        await prisma.statementRound.findMany({
+          where: { id: { in: [...new Set(crossPairs.map((p) => p.roundId))] } },
+          select: { id: true, label: true },
+        })
+      ).map((r) => [r.id, r.label])
+    );
+    for (const { id, roundId } of crossPairs) {
+      const label = crossLabels.get(roundId) ?? roundId;
+      const have = doubles.get(id) ?? [];
+      if (!have.includes(label)) doubles.set(id, [...have, label]);
+    }
+  }
 
   // Which unit a share came from, on rows that are only part of a bank line.
   const origins = await splitOriginsFor(round.id, transfers);
