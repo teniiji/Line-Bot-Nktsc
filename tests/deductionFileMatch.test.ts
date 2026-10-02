@@ -6,6 +6,7 @@ import {
   keysToRemember,
   matchFileNameToUnit,
   matchFolderFile,
+  suggestUnitName,
 } from "../lib/deductionFileMatch";
 
 const units = ["โรงเรียนบ้านโนนสวรรค์", "โรงเรียนบ้านหนองบัว", "สพป.นค เขต 1"];
@@ -112,5 +113,13 @@ describe("folder uploads", () => {
     expect(keys).toEqual(
       ["รายการหัก ตจว1=ตจว1", "ตจว1=ตจว1", "สพป.นค เขต 1=สพป.นค เขต 1", "เขต 2 นค=สพป.นค เขต 2"].sort()
     );
+  });
+});
+
+describe("suggestUnitName", () => {
+  it("keeps the agency and drops what every file carries", () => {
+    expect(suggestUnitName("รายการหัก ศึกษาธิการเลย เดือน ตุลาคม 2569.xlsx")).toBe("ศึกษาธิการเลย");
+    expect(suggestUnitName("รายการหัก_สพป_นค_เขต_2_1069.xlsx")).toBe("สพป นค เขต 2");
+    expect(suggestUnitName("อบต.พระบาทนาสิงห์.xls")).toBe("อบต.พระบาทนาสิงห์");
   });
 });
