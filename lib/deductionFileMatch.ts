@@ -95,10 +95,11 @@ export interface FolderFileMatch {
   keys: string[];
 }
 
-// Which unit one file belongs to, by — in order — what was chosen for the
-// same name before, the file's own name, then each folder above it from the
-// nearest up. A remembered choice is staff's own word and wins; the folder
-// is the fallback the file name could not settle.
+// Which unit one file belongs to, by — in order — the file's own name, what
+// was chosen for the same name before, then each folder above it from the
+// nearest up. A file that names its unit outright is believed over memory:
+// a name remembered from one upload ("ไฟล์หัก.xlsx" for one unit) must not
+// pull next month's file of the same name away from the unit it names.
 export function matchFolderFile(
   path: string,
   unitNames: string[],
@@ -110,12 +111,12 @@ export function matchFolderFile(
   const known = new Set(unitNames);
   const keys = [aliasKey(fileName), ...folders.map(aliasKey)].filter(Boolean);
 
+  const byFile = matchFileNameToUnit(fileName, unitNames);
+  if (byFile) return { unitName: byFile, via: "file", keys };
   for (const key of keys) {
     const unit = remembered.get(key);
     if (unit && known.has(unit)) return { unitName: unit, via: "remembered", keys };
   }
-  const byFile = matchFileNameToUnit(fileName, unitNames);
-  if (byFile) return { unitName: byFile, via: "file", keys };
   for (const folder of folders) {
     const byFolder = matchFileNameToUnit(folder, unitNames);
     if (byFolder) return { unitName: byFolder, via: "folder", keys };

@@ -299,12 +299,15 @@ export async function placeShareInRound(lineId: string, memberNumber: string, ro
     const holder = await prisma.statementRound.findUnique({ where: { id: already.roundId }, select: { label: true } });
     throw new SplitError(`ส่วนแบ่งนี้นับอยู่ในรอบ ${holder?.label ?? ""} แล้ว`);
   }
+  // By key, not spelling: the division may have written "23321" for a round
+  // that lists "023321".
+  const shareKey = memberNumberKey(share.memberNumber) ?? share.memberNumber.trim();
   const member = (
     await prisma.statementMember.findMany({
-      where: { roundId: round.id, memberNumber: { in: spellings([share.memberNumber]) } },
+      where: { roundId: round.id, memberNumber: { endsWith: shareKey } },
       select: { memberNumber: true },
     })
-  )[0];
+  ).find((m) => memberNumberKey(m.memberNumber) === shareKey);
   if (!member) throw new SplitError(`สมาชิกคนนี้ไม่อยู่ในรอบ ${round.label}`);
 
   await prisma.statementTransfer.create({
