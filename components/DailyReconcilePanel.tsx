@@ -11,6 +11,7 @@ import { STAFF_CATEGORIES, categoryNeedsDetail } from "@/lib/categories";
 import { accountCaveat, canBindAccount } from "@/lib/depositRecord";
 import { CHANNEL_LABELS, STAFF_CHANNEL } from "@/lib/statementLines";
 import { STATUS_LABELS, canRecordFromLine } from "@/lib/statementDayView";
+import { downloadStatementLinesCsv } from "@/lib/csv";
 import { STATEMENT_ACCOUNTS } from "@/lib/statementReconcile";
 import { branchesIn, missingBranches, summariseByAccount } from "@/lib/dailyAccountSummary";
 import { dayTally, flowByAccount, flowTotal, inByCategory } from "@/lib/statementTotals";
@@ -1509,15 +1510,26 @@ export default function DailyReconcilePanel() {
               and the sections below, sorted by conclusion and half of them
               collapsed, cannot answer it. */}
           <div className="px-4 py-3 border-t border-slate-100">
-            <button
-              onClick={() => toggle("statement", statementRows.length)}
-              aria-expanded={isOpen("statement", statementRows.length)}
-              className="text-sm text-slate-700 hover:underline font-medium"
-            >
-              {isOpen("statement", statementRows.length) ? "▾" : "▸"} 📄 รายการทั้งหมดในสเตทเมนต์
-              {from === to ? "วันนี้" : "ช่วงนี้"} (
-              {countLabel(statementRows.length, data.statement.length, "รายการ")})
-            </button>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <button
+                onClick={() => toggle("statement", statementRows.length)}
+                aria-expanded={isOpen("statement", statementRows.length)}
+                className="text-sm text-slate-700 hover:underline font-medium"
+              >
+                {isOpen("statement", statementRows.length) ? "▾" : "▸"} 📄 รายการทั้งหมดในสเตทเมนต์
+                {from === to ? "วันนี้" : "ช่วงนี้"} (
+                {countLabel(statementRows.length, data.statement.length, "รายการ")})
+              </button>
+              {statementRows.length > 0 && (
+                <button
+                  onClick={() => downloadStatementLinesCsv(statementRows, from, to)}
+                  className="text-xs px-2.5 py-1 border border-slate-300 rounded bg-white hover:bg-slate-50"
+                  title="ดาวน์โหลดทุกบรรทัดที่แสดงอยู่ (ตามคำค้นหา ถ้ามี) เป็นไฟล์ CSV เปิดด้วย Excel ได้"
+                >
+                  ส่งออก CSV ({statementRows.length})
+                </button>
+              )}
+            </div>
             <p className="text-xs text-slate-500 mt-1">
               ทุกบรรทัดในช่วงที่เลือก เรียงตามเวลาแบบเดียวกับไฟล์ของธนาคาร พร้อมบอกว่าแต่ละบรรทัด
               ตกอยู่ในกลุ่มไหนด้านล่าง — ใช้ไล่ทีละบรรทัดกับสเตทเมนต์ที่ปริ้นมาได้เลย
