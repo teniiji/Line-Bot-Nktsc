@@ -3,6 +3,7 @@ import {
   aliasKey,
   filesForPeriod,
   isDeductionWorkbook,
+  isDispatchFolder,
   keysToRemember,
   matchFileNameToUnit,
   matchFolderFile,
@@ -92,6 +93,28 @@ describe("folder uploads", () => {
       unitName: "ตจว1",
       via: "remembered",
     });
+  });
+
+  it("matches each file under a ส่งเขต folder by its own name, not the folder's", () => {
+    const units = [...unitNames, "ตจว3"];
+    // ศึกษาธิการเลย goes straight to that agency: not ตจว3's, and offered as a new unit.
+    const match = matchFolderFile("รายการหัก/ส่งเขต ตจว3/0969/รายการหัก ศึกษาธิการเลย 0969.xlsx", units, new Map());
+    expect(match).toMatchObject({ unitName: null, via: null });
+    expect(match.keys).not.toContain(aliasKey("ส่งเขต ตจว3"));
+    // An alias saved before this rule no longer pulls the file onto ตจว3.
+    const stale = new Map([[aliasKey("ส่งเขต ตจว3"), "ตจว3"]]);
+    expect(matchFolderFile("ส่งเขต ตจว3/0969/ศึกษาธิการเลย.xlsx", units, stale).unitName).toBeNull();
+    // A file there that names a listed unit still finds it.
+    expect(matchFolderFile("ส่งเขต ตจว3/0969/ตจว3.xlsx", units, new Map()).unitName).toBe("ตจว3");
+    expect(matchFolderFile("ส่งเขต ตจว3/0969/สพป.นค เขต 1.xlsx", units, new Map()).unitName).toBe("สพป.นค เขต 1");
+  });
+
+  it("tells an errand folder from a unit named ส่งเสริม…", () => {
+    expect(isDispatchFolder("ส่งเขต ตจว3")).toBe(true);
+    expect(isDispatchFolder("ส่ง เขต ตจว3")).toBe(true);
+    expect(isDispatchFolder("ส่งให้ ตจว3")).toBe(true);
+    expect(isDispatchFolder("ส่งเสริมการปกครองท้องถิ่น")).toBe(false);
+    expect(isDispatchFolder("ตจว3")).toBe(false);
   });
 
   it("ignores a remembered unit that is not in this round", () => {

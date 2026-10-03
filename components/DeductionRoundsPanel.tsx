@@ -877,8 +877,9 @@ export default function DeductionRoundsPanel() {
                               )}
                             </span>
                             {/* Also for a file the folder put on a unit together with
-                                others ("ส่งเขต ตจว3/…" holding several agencies'
-                                files): each is likely a recipient of its own. */}
+                                others (a folder holding several agencies' files
+                                that is not named "ส่ง…" — see isDispatchFolder):
+                                each is likely a recipient of its own. */}
                             {(!row.unitName ||
                               (row.via === "folder" && row.include && duplicateUnitNames.has(row.unitName))) && (
                               <span className="flex flex-wrap items-center gap-1.5 mt-1 text-xs">

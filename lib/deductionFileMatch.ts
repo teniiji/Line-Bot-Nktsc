@@ -72,6 +72,17 @@ export function isGenericFolder(name: string): boolean {
   return !key || /^[\d\s.\-/]*$/.test(normalize(name)) || GENERIC_FOLDERS.has(key);
 }
 
+// A folder of files sent on to several recipients, each its own: "ส่งเขต
+// ตจว3" holds ศึกษาธิการเลย's file and other agencies', and each goes to that
+// agency directly, not to ตจว3. Its name must not put every file in it on
+// ตจว3 (or be remembered as meaning ตจว3), so it is passed over like a
+// generic folder and each file is matched by its own name — one the round
+// does not list is offered as a new unit (suggestUnitName). "ส่งเสริม…" is a
+// unit's name, not an errand.
+export function isDispatchFolder(name: string): boolean {
+  return /^ส่ง\s*(เขต|ให้|ไป|ต่อ|ผ่าน|หน่วย)/.test(normalize(name));
+}
+
 // Files nobody means to send: Excel's own lock files ("~$…"), and anything
 // that is not a workbook.
 export function isDeductionWorkbook(name: string): boolean {
@@ -107,7 +118,10 @@ export function matchFolderFile(
 ): FolderFileMatch {
   const parts = path.split("/").filter(Boolean);
   const fileName = parts[parts.length - 1] ?? path;
-  const folders = parts.slice(0, -1).reverse().filter((f) => !isGenericFolder(f));
+  const folders = parts
+    .slice(0, -1)
+    .reverse()
+    .filter((f) => !isGenericFolder(f) && !isDispatchFolder(f));
   const known = new Set(unitNames);
   const keys = [aliasKey(fileName), ...folders.map(aliasKey)].filter(Boolean);
 
