@@ -9,6 +9,8 @@ export default function FeatureFlagsPanel() {
   const [loading, setLoading] = useState(true);
   const [savingKey, setSavingKey] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Closed until wanted, like the other boxes in ตั้งค่าระบบ.
+  const [open, setOpen] = useState(false);
 
   const fetchFlags = async () => {
     setLoading(true);
@@ -72,38 +74,49 @@ export default function FeatureFlagsPanel() {
 
   return (
     <div className="bg-white rounded-lg shadow">
-      <div className="px-4 py-3 border-b border-slate-100">
-        <h2 className="font-semibold">ตั้งค่าระบบ</h2>
-        <PanelHelp summary="เปิด/ปิดฟังก์ชันของบอทเองได้ทันที ไม่ต้องรอ deploy (มีผลภายในประมาณ 15 วินาที)">
-          <p>
-            ปิดฟังก์ชันหลักไว้ บอทจะขอโทษสมาชิกตรงๆ ว่าปิดใช้งานชั่วคราว แทนที่จะทำงานครึ่งๆ กลางๆ
-          </p>
-          <p>
-            ส่วนสวิตช์ "ถามคำถาม..." แต่ละข้อ ปิดไว้แค่ข้ามคำถามนั้นไปเฉยๆ
-            (บันทึกธุรกรรมได้แม้ข้อมูลข้อนั้นยังว่างอยู่) ไม่มีข้อความแจ้งสมาชิก
-          </p>
-        </PanelHelp>
+      <div className={`px-4 py-3 ${open ? "border-b border-slate-100" : ""}`}>
+        <button type="button" onClick={() => setOpen((v) => !v)} aria-expanded={open} className="text-left">
+          <h2 className="font-semibold">
+            <span className="text-slate-400 mr-1">{open ? "▾" : "▸"}</span>
+            ตั้งค่าระบบ
+          </h2>
+        </button>
+        {open && (
+          <PanelHelp summary="เปิด/ปิดฟังก์ชันของบอทเองได้ทันที ไม่ต้องรอ deploy (มีผลภายในประมาณ 15 วินาที)">
+            <p>
+              ปิดฟังก์ชันหลักไว้ บอทจะขอโทษสมาชิกตรงๆ ว่าปิดใช้งานชั่วคราว แทนที่จะทำงานครึ่งๆ กลางๆ
+            </p>
+            <p>
+              ส่วนสวิตช์ "ถามคำถาม..." แต่ละข้อ ปิดไว้แค่ข้ามคำถามนั้นไปเฉยๆ
+              (บันทึกธุรกรรมได้แม้ข้อมูลข้อนั้นยังว่างอยู่) ไม่มีข้อความแจ้งสมาชิก
+            </p>
+          </PanelHelp>
+        )}
       </div>
 
-      {error && (
-        <p className="text-sm text-red-600 bg-red-50 rounded px-3 py-2 mx-4 mt-3">{error}</p>
-      )}
-
-      {loading ? (
-        <p className="text-slate-500 text-sm py-8 text-center">กำลังโหลด…</p>
-      ) : (
+      {open && (
         <>
-          <h3 className="px-4 pt-3 pb-1 text-xs font-medium text-slate-500 uppercase tracking-wide">
-            ฟังก์ชันหลัก
-          </h3>
-          <ul className="divide-y divide-slate-100 border-b border-slate-100">
-            {globalFlags.map(renderRow)}
-          </ul>
+          {error && (
+            <p className="text-sm text-red-600 bg-red-50 rounded px-3 py-2 mx-4 mt-3">{error}</p>
+          )}
 
-          <h3 className="px-4 pt-3 pb-1 text-xs font-medium text-slate-500 uppercase tracking-wide">
-            การแจ้งเตือนรายแผนก
-          </h3>
-          <ul className="divide-y divide-slate-100">{departmentFlags.map(renderRow)}</ul>
+          {loading ? (
+            <p className="text-slate-500 text-sm py-8 text-center">กำลังโหลด…</p>
+          ) : (
+            <>
+              <h3 className="px-4 pt-3 pb-1 text-xs font-medium text-slate-500 uppercase tracking-wide">
+                ฟังก์ชันหลัก
+              </h3>
+              <ul className="divide-y divide-slate-100 border-b border-slate-100">
+                {globalFlags.map(renderRow)}
+              </ul>
+
+              <h3 className="px-4 pt-3 pb-1 text-xs font-medium text-slate-500 uppercase tracking-wide">
+                การแจ้งเตือนรายแผนก
+              </h3>
+              <ul className="divide-y divide-slate-100">{departmentFlags.map(renderRow)}</ul>
+            </>
+          )}
         </>
       )}
     </div>
