@@ -67,6 +67,9 @@ export async function GET() {
       leftAt: group.leftAt?.toISOString() ?? null,
       lastSeenAt: group.lastSeenAt.toISOString(),
       usedBy: usedBy.get(group.groupId) ?? [],
+      // The same, as names, for the group's จัดการ form.
+      departments: departments.filter((d) => d.lineUserId === group.groupId).map((d) => d.department),
+      units: units.filter((u) => u.lineUserId === group.groupId).map((u) => u.name),
     }))
   );
 }

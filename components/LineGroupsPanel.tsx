@@ -1,7 +1,8 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { Fragment, useCallback, useEffect, useState } from "react";
 import ConfirmDialog from "@/components/ConfirmDialog";
+import { GROUP_DEPARTMENTS } from "@/lib/lineGroupUsage";
 
 interface LineGroup {
   id: string;
@@ -13,6 +14,13 @@ interface LineGroup {
   leftAt: string | null;
   lastSeenAt: string;
   usedBy: string[];
+  departments: string[];
+  units: string[];
+}
+
+interface UnitOption {
+  name: string;
+  lineUserId: string | null;
 }
 
 const formatDate = (iso: string) =>
@@ -27,6 +35,12 @@ export default function LineGroupsPanel() {
   const [editing, setEditing] = useState<string | null>(null);
   const [noteDraft, setNoteDraft] = useState("");
   const [pendingLeave, setPendingLeave] = useState<LineGroup | null>(null);
+  // The group whose จัดการ form is open, and what it is being set to.
+  const [managing, setManaging] = useState<string | null>(null);
+  const [draftDepartments, setDraftDepartments] = useState<string[]>([]);
+  const [draftUnits, setDraftUnits] = useState<string[]>([]);
+  const [unitQuery, setUnitQuery] = useState("");
+  const [unitOptions, setUnitOptions] = useState<UnitOption[]>([]);
 
   const fetchGroups = useCallback(async () => {
     setLoading(true);
@@ -88,6 +102,82 @@ export default function LineGroupsPanel() {
     await fetchGroups();
   };
 
+  const openManage = async (group: LineGroup) => {
+    if (managing === group.id) {
+      setManaging(null);
+      return;
+    }
+    setManaging(group.id);
+    setDraftDepartments(group.departments);
+    setDraftUnits(group.units);
+    setUnitQuery("");
+    setError(null);
+    setNotice(null);
+    if (unitOptions.length === 0) {
+      const res = await fetch("/api/organization-units");
+      const body = await res.json().catch(() => ({}));
+      if (Array.isArray(body.data)) setUnitOptions(body.data);
+    }
+  };
+
+  const addDraftUnit = () => {
+    const name = unitQuery.trim();
+    if (!name || draftUnits.includes(name)) return;
+    if (!unitOptions.some((u) => u.name === name)) {
+      setError(`ไม่พบหน่วยงาน "${name}" — เลือกจากรายการ`);
+      return;
+    }
+    setError(null);
+    setDraftUnits((prev) => [...prev, name]);
+    setUnitQuery("");
+  };
+
+  const saveUsage = async (group: LineGroup) => {
+    setBusy(group.id);
+    setError(null);
+    setNotice(null);
+    const res = await fetch(`/api/line-groups/${group.id}/usage`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ departments: draftDepartments, units: draftUnits }),
+    });
+    const body = await res.json().catch(() => ({}));
+    setBusy(null);
+    if (!res.ok) {
+      setError(body.error || "บันทึกไม่สำเร็จ");
+      return;
+    }
+    setManaging(null);
+    setUnitOptions([]);
+    setNotice(`บันทึกการใช้งานกลุ่ม "${group.note ?? group.name ?? group.groupId}" แล้ว`);
+    await fetchGroups();
+  };
+
+  const forgetGroup = async (group: LineGroup) => {
+    setBusy(group.id);
+    setError(null);
+    const res = await fetch(`/api/line-groups/${group.id}/forget`, { method: "POST" });
+    const body = await res.json().catch(() => ({}));
+    setBusy(null);
+    if (!res.ok) {
+      setError(body.error || "ลบไม่สำเร็จ");
+      return;
+    }
+    setManaging(null);
+    setNotice(`ลบกลุ่ม "${group.note ?? group.name ?? group.groupId}" ออกจากรายการแล้ว`);
+    await fetchGroups();
+  };
+
+  // Units already sending to another LINE, which choosing them here replaces.
+  const replacedTarget = (name: string, group: LineGroup) => {
+    const unit = unitOptions.find((u) => u.name === name);
+    return unit?.lineUserId && unit.lineUserId !== group.groupId ? unit.lineUserId : null;
+  };
+  const groupLabelOf = (lineId: string) => {
+    const g = groups.find((x) => x.groupId === lineId);
+    return g ? g.note ?? g.name ?? "กลุ่มอื่น" : "LINE รายคน";
+  };
+
   const active = groups.filter((g) => !g.leftAt);
   const gone = groups.filter((g) => g.leftAt);
 
@@ -102,8 +192,8 @@ export default function LineGroupsPanel() {
         <div className="text-xs text-slate-500 mt-2 space-y-1">
           <p>
             <strong>วิธีเพิ่มกลุ่ม:</strong> เชิญ LINE OA ของสหกรณ์เข้ากลุ่มนั้น → กลุ่มจะขึ้นในตารางนี้เอง
-            → กด <strong>"ทดสอบส่ง"</strong> ให้แน่ใจว่าส่งได้ → แล้วค่อยไปเลือกใช้ที่แท็บ "รายการหัก"
-            (หน่วยงาน) หรือ "ผู้รับผิดชอบ" (แผนก)
+            → กด <strong>"ทดสอบส่ง"</strong> ให้แน่ใจว่าส่งได้ → แล้วกด <strong>"⚙️ จัดการ"</strong>
+            เลือกว่าจะให้กลุ่มนี้รับแจ้งของแผนกไหน หรือรับรายการหักของหน่วยงานไหน
           </p>
           <p className="text-amber-700">
             ⚠️ ต้องเปิด <strong>"อนุญาตให้เชิญเข้ากลุ่ม"</strong> ใน LINE OA Manager ก่อน ไม่งั้นเชิญไม่เข้า
@@ -144,7 +234,8 @@ export default function LineGroupsPanel() {
             </thead>
             <tbody>
               {[...active, ...gone].map((group) => (
-                <tr key={group.id} className="border-t border-slate-100 hover:bg-slate-50">
+                <Fragment key={group.id}>
+                <tr className="border-t border-slate-100 hover:bg-slate-50">
                   <td className="px-4 py-2.5">
                     <div>{group.name ?? <span className="text-slate-400">ไม่มีชื่อ</span>}</div>
                     {editing === group.id ? (
@@ -211,6 +302,14 @@ export default function LineGroupsPanel() {
                   </td>
                   <td className="px-4 py-2.5 text-right whitespace-nowrap">
                     <button
+                      onClick={() => openManage(group)}
+                      disabled={busy === group.id}
+                      className="text-sky-700 hover:underline disabled:opacity-40 mr-3"
+                      aria-expanded={managing === group.id}
+                    >
+                      {managing === group.id ? "ปิด" : "⚙️ จัดการ"}
+                    </button>
+                    <button
                       onClick={() => testSend(group)}
                       disabled={busy === group.id}
                       className="text-slate-900 hover:underline disabled:opacity-40"
@@ -228,6 +327,126 @@ export default function LineGroupsPanel() {
                     )}
                   </td>
                 </tr>
+                {managing === group.id && (
+                  <tr className="bg-sky-50/40 border-t border-sky-100">
+                    <td colSpan={5} className="px-4 py-3 space-y-3 text-sm">
+                      {group.leftAt && (
+                        <p className="text-xs text-red-700">
+                          บอทไม่อยู่ในกลุ่มนี้แล้ว — ข้อความที่ส่งเข้ากลุ่มนี้ไปไม่ถึงใคร เอาแผนก/หน่วยงานออก
+                          แล้วตั้งผู้รับใหม่ หรือให้คนในกลุ่มเชิญบอทกลับเข้ามา
+                        </p>
+                      )}
+                      <div>
+                        <p className="text-xs font-medium text-slate-600 mb-1">
+                          รับคำขอบริการของแผนก (สินเชื่อใช้กลุ่มไม่ได้)
+                        </p>
+                        <div className="flex flex-wrap gap-x-4 gap-y-1">
+                          {GROUP_DEPARTMENTS.map((d) => {
+                            const checked = draftDepartments.includes(d);
+                            return (
+                              <label key={d} className="inline-flex items-center gap-1.5">
+                                <input
+                                  type="checkbox"
+                                  checked={checked}
+                                  disabled={!!group.leftAt && !checked}
+                                  onChange={() =>
+                                    setDraftDepartments((prev) =>
+                                      checked ? prev.filter((x) => x !== d) : [...prev, d]
+                                    )
+                                  }
+                                />
+                                {d}
+                              </label>
+                            );
+                          })}
+                        </div>
+                      </div>
+                      <div>
+                        <p className="text-xs font-medium text-slate-600 mb-1">ส่งรายการหักของหน่วยงาน</p>
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          {draftUnits.length === 0 && <span className="text-xs text-slate-400">— ไม่มี —</span>}
+                          {draftUnits.map((name) => {
+                            const replaced = replacedTarget(name, group);
+                            return (
+                              <span
+                                key={name}
+                                className="inline-flex items-center gap-1 bg-white border border-slate-300 rounded-full pl-2.5 pr-1 py-0.5 text-xs"
+                                title={replaced ? `ตอนนี้ส่งไปที่ ${groupLabelOf(replaced)} — บันทึกแล้วจะเปลี่ยนมาส่งเข้ากลุ่มนี้แทน` : undefined}
+                              >
+                                {name}
+                                {replaced && <span className="text-amber-700">(แทน {groupLabelOf(replaced)})</span>}
+                                <button
+                                  type="button"
+                                  onClick={() => setDraftUnits((prev) => prev.filter((x) => x !== name))}
+                                  className="text-slate-400 hover:text-red-600 px-1"
+                                  aria-label={`เอา ${name} ออก`}
+                                >
+                                  ×
+                                </button>
+                              </span>
+                            );
+                          })}
+                        </div>
+                        {!group.leftAt && (
+                          <div className="flex flex-wrap items-center gap-2 mt-2">
+                            <input
+                              list={`units-${group.id}`}
+                              value={unitQuery}
+                              onChange={(e) => setUnitQuery(e.target.value)}
+                              onKeyDown={(e) => {
+                                if (e.key === "Enter") addDraftUnit();
+                              }}
+                              placeholder="พิมพ์ชื่อหน่วยงาน…"
+                              className="border border-slate-300 rounded px-2 py-1 text-xs w-64 bg-white"
+                            />
+                            <datalist id={`units-${group.id}`}>
+                              {unitOptions
+                                .filter((u) => !draftUnits.includes(u.name))
+                                .map((u) => (
+                                  <option key={u.name} value={u.name} />
+                                ))}
+                            </datalist>
+                            <button
+                              type="button"
+                              onClick={addDraftUnit}
+                              disabled={!unitQuery.trim()}
+                              className="text-xs border border-slate-300 rounded px-2 py-1 bg-white hover:bg-slate-50 disabled:opacity-40"
+                            >
+                              + เพิ่มหน่วยงาน
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                      <div className="flex flex-wrap items-center gap-3">
+                        <button
+                          onClick={() => saveUsage(group)}
+                          disabled={busy === group.id}
+                          className="text-xs text-white bg-slate-900 rounded px-3 py-1.5 disabled:opacity-50"
+                        >
+                          {busy === group.id ? "กำลังบันทึก…" : "บันทึก"}
+                        </button>
+                        <button onClick={() => setManaging(null)} className="text-xs text-slate-500 hover:underline">
+                          ยกเลิก
+                        </button>
+                        {group.leftAt && (
+                          <button
+                            onClick={() => forgetGroup(group)}
+                            disabled={busy === group.id || group.usedBy.length > 0}
+                            className="text-xs text-red-600 hover:underline disabled:opacity-40 ml-auto"
+                            title={
+                              group.usedBy.length > 0
+                                ? "เอาแผนก/หน่วยงานออกแล้วกดบันทึกก่อน"
+                                : "ลบกลุ่มนี้ออกจากตาราง — ถ้าเชิญบอทกลับเข้ากลุ่ม กลุ่มจะขึ้นมาใหม่เอง"
+                            }
+                          >
+                            🗑️ ลบออกจากรายการ
+                          </button>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                )}
+                </Fragment>
               ))}
             </tbody>
           </table>
