@@ -306,16 +306,32 @@ export default function OutOfProvincePanel() {
 
   return (
     <div className="bg-white rounded-lg shadow">
-      <div className="flex items-start justify-between gap-3 px-4 py-3 border-b border-slate-100">
+      <div
+        className={`flex items-start justify-between gap-3 px-4 py-3 ${open ? "border-b border-slate-100" : ""}`}
+      >
         <div>
-          <h2 className="font-semibold">🗺️ สมาชิกย้ายไปต่างจังหวัด</h2>
-          <p className="text-xs text-slate-500 mt-1">
-            สมาชิกที่ย้ายไปรับราชการต่างจังหวัด และ<strong>หน่วยงานหักเงิน</strong>ที่นั่น (เช่น อุดรธานี 1,
-            ศธจ.นนทบุรี) ซึ่งหักเงินเดือนแล้วโอนมาให้สหกรณ์ · นำเข้าจากไฟล์ Excel ที่มีคอลัมน์{" "}
-            <strong>เลขสมาชิก</strong> และ <strong>หน่วยงานหักเงิน</strong> — ถ้าไฟล์มีคอลัมน์{" "}
-            <strong>ยืนยัน</strong> จะนำเข้าเฉพาะแถวที่ติ๊ก ✓ · ผูกหน่วยงานหักเงินกับหน่วยงานในสเตทเมนต์ได้ที่มุมมอง
-            "🔗 ตามหน่วยงาน" ข้างล่าง หรือที่กล่อง "หน่วยงานที่โอนแทนสมาชิก" · กดหัวตารางเพื่อเรียงลำดับ
-          </p>
+          {/* The header alone while closed: these sit in ตั้งค่าระบบ, opened
+              now and then, and their explanations are for when they are. */}
+          <button
+            type="button"
+            onClick={() => setOpen((v) => !v)}
+            aria-expanded={open}
+            className="text-left"
+          >
+            <h2 className="font-semibold">
+              <span className="text-slate-400 mr-1">{open ? "▾" : "▸"}</span>
+              🗺️ สมาชิกย้ายไปต่างจังหวัด
+            </h2>
+          </button>
+          {open && (
+            <p className="text-xs text-slate-500 mt-1">
+              สมาชิกที่ย้ายไปรับราชการต่างจังหวัด และ<strong>หน่วยงานหักเงิน</strong>ที่นั่น (เช่น อุดรธานี 1,
+              ศธจ.นนทบุรี) ซึ่งหักเงินเดือนแล้วโอนมาให้สหกรณ์ · นำเข้าจากไฟล์ Excel ที่มีคอลัมน์{" "}
+              <strong>เลขสมาชิก</strong> และ <strong>หน่วยงานหักเงิน</strong> — ถ้าไฟล์มีคอลัมน์{" "}
+              <strong>ยืนยัน</strong> จะนำเข้าเฉพาะแถวที่ติ๊ก ✓ · ผูกหน่วยงานหักเงินกับหน่วยงานในสเตทเมนต์ได้ที่มุมมอง
+              "🔗 ตามหน่วยงาน" ข้างล่าง หรือที่กล่อง "หน่วยงานที่โอนแทนสมาชิก" · กดหัวตารางเพื่อเรียงลำดับ
+            </p>
+          )}
         </div>
         <button
           onClick={() => setOpen((v) => !v)}
