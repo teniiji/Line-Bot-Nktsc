@@ -204,15 +204,31 @@ export default function UnitPayersPanel() {
 
   return (
     <div className="bg-white rounded-lg shadow">
-      <div className="flex items-start justify-between gap-3 px-4 py-3 border-b border-slate-100">
+      <div
+        className={`flex items-start justify-between gap-3 px-4 py-3 ${open ? "border-b border-slate-100" : ""}`}
+      >
         <div>
-          <h2 className="font-semibold">🏢 หน่วยงานที่โอนแทนสมาชิก</h2>
-          <p className="text-xs text-slate-500 mt-1">
-            ยอดที่หน่วยงานโอนมาไม่มีเลขบัญชีผู้โอน ระบบจึงจำจากชื่อหน่วยงานในสเตทเมนต์แทน — หน่วยงานที่มี
-            <strong>สมาชิกคนเดียว</strong> ยอดเดือนต่อไปจะขึ้นเป็นของคนนั้นเลย ส่วนที่มี<strong>หลายคน</strong>
-            กด "แบ่งให้หลายคน" แล้วรายชื่อนี้จะขึ้นมาให้ · ส่วนใหญ่ไม่ต้องมากรอกเอง
-            ระบบจำให้ตอนกด "บันทึกรายการ" หรือ "แบ่งให้หลายคน" ที่หน้านี้
-          </p>
+          {/* The header alone while closed: these sit in ตั้งค่าระบบ, opened
+              now and then, and their explanations are for when they are. */}
+          <button
+            type="button"
+            onClick={() => setOpen((v) => !v)}
+            aria-expanded={open}
+            className="text-left"
+          >
+            <h2 className="font-semibold">
+              <span className="text-slate-400 mr-1">{open ? "▾" : "▸"}</span>
+              🏢 หน่วยงานที่โอนแทนสมาชิก
+            </h2>
+          </button>
+          {open && (
+            <p className="text-xs text-slate-500 mt-1">
+              ยอดที่หน่วยงานโอนมาไม่มีเลขบัญชีผู้โอน ระบบจึงจำจากชื่อหน่วยงานในสเตทเมนต์แทน — หน่วยงานที่มี
+              <strong>สมาชิกคนเดียว</strong> ยอดเดือนต่อไปจะขึ้นเป็นของคนนั้นเลย ส่วนที่มี<strong>หลายคน</strong>
+              กด "แบ่งให้หลายคน" แล้วรายชื่อนี้จะขึ้นมาให้ · ส่วนใหญ่ไม่ต้องมากรอกเอง
+              ระบบจำให้ตอนกด "บันทึกรายการ" หรือ "แบ่งให้หลายคน" ที่หน้าเงินเข้าประจำวัน
+            </p>
+          )}
         </div>
         <button
           onClick={() => setOpen((v) => !v)}

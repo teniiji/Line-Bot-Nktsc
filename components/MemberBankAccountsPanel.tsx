@@ -138,15 +138,31 @@ export default function MemberBankAccountsPanel() {
 
   return (
     <div className="bg-white rounded-lg shadow">
-      <div className="flex items-start justify-between gap-3 px-4 py-3 border-b border-slate-100">
+      <div
+        className={`flex items-start justify-between gap-3 px-4 py-3 ${open ? "border-b border-slate-100" : ""}`}
+      >
         <div>
-          <h2 className="font-semibold">ทะเบียนเลขบัญชีสมาชิก</h2>
-          <p className="text-xs text-slate-500 mt-1">
-            เลขบัญชีที่สมาชิกใช้โอนเงินเข้าสหกรณ์ ว่าเป็นของสมาชิกคนไหน — ใช้ตอนเทียบ Statement
-            เมื่อเลขบัญชีในไฟล์รายชื่อหักไม่ได้ผิดหรือไม่มี ระบบจะมาดูที่นี่ให้เอง
-            ส่วนใหญ่ไม่ต้องมากรอกเอง เพราะกด "ระบุเจ้าของ" ในตาราง "โอนเข้ามาแต่ไม่พบเจ้าของ"
-            แล้วระบบบันทึกให้เลย <strong>บันทึกครั้งเดียวใช้ได้ทุกรอบต่อไป</strong>
-          </p>
+          {/* The header alone while closed: these sit in ตั้งค่าระบบ, opened
+              now and then, and their explanations are for when they are. */}
+          <button
+            type="button"
+            onClick={() => setOpen((v) => !v)}
+            aria-expanded={open}
+            className="text-left"
+          >
+            <h2 className="font-semibold">
+              <span className="text-slate-400 mr-1">{open ? "▾" : "▸"}</span>
+              ทะเบียนเลขบัญชีสมาชิก
+            </h2>
+          </button>
+          {open && (
+            <p className="text-xs text-slate-500 mt-1">
+              เลขบัญชีที่สมาชิกใช้โอนเงินเข้าสหกรณ์ ว่าเป็นของสมาชิกคนไหน — ใช้ตอนเทียบ Statement
+              เมื่อเลขบัญชีในไฟล์รายชื่อหักไม่ได้ผิดหรือไม่มี ระบบจะมาดูที่นี่ให้เอง
+              ส่วนใหญ่ไม่ต้องมากรอกเอง เพราะกด "ระบุเจ้าของ" ในตาราง "โอนเข้ามาแต่ไม่พบเจ้าของ"
+              แล้วระบบบันทึกให้เลย <strong>บันทึกครั้งเดียวใช้ได้ทุกรอบต่อไป</strong>
+            </p>
+          )}
         </div>
         <div className="flex items-center gap-2 shrink-0">
           {open && (

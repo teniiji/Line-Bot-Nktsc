@@ -263,8 +263,6 @@ export default function Dashboard() {
             content: (
               <div className="space-y-6">
                 <DailyReconcilePanel />
-                <UnitPayersPanel />
-                <OutOfProvincePanel />
               </div>
             ),
           },
@@ -322,7 +320,6 @@ export default function Dashboard() {
             content: (
               <div className="space-y-6">
                 <StatementReconcilePanel />
-                <MemberBankAccountsPanel />
               </div>
             ),
           },
@@ -375,6 +372,12 @@ export default function Dashboard() {
               <div className="space-y-6">
                 <FeatureFlagsPanel />
                 <ControlUnitsPanel />
+                {/* Lists the daily and Statement pages read from, kept here
+                    rather than under the work: most of what is in them is
+                    learned from that work, and they are opened now and then. */}
+                <UnitPayersPanel />
+                <OutOfProvincePanel />
+                <MemberBankAccountsPanel />
               </div>
             ),
           },
