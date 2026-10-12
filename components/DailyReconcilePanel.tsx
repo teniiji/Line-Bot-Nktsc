@@ -1,6 +1,7 @@
 "use client";
 
 import { Fragment, useCallback, useEffect, useState } from "react";
+import ConfirmDialog from "@/components/ConfirmDialog";
 import {
   formatAmount,
   formatStatementDate,
@@ -281,6 +282,9 @@ export default function DailyReconcilePanel() {
   const [actNote, setActNote] = useState("");
   const [saving, setSaving] = useState(false);
   const [actionNotice, setActionNotice] = useState<string | null>(null);
+  // A slip flagged "อาจบันทึกซ้ำ" that staff asked to delete, while the
+  // confirmation is open.
+  const [pendingDuplicate, setPendingDuplicate] = useState<UnmatchedSlipRow | null>(null);
   // The bank line being divided among several members, while its dialog is
   // open — see components/LineSplitDialog.tsx.
   const [splittingId, setSplittingId] = useState<string | null>(null);
@@ -372,6 +376,29 @@ export default function DailyReconcilePanel() {
   // Taking one back out. Refused by the route while a transaction is filed
   // against any of its lines, which is the one case where deleting would take
   // somebody's payment down with it.
+  // Deletes a transaction the page flagged as filed twice. The same delete as
+  // the ธุรกรรม tab's, so whatever recording it took on a round goes with it.
+  const deleteDuplicate = async (slip: UnmatchedSlipRow) => {
+    setPendingDuplicate(null);
+    setSaving(true);
+    setError(null);
+    setActionNotice(null);
+    try {
+      const res = await fetch(`/api/expenses/${slip.id}`, { method: "DELETE" });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setError(body.error || "ลบรายการไม่สำเร็จ");
+        return;
+      }
+      setActionNotice(
+        `ลบรายการซ้ำ ${formatAmount(slip.amount)} ของ ${slip.memberFullName ?? slip.memberNumber ?? "สมาชิก"} แล้ว`
+      );
+      await fetchDay(from, to);
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const removeUpload = async (upload: StatementUpload) => {
     setSaving(true);
     setError(null);
@@ -1167,6 +1194,21 @@ export default function DailyReconcilePanel() {
       {actionNotice && (
         <p className="px-4 py-2 text-sm text-green-700 bg-green-50">{actionNotice}</p>
       )}
+      {pendingDuplicate && (
+        <ConfirmDialog
+          open
+          title="ลบรายการที่น่าจะบันทึกซ้ำ?"
+          description={
+            `ลบรายการ ${formatAmount(pendingDuplicate.amount)} ` +
+            `${pendingDuplicate.category ?? ""} ของ ${pendingDuplicate.memberFullName ?? pendingDuplicate.memberNumber ?? "สมาชิก"} ` +
+            "ออกจากแท็บธุรกรรม — ลบเฉพาะเมื่อแน่ใจว่าสมาชิกโอนครั้งเดียว " +
+            "ถ้าสมาชิกโอนจริงสองครั้ง เงินก้อนที่สองอาจอยู่ในสเตทเมนต์ที่ยังไม่ได้อัปโหลด"
+          }
+          confirmLabel="ลบรายการนี้"
+          onConfirm={() => deleteDuplicate(pendingDuplicate)}
+          onCancel={() => setPendingDuplicate(null)}
+        />
+      )}
 
       {/* What the daily page cannot do. Kept apart from the green notice
           because it is not a failure — the thing asked for was done, and this
@@ -1632,7 +1674,7 @@ export default function DailyReconcilePanel() {
             open={isOpen("slipsWithoutMoney", unmatchedSlips.length)}
             onToggle={() => toggle("slipsWithoutMoney", unmatchedSlips.length)}
           >
-            <SlipTable slips={unmatchedSlips} />
+            <SlipTable slips={unmatchedSlips} onDelete={setPendingDuplicate} saving={saving} />
           </Section>
 
           {/* Split because these two are not the same job. On a busy day a
@@ -2100,7 +2142,17 @@ const Section = ({
   </div>
 );
 
-const SlipTable = ({ slips }: { slips: DailySlipRow[] }) => (
+type UnmatchedSlipRow = DailyReconcileResult["slipsWithoutMoney"][number];
+
+const SlipTable = ({
+  slips,
+  onDelete,
+  saving = false,
+}: {
+  slips: UnmatchedSlipRow[];
+  onDelete?: (slip: UnmatchedSlipRow) => void;
+  saving?: boolean;
+}) => (
   <table className="w-full text-sm">
     <thead className="text-slate-500 text-left text-xs uppercase tracking-wide">
       <tr>
@@ -2122,6 +2174,34 @@ const SlipTable = ({ slips }: { slips: DailySlipRow[] }) => (
             {slip.memberFullName ?? "—"}
             {slip.memberNumber && (
               <span className="num text-xs text-slate-400"> · {slip.memberNumber}</span>
+            )}
+            {slip.duplicateOf && (
+              <span className="flex flex-wrap items-center gap-2 mt-0.5">
+                <span
+                  className="inline-block px-2 py-0.5 rounded-full text-xs font-medium border bg-amber-50 text-amber-800 border-amber-200"
+                  title={
+                    slip.duplicateOf.matched
+                      ? "สมาชิกคนเดียวกันมีรายการยอดเดียวกัน วันเดียวกัน แจ้งว่าเป็นอย่างเดียวกัน ที่จับคู่กับเงินเข้าแล้ว — รายการนี้น่าจะบันทึกซ้ำ ถ้าสมาชิกโอนครั้งเดียว ลบได้"
+                      : "สมาชิกคนเดียวกันมีอีกรายการยอดเดียวกัน วันเดียวกัน แจ้งว่าเป็นอย่างเดียวกัน ที่ยังไม่เจอเงินเข้าเหมือนกัน — น่าจะเป็นรายการเดียวกันบันทึกสองครั้ง"
+                  }
+                >
+                  ⚠️ อาจบันทึกซ้ำ
+                  {slip.duplicateOf.matched &&
+                    (slip.duplicateOf.postedAt
+                      ? ` กับเงินเข้า ${formatStatementTime(slip.duplicateOf.postedAt)}`
+                      : " กับรายการที่จับคู่แล้ว")}
+                </span>
+                {onDelete && (
+                  <button
+                    type="button"
+                    onClick={() => onDelete(slip)}
+                    disabled={saving}
+                    className="text-xs text-red-600 hover:underline disabled:opacity-40"
+                  >
+                    ลบรายการนี้
+                  </button>
+                )}
+              </span>
             )}
           </td>
           <td className="px-2 py-1.5 text-slate-500">{slip.category ?? "—"}</td>
