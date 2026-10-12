@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { likelyDuplicates } from "@/lib/slipDuplicates";
 import { prisma } from "@/lib/prisma";
 import type { DepositLine, SlipRecord } from "@/lib/dailyReconcile";
 import { loadReconciliation } from "@/lib/dailyReconcileStore";
@@ -308,6 +309,11 @@ export async function GET(request: NextRequest) {
   });
 
   const unclaimedSlips = result.slipsWithoutMoney.filter((slip) => inRange(slip.date));
+  // The ones that look like a payment already filed once (lib/slipDuplicates.ts).
+  const duplicateHints = likelyDuplicates(
+    unclaimedSlips,
+    result.matched.map((pair) => ({ slip: pair.slip, postedAt: pair.deposit.postedAt }))
+  );
 
   // A unit's line nothing names yet — one of a unit's one-per-member
   // transfers, the first month it is seen — offered to staff as the one
@@ -405,7 +411,15 @@ export async function GET(request: NextRequest) {
       dayApart: pair.dayApart,
       minutesApart: pair.minutesApart,
     })),
-    slipsWithoutMoney: unclaimedSlips.map(describeSlip),
+    slipsWithoutMoney: unclaimedSlips.map((slip) => {
+      const hint = duplicateHints.get(slip.id);
+      return {
+        ...describeSlip(slip),
+        duplicateOf: hint
+          ? { slipId: hint.ofSlipId, matched: hint.matched, postedAt: hint.postedAt?.toISOString() ?? null }
+          : null,
+      };
+    }),
     depositsWithoutSlip: result.depositsWithoutSlip.map((d) => ({
       ...describeDeposit(d),
       suggestion: suggestionOf.get(d.id) ?? null,

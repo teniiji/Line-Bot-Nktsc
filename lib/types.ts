@@ -507,7 +507,11 @@ export interface DailyReconcileResult {
     // known. null for every slip logged before the time was read.
     minutesApart: number | null;
   }[];
-  slipsWithoutMoney: DailySlipRow[];
+  // duplicateOf: the slip this one most likely repeats — same member, amount,
+  // day and purpose (lib/slipDuplicates.ts). A hint for staff, not a verdict.
+  slipsWithoutMoney: (DailySlipRow & {
+    duplicateOf?: { slipId: string; matched: boolean; postedAt: string | null } | null;
+  })[];
   depositsWithoutSlip: DailyDepositRow[];
   // Lines divided among several members, set apart from the pairing.
   splitDeposits: DailySplitDepositRow[];
