@@ -64,3 +64,31 @@ export const STATUS_LABELS: Record<StatementLineStatus, string> = {
   unknownPayer: "ยังไม่รู้ว่าใครโอน",
   notMemberMoney: "ไม่ใช่เงินสมาชิก",
 };
+
+// A line whose payer is known and which the month's หักไม่ได้ round has
+// already counted for them (lib/deductionMatch.ts: "settled" or "counted").
+// Nothing is left to do with it: 28694's ฿7,000 read "รู้เจ้าของ ไม่มีสลิป"
+// beside a บันทึก button, though เทียบ Statement had it ✅ ชำระครบ, and
+// staff asked whether they still had to record it. They do not — recording
+// only adds it to the ธุรกรรม tab, which the findings list above still offers.
+export function countedInRound(row: {
+  status: StatementLineStatus;
+  deduction: { match: string } | null;
+}): boolean {
+  return (
+    row.status === "knownPayer" &&
+    row.deduction !== null &&
+    (row.deduction.match === "settled" || row.deduction.match === "counted")
+  );
+}
+
+export const COUNTED_IN_ROUND_LABEL = "นับในรอบแล้ว";
+
+// The status as a person reads it: a counted line says so instead of
+// "รู้เจ้าของ ไม่มีสลิป", which read as still waiting on somebody.
+export function statusLabelOf(row: {
+  status: StatementLineStatus;
+  deduction: { match: string } | null;
+}): string {
+  return countedInRound(row) ? COUNTED_IN_ROUND_LABEL : STATUS_LABELS[row.status];
+}
