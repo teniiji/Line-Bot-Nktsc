@@ -11,7 +11,7 @@ import {
 import { STAFF_CATEGORIES, categoryNeedsDetail } from "@/lib/categories";
 import { accountCaveat, canBindAccount } from "@/lib/depositRecord";
 import { CHANNEL_LABELS, STAFF_CHANNEL } from "@/lib/statementLines";
-import { STATUS_LABELS, canRecordFromLine } from "@/lib/statementDayView";
+import { canRecordFromLine, countedInRound, statusLabelOf } from "@/lib/statementDayView";
 import { downloadStatementLinesCsv } from "@/lib/csv";
 import { STATEMENT_ACCOUNTS } from "@/lib/statementReconcile";
 import { branchesIn, missingBranches, summariseByAccount } from "@/lib/dailyAccountSummary";
@@ -1779,7 +1779,20 @@ export default function DailyReconcilePanel() {
 // The day in the bank's order, with the conclusion the tab reached about each
 // line. See lib/statementDayView.ts — the sections above are sorted by
 // conclusion, which is what makes a twenty-line day look like a six-line one.
-const StatusTag = ({ status }: { status: DailyStatementRow["status"] }) => {
+const StatusTag = ({ row }: { row: DailyStatementRow }) => {
+  // Counted by the month's round already: nothing left to do with it, said
+  // as plainly as "ตรงกับสลิป" is.
+  if (countedInRound(row) && row.deduction) {
+    return (
+      <span
+        className="inline-block px-2 py-0.5 rounded-full text-xs font-medium border bg-green-50 text-green-700 border-green-200"
+        title={`รอบ ${row.deduction.label} นับเงินก้อนนี้กับสมาชิกแล้ว (จับคู่จากเลขบัญชีและยอดใน Statement) — ไม่ต้องบันทึกเพิ่ม · ถ้าอยากให้ขึ้นในแท็บธุรกรรมด้วย บันทึกได้ที่กลุ่ม "เงินเข้าที่รู้ว่าใครโอน แต่ไม่ได้ส่งสลิป"`}
+      >
+        ✅ {statusLabelOf(row)}
+      </span>
+    );
+  }
+  const status = row.status;
   const tone =
     status === "matched"
       ? "text-green-700"
@@ -1788,7 +1801,7 @@ const StatusTag = ({ status }: { status: DailyStatementRow["status"] }) => {
         : status === "knownPayer"
           ? "text-sky-700"
           : "text-slate-400";
-  return <span className={`text-xs ${tone}`}>{STATUS_LABELS[status]}</span>;
+  return <span className={`text-xs ${tone}`}>{statusLabelOf(row)}</span>;
 };
 
 // Who a statement line belongs to: the name on top, and beneath it the unit
@@ -1832,6 +1845,7 @@ const strongDeductionCategory = (deduction: DeductionHint | null): string | null
 // single row's บันทึก button already clears when it prefills the form.
 const bulkEligible = (row: DailyStatementRow): boolean =>
   canRecordFromLine(row.status) &&
+  !countedInRound(row) &&
   !row.category &&
   row.memberNumber !== null &&
   strongDeductionCategory(row.deduction) !== null;
@@ -2047,7 +2061,7 @@ const StatementTable = ({
                 this, a line whose payer the directory already recognised
                 could be read here and recorded nowhere: the unclaimed list
                 carries the buttons and this money never reaches that list. */}
-            {actions && canRecordFromLine(row.status) && !row.category && (
+            {actions && canRecordFromLine(row.status) && !row.category && !countedInRound(row) && (
               <button
                 onClick={() =>
                   actions.open(
@@ -2064,7 +2078,7 @@ const StatementTable = ({
             )}
           </td>
           <td className="px-2 py-1.5 whitespace-nowrap">
-            <StatusTag status={row.status} />
+            <StatusTag row={row} />
           </td>
         </tr>
 

@@ -1,6 +1,6 @@
 import { controlUnitName } from "./controlUnits";
 import { DailyStatementRow, Expense, MemberBankAccountEntry, MemberRosterEntry, StatementMemberRow } from "./types";
-import { STATUS_LABELS } from "./statementDayView";
+import { statusLabelOf } from "./statementDayView";
 // The day the file was exported, in Thailand — a download at one in the
 // morning carried yesterday's date in its name.
 import { cooperativeToday } from "./cooperativeClock";
@@ -244,7 +244,7 @@ export function statementLinesCsvRows(lines: DailyStatementRow[]): string[][] {
     l.hCode ?? "",
     l.hCode ? (controlUnitName(l.hCode) ?? "") : "",
     l.category ?? "",
-    STATUS_LABELS[l.status] ?? l.status,
+    statusLabelOf(l),
   ]);
   return [header, ...rows];
 }
