@@ -2017,8 +2017,10 @@ const StatementTable = ({
                   "inline-block max-w-[220px] truncate align-bottom " +
                   (row.deduction.match === "settled"
                     ? "text-emerald-700"
-                    : row.deduction.match === "counted"
-                      ? "text-sky-700"
+                    : row.deduction.match === "counted" && row.deduction.deductionResult === "collected"
+                      ? "text-amber-700"
+                      : row.deduction.match === "counted"
+                        ? "text-sky-700"
                       : row.deduction.match === "exact"
                         ? "text-amber-700"
                         : "text-slate-500")
@@ -2031,7 +2033,8 @@ const StatementTable = ({
                       ? `รอบ ${row.deduction.label} นับเงินก้อนนี้ไว้กับสมาชิกแล้ว จากเลขบัญชีและยอดใน Statement — ` +
                         (row.deduction.deductionResult === "awaiting"
                           ? "แต่ยังไม่รู้ผลว่าหน่วยงานหักเงินเดือนได้ไหม จึงยังไม่เรียกว่าเก็บไม่ได้"
-                          : "แต่หน่วยงานหักเงินเดือนได้แล้ว จึงไม่ใช่เก็บไม่ได้") +
+                          : "แต่หน่วยงานหักเงินเดือนได้แล้ว สมาชิกไม่ได้ค้างอะไรในรอบนี้ " +
+                            "เงินก้อนนี้จึงน่าจะเป็นเงินอื่น เช่น ซื้อหุ้น ฝากเงิน ชำระเงินกู้ — สอบถามแล้วกดบันทึก") +
                         "\nเป็นข้อสังเกตให้ตรวจสอบ ไม่ใช่การบันทึก"
                       : `ค้างเก็บไม่ได้รอบ ${row.deduction.label}: ${formatAmount(
                           row.deduction.outstanding

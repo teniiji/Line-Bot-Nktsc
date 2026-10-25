@@ -19,6 +19,14 @@ describe("countedInRound", () => {
     expect(countedInRound({ status: "knownPayer", deduction: null })).toBe(false);
   });
 
+  it("leaves a member payroll already deducted from to be asked about (22971)", () => {
+    const row = { status: "knownPayer" as const, deduction: { match: "counted", deductionResult: "collected" } };
+    expect(countedInRound(row)).toBe(false);
+    expect(statusLabelOf(row)).toBe("รู้เจ้าของ ไม่มีสลิป");
+    // Still waiting on the result: the round's match is what will pay it.
+    expect(countedInRound({ status: "knownPayer", deduction: { match: "counted", deductionResult: "awaiting" } })).toBe(true);
+  });
+
   it("only relabels a known payer's line", () => {
     const counted = { match: "settled" };
     expect(statusLabelOf({ status: "matched", deduction: counted })).toBe("ตรงกับสลิป");
