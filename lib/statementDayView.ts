@@ -71,15 +71,18 @@ export const STATUS_LABELS: Record<StatementLineStatus, string> = {
 // beside a บันทึก button, though เทียบ Statement had it ✅ ชำระครบ, and
 // staff asked whether they still had to record it. They do not — recording
 // only adds it to the ธุรกรรม tab, which the findings list above still offers.
+//
+// Not a member payroll already deducted from ("counted" with deductionResult
+// "collected"): they owed the round nothing, so a transfer from their account
+// paid something else — ซื้อหุ้น, ฝาก, เงินกู้ — and is exactly the kind of
+// line somebody should ask about and record. 22971's ฿70,000 was marked done.
 export function countedInRound(row: {
   status: StatementLineStatus;
-  deduction: { match: string } | null;
+  deduction: { match: string; deductionResult?: string } | null;
 }): boolean {
-  return (
-    row.status === "knownPayer" &&
-    row.deduction !== null &&
-    (row.deduction.match === "settled" || row.deduction.match === "counted")
-  );
+  if (row.status !== "knownPayer" || row.deduction === null) return false;
+  if (row.deduction.match === "settled") return true;
+  return row.deduction.match === "counted" && row.deduction.deductionResult !== "collected";
 }
 
 export const COUNTED_IN_ROUND_LABEL = "นับในรอบแล้ว";
@@ -88,7 +91,7 @@ export const COUNTED_IN_ROUND_LABEL = "นับในรอบแล้ว";
 // "รู้เจ้าของ ไม่มีสลิป", which read as still waiting on somebody.
 export function statusLabelOf(row: {
   status: StatementLineStatus;
-  deduction: { match: string } | null;
+  deduction: { match: string; deductionResult?: string } | null;
 }): string {
   return countedInRound(row) ? COUNTED_IN_ROUND_LABEL : STATUS_LABELS[row.status];
 }

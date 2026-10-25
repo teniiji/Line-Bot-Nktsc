@@ -123,7 +123,10 @@ describe("describeDeductionHint", () => {
     const collected = describeDeductionHint(
       deductionSettled({ period: "0969", label: "ก.ย. 2569" }, "collected")
     );
-    expect(collected).toContain("หักเงินเดือนได้");
+    expect(collected).toContain("หักเงินเดือน");
+    expect(collected).toContain("ได้แล้ว");
+    expect(collected).toContain("เงินอื่น");
+    expect(collected).not.toContain("นับในรอบ");
     expect(collected).not.toContain("เก็บไม่ได้");
   });
 

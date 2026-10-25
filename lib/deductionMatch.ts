@@ -102,7 +102,11 @@ export function describeDeductionHint(hint: DeductionHint): string {
     // as though that had been decided. Kept short — this sits in a table
     // column, and the full reason is still in the row's title tooltip.
     if (hint.deductionResult === "awaiting") return `นับในรอบ ${month} แล้ว (รอผลการหัก)`;
-    if (hint.deductionResult === "collected") return `นับในรอบ ${month} แล้ว (หักเงินเดือนได้)`;
+    // Payroll already took this member's deduction, so they owed the round
+    // nothing: the round lists every transfer from their account, but this
+    // one paid something else. 22971's ฿70,000 read "นับในรอบ … แล้ว" with no
+    // บันทึก beside it, as though there were nothing to ask about.
+    if (hint.deductionResult === "collected") return `หักเงินเดือน ${month} ได้แล้ว · ยอดนี้น่าจะเป็นเงินอื่น`;
     return `นับในรอบ ${month} แล้ว`;
   }
   if (hint.match === "short") return `เก็บไม่ได้ ${month} ยังไม่ครบ`;
