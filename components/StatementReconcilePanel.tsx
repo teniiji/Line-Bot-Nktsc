@@ -27,6 +27,7 @@ import SheetMappingDialog, { type SheetPreview } from "@/components/SheetMapping
 import type { SheetMapping } from "@/lib/sheetColumns";
 import MultiSelect from "@/components/MultiSelect";
 import PanelHelp from "@/components/PanelHelp";
+import RoundUploadsOverview from "@/components/RoundUploadsOverview";
 import { controlUnitLabel } from "@/lib/controlUnits";
 import { describeDeductionPeriod } from "@/lib/deductionPeriod";
 import { downloadStatementMembersCsv } from "@/lib/csv";
@@ -236,6 +237,8 @@ export default function StatementReconcilePanel() {
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // The "which files / which units are in" panel (components/RoundUploadsOverview.tsx).
+  const [showUploads, setShowUploads] = useState(false);
   const [pendingDelete, setPendingDelete] = useState<StatementRoundSummary | null>(null);
   // A member-list upload the server refused to do quietly because it would
   // take most of the round away. The file is held so confirming does not make
@@ -1641,6 +1644,14 @@ export default function StatementReconcilePanel() {
                 >
                   2. อัปโหลดผลการหัก
                 </button>
+                <button
+                  onClick={() => setShowUploads((v) => !v)}
+                  aria-expanded={showUploads}
+                  title="ดูว่าอัปโหลดไฟล์ไหนเข้ารอบนี้แล้วบ้าง และหน่วยคุมไหนส่งผลการหักมาแล้ว"
+                  className="px-3 py-1.5 border border-slate-300 rounded text-slate-700"
+                >
+                  {showUploads ? "ซ่อนไฟล์/หน่วยที่ส่งผล" : "📂 ไฟล์และหน่วยที่ส่งผลแล้ว"}
+                </button>
                 <span className="text-slate-300">|</span>
                 <select
                   value={account}
@@ -1688,6 +1699,14 @@ export default function StatementReconcilePanel() {
                   ลบรอบนี้
                 </button>
               </div>
+              )}
+
+              {showUploads && !selected.closedAt && (
+                <RoundUploadsOverview
+                  roundId={selected.id}
+                  // Reloaded when an upload changes what the round knows.
+                  refreshKey={`${selected.populationMembers}|${selected.awaitingMembers}|${selected.awaitingUnits}`}
+                />
               )}
 
               {selected.awaitingMembers > 0 && (
