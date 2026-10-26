@@ -76,14 +76,33 @@ export const STATUS_LABELS: Record<StatementLineStatus, string> = {
 // "collected"): they owed the round nothing, so a transfer from their account
 // paid something else — ซื้อหุ้น, ฝาก, เงินกู้ — and is exactly the kind of
 // line somebody should ask about and record. 22971's ฿70,000 was marked done.
+//
+// Nor a member whose unit has not sent its ผลการหัก back ("counted" with
+// deductionResult "awaiting"): the round has the transfer against them, but
+// until the result is in nobody knows whether it pays a failed deduction or
+// something else. 30107's ฿490 read ✅ นับในรอบแล้ว before the results were
+// even uploaded. It reads "รอผลการหัก" instead, and keeps its บันทึก button.
 export function countedInRound(row: {
   status: StatementLineStatus;
   deduction: { match: string; deductionResult?: string } | null;
 }): boolean {
-  if (row.status !== "knownPayer" || row.deduction === null) return false;
-  if (row.deduction.match === "settled") return true;
-  return row.deduction.match === "counted" && row.deduction.deductionResult !== "collected";
+  return row.status === "knownPayer" && row.deduction?.match === "settled";
 }
+
+// A known payer's line the round matched while the member's result is still
+// out — see countedInRound.
+export function awaitingResult(row: {
+  status: StatementLineStatus;
+  deduction: { match: string; deductionResult?: string } | null;
+}): boolean {
+  return (
+    row.status === "knownPayer" &&
+    row.deduction?.match === "counted" &&
+    row.deduction.deductionResult === "awaiting"
+  );
+}
+
+export const AWAITING_RESULT_LABEL = "รอผลการหัก";
 
 export const COUNTED_IN_ROUND_LABEL = "นับในรอบแล้ว";
 
@@ -93,5 +112,7 @@ export function statusLabelOf(row: {
   status: StatementLineStatus;
   deduction: { match: string; deductionResult?: string } | null;
 }): string {
-  return countedInRound(row) ? COUNTED_IN_ROUND_LABEL : STATUS_LABELS[row.status];
+  if (countedInRound(row)) return COUNTED_IN_ROUND_LABEL;
+  if (awaitingResult(row)) return AWAITING_RESULT_LABEL;
+  return STATUS_LABELS[row.status];
 }

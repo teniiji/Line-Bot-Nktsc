@@ -11,7 +11,7 @@ import {
 import { STAFF_CATEGORIES, categoryNeedsDetail } from "@/lib/categories";
 import { accountCaveat, canBindAccount } from "@/lib/depositRecord";
 import { CHANNEL_LABELS, STAFF_CHANNEL } from "@/lib/statementLines";
-import { canRecordFromLine, countedInRound, statusLabelOf } from "@/lib/statementDayView";
+import { awaitingResult, canRecordFromLine, countedInRound, statusLabelOf } from "@/lib/statementDayView";
 import { downloadStatementLinesCsv } from "@/lib/csv";
 import { STATEMENT_ACCOUNTS } from "@/lib/statementReconcile";
 import { branchesIn, missingBranches, summariseByAccount } from "@/lib/dailyAccountSummary";
@@ -1789,6 +1789,17 @@ const StatusTag = ({ row }: { row: DailyStatementRow }) => {
         title={`รอบ ${row.deduction.label} นับเงินก้อนนี้กับสมาชิกแล้ว (จับคู่จากเลขบัญชีและยอดใน Statement) — ไม่ต้องบันทึกเพิ่ม · ถ้าอยากให้ขึ้นในแท็บธุรกรรมด้วย บันทึกได้ที่กลุ่ม "เงินเข้าที่รู้ว่าใครโอน แต่ไม่ได้ส่งสลิป"`}
       >
         ✅ {statusLabelOf(row)}
+      </span>
+    );
+  }
+  if (awaitingResult(row) && row.deduction) {
+    return (
+      <span
+        className="inline-block px-2 py-0.5 rounded-full text-xs font-medium border bg-amber-50 text-amber-800 border-amber-200"
+        title={`รอบ ${row.deduction.label} จับคู่เงินก้อนนี้ไว้กับสมาชิกแล้ว แต่หน่วยงานยังไม่ส่งผลการหักกลับมา — ` +
+          "ถ้าผลออกมาว่าหักไม่ได้ เงินก้อนนี้จะนับเป็นการชำระ ถ้าหักได้ เงินก้อนนี้น่าจะเป็นเงินอื่น ให้สอบถามแล้วบันทึก"}
+      >
+        ⏳ {statusLabelOf(row)}
       </span>
     );
   }

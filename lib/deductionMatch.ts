@@ -101,7 +101,9 @@ export function describeDeductionHint(hint: DeductionHint): string {
     // matched by account and amount, and the label read "เก็บไม่ได้ … ชำระแล้ว"
     // as though that had been decided. Kept short — this sits in a table
     // column, and the full reason is still in the row's title tooltip.
-    if (hint.deductionResult === "awaiting") return `นับในรอบ ${month} แล้ว (รอผลการหัก)`;
+    // Not "นับในรอบ … แล้ว": with the result still out the line is not done
+    // with (30107, see awaitingResult in lib/statementDayView.ts).
+    if (hint.deductionResult === "awaiting") return `รอผลการหัก ${month} · ยังไม่รู้ว่าหักได้ไหม`;
     // Payroll already took this member's deduction, so they owed the round
     // nothing: the round lists every transfer from their account, but this
     // one paid something else. 22971's ฿70,000 read "นับในรอบ … แล้ว" with no
