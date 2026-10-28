@@ -394,6 +394,9 @@ export interface DailyDepositRow {
   payerName?: string | null;
   // The unit list row it came from, to rename it in place.
   payerId?: string | null;
+  // The units sharing this line's wording, when several do (lib/linePayer.ts):
+  // the line asks which one it is from rather than guessing.
+  payerChoices?: { id: string; name: string }[];
   // For a unit's line nothing names yet: the one member of the newest round
   // owing exactly this amount — a guess for staff to check, not a match.
   suggestion?: { memberNumber: string; name: string | null; owed: number; roundLabel: string } | null;
@@ -449,6 +452,9 @@ export interface DailyOtherLineRow {
   payerName?: string | null;
   // The unit list row it came from, to rename it in place.
   payerId?: string | null;
+  // The units sharing this line's wording, when several do (lib/linePayer.ts):
+  // the line asks which one it is from rather than guessing.
+  payerChoices?: { id: string; name: string }[];
 }
 
 // One line of the bank's statement, as the bank wrote it, plus the

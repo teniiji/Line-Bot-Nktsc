@@ -173,6 +173,10 @@ export default function UnitPayersPanel() {
 
   // Units the out-of-province list makes plain — one office ahead of any
   // other by shared members (planAutoLinks in lib/unitPayerOffices.ts).
+  // How many units each statement wording names — more than one where the
+  // bank cut the text short (lib/linePayer.ts).
+  const sharedKeyCount = new Map<string, number>();
+  for (const u of units) sharedKeyCount.set(u.key, (sharedKeyCount.get(u.key) ?? 0) + 1);
   const autoLinkable = units.filter(
     (u) =>
       u.offices.length === 0 &&
@@ -320,6 +324,14 @@ export default function UnitPayersPanel() {
                             <>
                               <div className="font-medium">{unit.name}</div>
                               <div className="font-mono text-xs text-slate-400">{unit.key}</div>
+                              {(sharedKeyCount.get(unit.key) ?? 0) > 1 && (
+                                <div
+                                  className="text-xs text-amber-800"
+                                  title="ธนาคารตัดข้อความจนหลายหน่วยงานใช้ข้อความเดียวกัน — ที่หน้าเงินเข้าประจำวัน ยอดที่มีข้อความนี้จะให้เลือกทุกครั้งว่าเป็นของหน่วยงานไหน"
+                                >
+                                  ⚠️ ข้อความเดียวกับอีก {(sharedKeyCount.get(unit.key) ?? 1) - 1} หน่วยงาน — เลือกหน่วยงานที่หน้าเงินเข้า
+                                </div>
+                              )}
                               {unit.offices.length > 0 && (
                                 <div className="mt-1 flex flex-wrap gap-1">
                                   {unit.offices.map((o) => (

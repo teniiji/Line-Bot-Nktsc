@@ -3,6 +3,7 @@ import { memberNumberKey } from "@/lib/memberNumber";
 import { periodOfDate } from "@/lib/deductionPeriod";
 import { isUnitPayerLine, matchUnitLines, payerKey, suggestedPayerName } from "@/lib/unitPayer";
 import { OTHER_CHANNEL, STAFF_CHANNEL } from "@/lib/statementLines";
+import { linePayers, unitToLearnFrom } from "@/lib/linePayerStore";
 
 // A unit's payroll office (BSD02 "…/สำนักงานเลขาธิการสภาการศึกษา") names no
 // paying account, so the account directory can never say whose its money
@@ -13,19 +14,16 @@ import { OTHER_CHANNEL, STAFF_CHANNEL } from "@/lib/statementLines";
 // divide when it pays for several.
 
 export async function rememberUnitMember(
-  description: string,
+  line: { id: string; description: string },
   memberNumber: string,
   amount: number
 ): Promise<void> {
-  if (!isUnitPayerLine(description)) return;
-  const key = payerKey(description);
-  if (!key) return;
-  const payer = await prisma.unitPayer.upsert({
-    where: { key },
-    // A name staff already gave the unit is kept.
-    create: { key, name: suggestedPayerName(description) || "หน่วยงาน" },
-    update: {},
-  });
+  if (!isUnitPayerLine(line.description)) return;
+  // The unit the line is from — a name staff already gave it is kept — or a
+  // new one for wording nobody has named. Nothing when several units share
+  // the wording and the line has not said which (lib/linePayer.ts).
+  const payer = await unitToLearnFrom(line, suggestedPayerName(line.description) || "หน่วยงาน");
+  if (!payer) return;
   await prisma.unitPayerMember.upsert({
     where: { payerId_memberNumber: { payerId: payer.id, memberNumber } },
     create: { payerId: payer.id, memberNumber, lastAmount: amount },
@@ -51,18 +49,20 @@ export async function loadUnitOwners(
 ): Promise<{ owners: Map<string, string>; picks: Map<string, UnitPick[]> }> {
   const owners = new Map<string, string>();
   const picks = new Map<string, UnitPick[]>();
-  const byKey = new Map<string, { id: string; amount: number; day: string; period: string }[]>();
-  for (const line of lines) {
-    if (line.senderAccount || !isUnitPayerLine(line.description)) continue;
-    const key = payerKey(line.description);
-    if (!key) continue;
+  // Grouped by the unit each line is from — not by its wording, which
+  // several units can share (lib/linePayer.ts). A shared line nobody has
+  // placed yet belongs to no unit and gets neither an owner nor picks.
+  const unitLinesOf = lines.filter((line) => !line.senderAccount && isUnitPayerLine(line.description));
+  const resolved = await linePayers(unitLinesOf);
+  const byPayer = new Map<string, { id: string; amount: number; day: string; period: string }[]>();
+  for (const line of unitLinesOf) {
+    const payerId = resolved.get(line.id)?.payer?.id;
+    if (!payerId) continue;
     const day = line.postedAt ? line.postedAt.toISOString().slice(0, 10) : "";
     const period = line.postedAt ? periodOfDate(line.postedAt) : "";
-    byKey.set(key, [...(byKey.get(key) ?? []), { id: line.id, amount: line.amount, day, period }]);
+    byPayer.set(payerId, [...(byPayer.get(payerId) ?? []), { id: line.id, amount: line.amount, day, period }]);
   }
-  const keys = [...byKey.keys()];
-  if (keys.length === 0) return { owners, picks };
-  const payers = await prisma.unitPayer.findMany({ where: { key: { in: keys } }, select: { id: true, key: true } });
+  const payers = [...byPayer.keys()].map((id) => ({ id }));
   if (payers.length === 0) return { owners, picks };
   const members = await prisma.unitPayerMember.findMany({
     where: { payerId: { in: payers.map((p) => p.id) } },
@@ -70,7 +70,7 @@ export async function loadUnitOwners(
   });
 
   // What each month's round says the unit should send for each of them.
-  const periods = [...new Set([...byKey.values()].flat().map((l) => l.period).filter(Boolean))];
+  const periods = [...new Set([...byPayer.values()].flat().map((l) => l.period).filter(Boolean))];
   const numbers = [...new Set(members.flatMap((m) => [m.memberNumber, memberNumberKey(m.memberNumber) ?? m.memberNumber]))];
   const rounds = periods.length
     ? await prisma.statementRound.findMany({ where: { period: { in: periods } }, select: { id: true, period: true } })
@@ -111,7 +111,7 @@ export async function loadUnitOwners(
           .map((m) => [memberNumberKey(m.memberNumber) ?? m.memberNumber, m])
       ).values(),
     ].map((m) => ({ ...m, current: currentOf.get(memberNumberKey(m.memberNumber) ?? m.memberNumber) }));
-    const unitLines = byKey.get(payer.key) ?? [];
+    const unitLines = byPayer.get(payer.id) ?? [];
     for (const [lineId, member] of matchUnitLines(unitLines, own)) owners.set(lineId, member);
     for (const line of unitLines) {
       if (owners.has(line.id)) continue;

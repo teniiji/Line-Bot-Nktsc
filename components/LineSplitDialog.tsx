@@ -21,6 +21,8 @@ interface MemberInfo {
 interface Context {
   line: { id: string; amount: number; postedAt: string | null; description: string; account: string };
   payer: { id: string; name: string } | null;
+  // Units sharing this line's wording, when several do (lib/linePayer.ts).
+  choices?: { id: string; name: string }[];
   suggestedName: string;
   round: { id: string; label: string } | null;
   remembered: MemberInfo[];
@@ -190,9 +192,24 @@ export default function LineSplitDialog({
               <input
                 value={payerName}
                 onChange={(e) => setPayerName(e.target.value)}
+                list={context.choices?.length ? "split-payer-choices" : undefined}
                 className="mt-1 w-full border border-slate-300 rounded px-3 py-1.5"
                 placeholder="เช่น สพป.กาฬสินธุ์ เขต 2"
               />
+              {(context.choices?.length ?? 0) > 0 && (
+                <datalist id="split-payer-choices">
+                  {context.choices!.map((c) => (
+                    <option key={c.id} value={c.name} />
+                  ))}
+                </datalist>
+              )}
+              <span className="block text-xs text-slate-500 mt-1">
+                {(context.choices?.length ?? 0) > 1
+                  ? `ข้อความในสเตทเมนต์นี้ใช้ร่วมกับ ${context.choices!.length} หน่วยงาน (${context.choices!
+                      .map((c) => c.name)
+                      .join(", ")}) — เลือกชื่อให้ตรง ถ้าพิมพ์ชื่อใหม่จะเป็นหน่วยงานใหม่`
+                  : "ถ้าพิมพ์ชื่ออื่น จะเพิ่มเป็นหน่วยงานใหม่ (ใช้เมื่อหน่วยงานคนละแห่งแต่ข้อความในสเตทเมนต์เหมือนกัน) — แก้ชื่อหน่วยงานเดิมได้ที่ปุ่ม \"แก้ชื่อ\""}
+              </span>
             </label>
 
             <div className="overflow-auto border border-slate-200 rounded min-h-0 flex-1">
