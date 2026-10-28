@@ -782,10 +782,29 @@ model CarriedDebtPayment {
 // (payerKey in lib/unitPayer.ts).
 model UnitPayer {
   id        String   @id @default(cuid())
-  key       String   @unique
+  // Not unique: the bank cuts a description short, and every สพม. office
+  // reads "THE SECONDARY /สนง.เขตพื้นที่การศึกษามัธ" — สพม.หนองคาย and
+  // สพม.กาฬสินธุ์ are two units behind the one key. A line whose key several
+  // units share names its unit through StatementLinePayer (lib/linePayer.ts).
+  key       String
   name      String
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  @@index([key])
+}
+
+// Which unit a bank line is from, as staff chose it — needed where the line's
+// wording is shared by several units (UnitPayer.key above), and kept for any
+// line it was chosen on. One per line.
+model StatementLinePayer {
+  id        String   @id @default(cuid())
+  lineId    String   @unique
+  payerId   String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([payerId])
 }
 
 // The members a UnitPayer paid for last time, and how much each — the

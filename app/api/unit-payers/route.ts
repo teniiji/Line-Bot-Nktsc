@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { payerNamed } from "@/lib/linePayer";
 import { prisma } from "@/lib/prisma";
 import { memberNumberKey } from "@/lib/memberNumber";
 import { isUnitPayerLine, payerKey, suggestedPayerName, unitMatchMode } from "@/lib/unitPayer";
@@ -99,11 +100,15 @@ export async function POST(request: NextRequest) {
     );
   }
   const key = payerKey(description)!;
-  const existing = await prisma.unitPayer.findUnique({ where: { key } });
+  const name = String(body.name ?? "").trim() || suggestedPayerName(description) || "หน่วยงาน";
+  // The same wording may be another unit's too (the bank cuts it short —
+  // lib/linePayer.ts), so only the same wording under the same name is the
+  // same unit.
+  const sharing = await prisma.unitPayer.findMany({ where: { key }, select: { id: true, name: true } });
+  const existing = payerNamed(sharing, name) ?? (body.name ? null : sharing[0] ?? null);
   if (existing) {
     return NextResponse.json({ error: `มีหน่วยงานนี้อยู่แล้ว (${existing.name})`, id: existing.id }, { status: 409 });
   }
-  const name = String(body.name ?? "").trim() || suggestedPayerName(description) || "หน่วยงาน";
   const payer = await prisma.unitPayer.create({ data: { key, name } });
   // Its lines already on record move into the member-money lists now; later
   // ones as their statements arrive.

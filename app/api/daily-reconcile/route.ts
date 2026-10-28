@@ -1,9 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
+import { linePayers } from "@/lib/linePayerStore";
 import { likelyDuplicates } from "@/lib/slipDuplicates";
 import { prisma } from "@/lib/prisma";
 import type { DepositLine, SlipRecord } from "@/lib/dailyReconcile";
 import { loadReconciliation } from "@/lib/dailyReconcileStore";
-import { isUnitPayerLine, payerKey, soleOwing } from "@/lib/unitPayer";
+import { isUnitPayerLine, soleOwing } from "@/lib/unitPayer";
 import { OTHER_CHANNEL } from "@/lib/statementLines";
 import { statementLineStatus } from "@/lib/statementDayView";
 import { memberNumberKey } from "@/lib/memberNumber";
@@ -67,24 +68,20 @@ export async function GET(request: NextRequest) {
     line.senderAccount ? (accountOwners.get(line.senderAccount) ?? null) : (unitOwners.get(line.id) ?? null);
 
   // Payers staff have named (lib/unitPayer.ts) — a unit paying for several
-  // members is shown by its name rather than as "ไม่รู้ว่าใคร".
-  const payers = await prisma.unitPayer.findMany({ select: { id: true, key: true, name: true } });
-  const payerNameOf = new Map(payers.map((p) => [p.key, p.name]));
+  // members is shown by its name rather than as "ไม่รู้ว่าใคร". Per line, not
+  // per wording: several units can share a wording, and such a line names
+  // its unit only once staff have chosen it (lib/linePayer.ts).
+  const unitOfLine = await linePayers(lines);
+  const payerOf = (line: { id: string }) => unitOfLine.get(line.id)?.payer?.name ?? null;
   // Which unit a line is from, so its name can be corrected from the line
   // itself (PATCH /api/unit-payers/[id]) rather than from ตั้งค่าระบบ.
-  const payerIdOf = new Map(payers.map((p) => [p.key, p.id]));
-  const payerIdOfLine = (description: string) => {
-    const key = payerKey(description);
-    return key ? (payerIdOf.get(key) ?? null) : null;
-  };
-  const payerOf = (description: string) => {
-    const key = payerKey(description);
-    return key ? (payerNameOf.get(key) ?? null) : null;
-  };
+  const payerIdOfLine = (line: { id: string }) => unitOfLine.get(line.id)?.payer?.id ?? null;
+  // The units sharing the line's wording, when several do — the chooser.
+  const payerChoicesOf = (line: { id: string }) => unitOfLine.get(line.id)?.choices ?? [];
   // A divided line whose description files no payer (numbers only) keeps the
   // name staff gave it on the division itself.
   const payerOfLine = (line: { id: string; description: string }) =>
-    payerOf(line.description) ?? splits.get(line.id)?.find((p) => p.payerName)?.payerName ?? null;
+    payerOf(line) ?? splits.get(line.id)?.find((p) => p.payerName)?.payerName ?? null;
   // Slips outside the window itself only count when they pair with money
   // inside it; on their own they belong to their own day's view, not this one.
   const inRange = (date: Date) => date >= start && date < end;
@@ -121,8 +118,9 @@ export async function GET(request: NextRequest) {
     // on an unclaimed payment without looking it up separately.
     memberNumber: ownerOf(deposit),
     // The unit this line is from, when staff have named its payer.
-    payerName: payerOf(deposit.description),
-    payerId: payerIdOfLine(deposit.description),
+    payerName: payerOf(deposit),
+    payerId: payerIdOfLine(deposit),
+    payerChoices: payerChoicesOf(deposit),
   });
 
   // The same day again, in the bank's order rather than by conclusion — see
@@ -448,7 +446,8 @@ export async function GET(request: NextRequest) {
         // (lib/unitPayerStore.ts) — money in only, named between slashes.
         unitLine: line.amount > 0 && isUnitPayerLine(line.description),
         payerName: payerOfLine(line),
-        payerId: payerIdOfLine(line.description),
+        payerId: payerIdOfLine(line),
+        payerChoices: payerChoicesOf(line),
       })),
     totals: {
       ...result.totals,

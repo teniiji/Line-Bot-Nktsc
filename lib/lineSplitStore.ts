@@ -5,6 +5,8 @@ import { isMemberDeposit } from "@/lib/statementLines";
 import { DEDUCTION_CATEGORY } from "@/lib/statementSlipHints";
 import { recomputeRoundPayments } from "@/lib/statementRecompute";
 import { formatAmount } from "@/lib/format";
+import { chooseLinePayer, linePayer } from "@/lib/linePayerStore";
+import { payerNamed, payersByKey } from "@/lib/linePayer";
 import {
   type SplitPart,
   payerKey,
@@ -70,8 +72,9 @@ export async function splitContext(lineId: string) {
   const line = await prisma.statementLine.findUnique({ where: { id: lineId } });
   if (!line) throw new SplitError("ไม่พบรายการเงินเข้านี้", 404);
 
-  const key = payerKey(line.description);
-  const payer = key ? await prisma.unitPayer.findUnique({ where: { key } }) : null;
+  // The unit this line is from — by the wording when one unit has it, by
+  // staff's choice when several share it (lib/linePayer.ts).
+  const { payer, choices } = await linePayer(line);
   const remembered = payer
     ? await prisma.unitPayerMember.findMany({
         where: { payerId: payer.id },
@@ -98,6 +101,9 @@ export async function splitContext(lineId: string) {
       account: line.account,
     },
     payer: payer ? { id: payer.id, name: payer.name } : null,
+    // The units sharing this line's wording, when several do: the dialog
+    // offers their names, and a name none of them has makes a new unit.
+    choices,
     // The name given last time, where the description could not file it.
     suggestedName: existing.find((s) => s.payerName)?.payerName ?? suggestedPayerName(line.description),
     round: round ? { id: round.id, label: round.label } : null,
@@ -173,6 +179,9 @@ export async function applySplit(lineId: string, payerName: string, parts: Split
     throw new SplitError("ไม่พบรายการเงินเข้านี้", 404);
   }
   if (!line.postedAt) throw new SplitError("รายการนี้ไม่มีวันที่ในสเตทเมนต์ จึงแบ่งไม่ได้", 400);
+  // Which unit it is from, read before an earlier division is undone below —
+  // that division is one of the ways the line says.
+  const known = await linePayer(line);
   const problem = splitProblem(line.amount, parts);
   if (problem) throw new SplitError(problem, 400);
 
@@ -184,15 +193,22 @@ export async function applySplit(lineId: string, payerName: string, parts: Split
     if (blocked) throw new SplitError(blocked);
   }
 
-  const key = payerKey(line.description);
-  const name = payerName.trim() || suggestedPayerName(line.description) || "หน่วยงาน";
-  const payer = key
-    ? await prisma.unitPayer.upsert({
-        where: { key },
-        create: { key, name },
-        update: { name },
-      })
-    : null;
+  const typed = payerName.trim();
+  const name = typed || suggestedPayerName(line.description) || "หน่วยงาน";
+  // The unit the name means, among those with this wording; a name none of
+  // them has is a new unit sharing it. Not a rename: typing "สพม.กาฬสินธุ์"
+  // over "สพม.หนองคาย" used to rename the Nong Khai office, because the two
+  // shared one record. Renaming is แก้ชื่อ's job.
+  let payer: { id: string; name: string } | null = null;
+  if (known.key) {
+    const pool = known.choices.length ? known.choices : known.payer ? [known.payer] : [];
+    payer = (typed ? payerNamed(pool, typed) : known.payer) ?? null;
+    if (!payer) {
+      const created = await prisma.unitPayer.create({ data: { key: known.key, name } });
+      payer = { id: created.id, name: created.name };
+    }
+    await chooseLinePayer(line.id, payer.id);
+  }
 
   const round = await openRoundFor(line.postedAt);
   const variants = spellings(parts.map((p) => p.memberNumber));
@@ -377,10 +393,12 @@ export async function splitOriginsFor(
 
   const payers = await prisma.unitPayer.findMany({ select: { id: true, key: true, name: true } });
   const nameById = new Map(payers.map((p) => [p.id, p.name]));
-  const nameByKey = new Map(payers.map((p) => [p.key, p.name]));
+  const byKey = payersByKey(payers);
+  // By wording only where one unit has it — a shared wording names nobody.
   const unitOf = (description: string | null) => {
     const key = payerKey(description);
-    return key ? (nameByKey.get(key) ?? null) : null;
+    const units = key ? (byKey.get(key) ?? []) : [];
+    return units.length === 1 ? units[0].name : null;
   };
 
   // Divided on the daily page: the bank line and the division recorded on it.

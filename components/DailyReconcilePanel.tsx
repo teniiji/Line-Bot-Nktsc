@@ -213,6 +213,140 @@ const UnitName = ({ id, name, className }: { id?: string | null; name: string; c
   );
 };
 
+// Which unit a line is from, where its wording is shared by several units
+// (lib/linePayer.ts) — or where staff need to say it is a unit the list does
+// not have yet ("สพม.กาฬสินธุ์" behind the สพม.หนองคาย wording). A line still
+// unplaced shows the chooser every time; one placed shows its unit with a way
+// to change it.
+const UnitTag = ({
+  lineId,
+  id,
+  name,
+  choices = [],
+  className,
+}: {
+  lineId: string;
+  id?: string | null;
+  name: string | null;
+  choices?: { id: string; name: string }[];
+  className?: string;
+}) => {
+  const refresh = useContext(RefreshDay);
+  const [choosing, setChoosing] = useState(false);
+  const [newName, setNewName] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const shared = choices.length > 1;
+  const choose = async (body: { payerId: string } | { name: string }) => {
+    setSaving(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/statement-lines/${lineId}/payer`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const out = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setError(out.error || "บันทึกไม่สำเร็จ");
+        return;
+      }
+      setChoosing(false);
+      setNewName(null);
+      await refresh();
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (name && !choosing) {
+    return (
+      <span className={className}>
+        <UnitName id={id} name={name} />
+        <button
+          type="button"
+          onClick={() => setChoosing(true)}
+          className="ml-1.5 text-xs text-slate-400 hover:text-slate-900 hover:underline no-print"
+          title={
+            shared
+              ? "ข้อความนี้ใช้ร่วมกับหลายหน่วยงาน — เปลี่ยนว่ายอดนี้เป็นของหน่วยงานไหน"
+              : "ยอดนี้เป็นของหน่วยงานอื่นที่ข้อความเหมือนกัน (ธนาคารตัดชื่อจังหวัดทิ้ง) — เพิ่มหน่วยงานใหม่ให้ยอดนี้"
+          }
+        >
+          {shared ? "เปลี่ยนหน่วยงาน" : "ไม่ใช่หน่วยงานนี้?"}
+        </button>
+      </span>
+    );
+  }
+  if (!name && !shared) return null;
+
+  const pool = choices.length ? choices : id && name ? [{ id, name }] : [];
+  return (
+    <span className="inline-flex flex-wrap items-center gap-1.5 no-print">
+      <span
+        className="inline-block px-2 py-0.5 rounded-full text-xs font-medium border bg-amber-50 text-amber-800 border-amber-200"
+        title="ธนาคารตัดข้อความจนหลายหน่วยงานใช้ข้อความเดียวกัน ระบบจึงไม่เดาเอง — เลือกว่ายอดนี้เป็นของหน่วยงานไหน"
+      >
+        🏢 เป็นของหน่วยงานไหน?
+      </span>
+      {newName === null ? (
+        <>
+          <select
+            defaultValue=""
+            disabled={saving}
+            onChange={(e) => {
+              if (e.target.value === "__new") setNewName("");
+              else if (e.target.value) choose({ payerId: e.target.value });
+            }}
+            aria-label="เลือกหน่วยงาน"
+            className="border border-amber-300 rounded px-1.5 py-0.5 text-xs bg-white"
+          >
+            <option value="">— เลือกหน่วยงาน —</option>
+            {pool.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.name}
+              </option>
+            ))}
+            <option value="__new">+ หน่วยงานใหม่…</option>
+          </select>
+          {name && (
+            <button type="button" onClick={() => setChoosing(false)} className="text-xs text-slate-500 hover:underline">
+              ยกเลิก
+            </button>
+          )}
+        </>
+      ) : (
+        <>
+          <input
+            value={newName}
+            onChange={(e) => setNewName(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && newName.trim()) choose({ name: newName });
+              if (e.key === "Escape") setNewName(null);
+            }}
+            autoFocus
+            placeholder="เช่น สพม.กาฬสินธุ์"
+            aria-label="ชื่อหน่วยงานใหม่"
+            className="border border-slate-300 rounded px-1.5 py-0.5 text-xs w-44"
+          />
+          <button
+            type="button"
+            onClick={() => choose({ name: newName })}
+            disabled={saving || !newName.trim()}
+            className="text-xs text-slate-900 hover:underline disabled:opacity-40"
+          >
+            {saving ? "กำลังบันทึก…" : "เพิ่มหน่วยงาน"}
+          </button>
+          <button type="button" onClick={() => setNewName(null)} className="text-xs text-slate-500 hover:underline">
+            ยกเลิก
+          </button>
+        </>
+      )}
+      {error && <span className="text-xs text-red-600">{error}</span>}
+    </span>
+  );
+};
+
 // Who a payment came from, as far as anything knows. The account number is
 // what staff match against the bank; the member number is only there when the
 // directory recognised it.
@@ -223,14 +357,28 @@ const Payer = ({ deposit }: { deposit: DailyDepositRow }) => (
         <span className="num">{deposit.memberNumber}</span>
         {deposit.payerName && !deposit.senderAccount && (
           <span className="text-xs text-slate-500" title="รู้จากหน่วยงานที่โอน — เคยบันทึกยอดของหน่วยงานนี้ให้สมาชิกคนนี้">
-            {" "}· 🏢 {deposit.payerName}
+            {" "}·{" "}
+            {(deposit.payerChoices?.length ?? 0) > 1 ? (
+              // Shared wording: the member came from the unit chosen for the
+              // line, so changing the unit has to stay within reach.
+              <UnitTag lineId={deposit.id} id={deposit.payerId} name={deposit.payerName} choices={deposit.payerChoices} />
+            ) : (
+              <>🏢 {deposit.payerName}</>
+            )}
           </span>
         )}
       </span>
-    ) : deposit.payerName ? (
-      // A unit staff named when dividing an earlier line worded the same way.
+    ) : deposit.payerName || (deposit.payerChoices?.length ?? 0) > 1 ? (
+      // A unit staff named when dividing an earlier line worded the same way —
+      // or, where several units share the wording, the question which one.
       <span title="หน่วยงานที่เคยแบ่งยอดให้สมาชิกไว้ — กด &quot;แบ่งให้หลายคน&quot; รายชื่อเดิมจะขึ้นให้">
-        <UnitName id={deposit.payerId} name={deposit.payerName} className="text-slate-700" />
+        <UnitTag
+          lineId={deposit.id}
+          id={deposit.payerId}
+          name={deposit.payerName ?? null}
+          choices={deposit.payerChoices}
+          className="text-slate-700"
+        />
       </span>
     ) : (
       <span className="text-slate-400">ไม่รู้ว่าใคร</span>
@@ -2875,9 +3023,9 @@ const OtherTable = ({
             <td className="px-2 py-1.5 font-mono text-xs">{line.txnCode}</td>
             <td className="px-2 py-1.5">
               <StatementDetail description={line.description} />
-              {line.payerName && (
-                <span className="block">
-                  <UnitName id={line.payerId} name={line.payerName} className="text-xs text-slate-600" />
+              {(line.payerName || (line.payerChoices?.length ?? 0) > 1) && (
+                <span className="block text-xs text-slate-600">
+                  <UnitTag lineId={line.id} id={line.payerId} name={line.payerName ?? null} choices={line.payerChoices} />
                 </span>
               )}
               {unitForm?.lineId === line.id && setUnitForm && onAddUnit && (

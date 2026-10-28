@@ -150,7 +150,7 @@ export async function POST(
   // next month's transfer from it is recognised (lib/unitPayerStore.ts).
   if (!line.senderAccount && memberNumber) {
     try {
-      await rememberUnitMember(line.description, expense.memberNumber ?? memberNumber, line.amount);
+      await rememberUnitMember(line, expense.memberNumber ?? memberNumber, line.amount);
     } catch (err) {
       console.error("unit payer not remembered", err);
     }

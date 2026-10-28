@@ -4,7 +4,8 @@ import { DEDUCTION_CATEGORY } from "@/lib/statementSlipHints";
 import { recomputeRoundPayments } from "@/lib/statementRecompute";
 import { bridgeLineToRound } from "@/lib/lineBridgeStore";
 import { rememberUnitMember } from "@/lib/unitPayerStore";
-import { isUnitPayerLine, payerKey } from "@/lib/unitPayer";
+import { linePayer } from "@/lib/linePayerStore";
+import { isUnitPayerLine } from "@/lib/unitPayer";
 import { learnedFromLine, reassignProblem } from "@/lib/lineReassign";
 
 export class ReassignError extends Error {
@@ -61,8 +62,7 @@ export async function reassignRecording(lineId: string, rawMember: string, state
   // A unit's line taught the unit it pays for the wrong member; unlearn
   // that, and learn the right one.
   if (!line.senderAccount && isUnitPayerLine(line.description)) {
-    const key = payerKey(line.description);
-    const payer = key ? await prisma.unitPayer.findUnique({ where: { key } }) : null;
+    const { payer } = await linePayer(line);
     if (payer && fromMember) {
       const entry = await prisma.unitPayerMember.findUnique({
         where: { payerId_memberNumber: { payerId: payer.id, memberNumber: fromMember } },
@@ -71,7 +71,7 @@ export async function reassignRecording(lineId: string, rawMember: string, state
         await prisma.unitPayerMember.delete({ where: { id: entry.id } });
       }
     }
-    await rememberUnitMember(line.description, toMember, line.amount);
+    await rememberUnitMember(line, toMember, line.amount);
   }
 
   let round: { period: string; label: string } | null = null;
