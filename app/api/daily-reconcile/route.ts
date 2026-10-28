@@ -68,8 +68,15 @@ export async function GET(request: NextRequest) {
 
   // Payers staff have named (lib/unitPayer.ts) — a unit paying for several
   // members is shown by its name rather than as "ไม่รู้ว่าใคร".
-  const payers = await prisma.unitPayer.findMany({ select: { key: true, name: true } });
+  const payers = await prisma.unitPayer.findMany({ select: { id: true, key: true, name: true } });
   const payerNameOf = new Map(payers.map((p) => [p.key, p.name]));
+  // Which unit a line is from, so its name can be corrected from the line
+  // itself (PATCH /api/unit-payers/[id]) rather than from ตั้งค่าระบบ.
+  const payerIdOf = new Map(payers.map((p) => [p.key, p.id]));
+  const payerIdOfLine = (description: string) => {
+    const key = payerKey(description);
+    return key ? (payerIdOf.get(key) ?? null) : null;
+  };
   const payerOf = (description: string) => {
     const key = payerKey(description);
     return key ? (payerNameOf.get(key) ?? null) : null;
@@ -115,6 +122,7 @@ export async function GET(request: NextRequest) {
     memberNumber: ownerOf(deposit),
     // The unit this line is from, when staff have named its payer.
     payerName: payerOf(deposit.description),
+    payerId: payerIdOfLine(deposit.description),
   });
 
   // The same day again, in the bank's order rather than by conclusion — see
@@ -440,6 +448,7 @@ export async function GET(request: NextRequest) {
         // (lib/unitPayerStore.ts) — money in only, named between slashes.
         unitLine: line.amount > 0 && isUnitPayerLine(line.description),
         payerName: payerOfLine(line),
+        payerId: payerIdOfLine(line.description),
       })),
     totals: {
       ...result.totals,

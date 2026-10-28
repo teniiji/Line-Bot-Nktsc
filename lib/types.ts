@@ -392,6 +392,8 @@ export interface DailyDepositRow {
   // The unit (payroll office) staff named for lines worded like this one,
   // when a line from it has been divided among its members before.
   payerName?: string | null;
+  // The unit list row it came from, to rename it in place.
+  payerId?: string | null;
   // For a unit's line nothing names yet: the one member of the newest round
   // owing exactly this amount — a guess for staff to check, not a match.
   suggestion?: { memberNumber: string; name: string | null; owed: number; roundLabel: string } | null;
@@ -445,6 +447,8 @@ export interface DailyOtherLineRow {
   unitLine?: boolean;
   // The unit's name, when it is already on the list.
   payerName?: string | null;
+  // The unit list row it came from, to rename it in place.
+  payerId?: string | null;
 }
 
 // One line of the bank's statement, as the bank wrote it, plus the

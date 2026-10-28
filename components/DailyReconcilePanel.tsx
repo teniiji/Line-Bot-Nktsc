@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, useCallback, useEffect, useState } from "react";
+import { Fragment, createContext, useCallback, useContext, useEffect, useState } from "react";
 import ConfirmDialog from "@/components/ConfirmDialog";
 import {
   formatAmount,
@@ -130,6 +130,89 @@ const StatementDetail = ({ description }: { description: string }) => {
   );
 };
 
+// Reloads the day after something on a row changed it — the unit's name, so
+// far. A context so the tables deep below need not each be handed it.
+const RefreshDay = createContext<() => Promise<void> | void>(() => {});
+
+// A unit's name with the means to correct it where it is read. A unit named
+// wrongly (or with a typo) when it was first divided used to be fixable only
+// under ตั้งค่าระบบ → หน่วยงานที่โอนแทนสมาชิก; renaming here is the same
+// PATCH /api/unit-payers/[id]. Recognising the unit's next transfer goes by
+// the statement's wording, not the name, so nothing else moves.
+const UnitName = ({ id, name, className }: { id?: string | null; name: string; className?: string }) => {
+  const refresh = useContext(RefreshDay);
+  const [draft, setDraft] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const save = async () => {
+    if (!id || draft === null) return;
+    const next = draft.trim();
+    if (!next || next === name) {
+      setDraft(null);
+      return;
+    }
+    setSaving(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/unit-payers/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: next }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setError(body.error || "แก้ชื่อไม่สำเร็จ");
+        return;
+      }
+      setDraft(null);
+      await refresh();
+    } finally {
+      setSaving(false);
+    }
+  };
+  if (draft !== null) {
+    return (
+      <span className="inline-flex flex-wrap items-center gap-1.5 no-print">
+        🏢
+        <input
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") save();
+            if (e.key === "Escape") setDraft(null);
+          }}
+          autoFocus
+          disabled={saving}
+          aria-label="ชื่อหน่วยงาน"
+          className="border border-slate-300 rounded px-1.5 py-0.5 text-xs w-48"
+        />
+        <button type="button" onClick={save} disabled={saving} className="text-xs text-slate-900 hover:underline">
+          {saving ? "กำลังบันทึก…" : "บันทึก"}
+        </button>
+        <button type="button" onClick={() => setDraft(null)} className="text-xs text-slate-500 hover:underline">
+          ยกเลิก
+        </button>
+        {error && <span className="text-xs text-red-600">{error}</span>}
+      </span>
+    );
+  }
+  return (
+    <span className={className}>
+      🏢 {name}
+      {id && (
+        <button
+          type="button"
+          onClick={() => setDraft(name)}
+          className="ml-1.5 text-xs text-slate-400 hover:text-slate-900 hover:underline no-print"
+          title="แก้ชื่อหน่วยงานนี้ — มีผลกับทุกรายการของหน่วยงานนี้ ระบบยังจำยอดครั้งต่อไปได้เหมือนเดิม"
+        >
+          แก้ชื่อ
+        </button>
+      )}
+    </span>
+  );
+};
+
 // Who a payment came from, as far as anything knows. The account number is
 // what staff match against the bank; the member number is only there when the
 // directory recognised it.
@@ -146,8 +229,8 @@ const Payer = ({ deposit }: { deposit: DailyDepositRow }) => (
       </span>
     ) : deposit.payerName ? (
       // A unit staff named when dividing an earlier line worded the same way.
-      <span className="text-slate-700" title="หน่วยงานที่เคยแบ่งยอดให้สมาชิกไว้ — กด &quot;แบ่งให้หลายคน&quot; รายชื่อเดิมจะขึ้นให้">
-        🏢 {deposit.payerName}
+      <span title="หน่วยงานที่เคยแบ่งยอดให้สมาชิกไว้ — กด &quot;แบ่งให้หลายคน&quot; รายชื่อเดิมจะขึ้นให้">
+        <UnitName id={deposit.payerId} name={deposit.payerName} className="text-slate-700" />
       </span>
     ) : (
       <span className="text-slate-400">ไม่รู้ว่าใคร</span>
@@ -919,6 +1002,7 @@ export default function DailyReconcilePanel() {
   };
 
   return (
+    <RefreshDay.Provider value={() => fetchDay(from, to)}>
     <section className="bg-white rounded-lg border border-slate-200">
       <div className="px-4 py-3 border-b border-slate-100">
         <h2 className="font-semibold">เงินเข้าประจำวัน (เทียบกับสลิปที่ส่งมาทางไลน์)</h2>
@@ -1773,6 +1857,7 @@ export default function DailyReconcilePanel() {
         </>
       )}
     </section>
+    </RefreshDay.Provider>
   );
 }
 
@@ -2791,7 +2876,9 @@ const OtherTable = ({
             <td className="px-2 py-1.5">
               <StatementDetail description={line.description} />
               {line.payerName && (
-                <span className="block text-xs text-slate-600">🏢 {line.payerName}</span>
+                <span className="block">
+                  <UnitName id={line.payerId} name={line.payerName} className="text-xs text-slate-600" />
+                </span>
               )}
               {unitForm?.lineId === line.id && setUnitForm && onAddUnit && (
                 <span className="flex flex-wrap items-center gap-2 mt-1">
