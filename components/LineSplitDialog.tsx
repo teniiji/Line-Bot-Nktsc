@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { formatAmount, formatStatementDateTime } from "@/lib/format";
+import { parseDebitPaste } from "@/lib/debitPaste";
 
 // Divides one bank line among several members — a unit's payroll office
 // paying for its people in a single transfer. Opens on the members the same
@@ -38,6 +39,20 @@ interface Row {
   amount: string;
 }
 
+// One row of a pasted Direct Debit list, with the member its account
+// belongs to when the system knows (lib/debitPaste.ts).
+interface PastedRow {
+  account: string;
+  amount: number;
+  name: string | null;
+  memberNumber: string;
+  memberName: string | null;
+  onRound: boolean | null;
+  owed: number | null;
+  found: boolean;
+  include: boolean;
+}
+
 const round2 = (v: number) => Math.round(v * 100) / 100;
 
 export default function LineSplitDialog({
@@ -56,6 +71,10 @@ export default function LineSplitDialog({
   const [results, setResults] = useState<{ memberNumber: string; memberName: string | null }[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [pasteOpen, setPasteOpen] = useState(false);
+  const [pasteText, setPasteText] = useState("");
+  const [pasted, setPasted] = useState<PastedRow[] | null>(null);
+  const [pasteNote, setPasteNote] = useState<string | null>(null);
 
   useEffect(() => {
     (async () => {
@@ -130,6 +149,75 @@ export default function LineSplitDialog({
         amount: String(i === prev.length - 1 ? round2(total - each * (prev.length - 1)) : each),
       }))
     );
+  };
+
+  // Reads the pasted list and finds who holds each account.
+  const readPaste = async () => {
+    const { rows: read, skipped } = parseDebitPaste(pasteText);
+    if (read.length === 0) {
+      setPasteNote("ไม่พบแถวที่มีเลขบัญชี 10 หลักกับยอดเงิน — ลอง copy คอลัมน์ชื่อ เลขบัญชี และยอด จาก Excel มาวาง");
+      setPasted(null);
+      return;
+    }
+    setBusy(true);
+    try {
+      const res = await fetch(`/api/statement-lines/${lineId}/split-accounts`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ accounts: read.map((r) => r.account) }),
+      });
+      const body = await res.json().catch(() => ({}));
+      const found: Record<
+        string,
+        { memberNumber: string; name?: string | null; onRound?: boolean; owed?: number | null }
+      > = res.ok ? body.found ?? {} : {};
+      setPasted(
+        read.map((r) => {
+          const m = found[r.account];
+          return {
+            ...r,
+            memberNumber: m?.memberNumber ?? "",
+            memberName: m?.name ?? null,
+            onRound: m ? m.onRound ?? null : null,
+            owed: m?.owed ?? null,
+            found: !!m,
+            include: true,
+          };
+        })
+      );
+      setPasteNote(skipped ? `ข้าม ${skipped} บรรทัดที่ไม่ใช่รายการ (หัวตาราง/ยอดรวม)` : null);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const pastedSum = round2(
+    (pasted ?? []).filter((r) => r.include).reduce((s, r) => s + r.amount, 0)
+  );
+  const pastedMissing = (pasted ?? []).filter((r) => r.include && !r.memberNumber.trim()).length;
+
+  // The ticked rows become the division, replacing whatever was listed —
+  // a Direct Debit is its own list, not last month's members plus some.
+  const usePaste = () => {
+    if (!pasted) return;
+    const merged = new Map<string, Row>();
+    for (const r of pasted) {
+      if (!r.include || !r.memberNumber.trim()) continue;
+      const key = r.memberNumber.trim();
+      const prev = merged.get(key);
+      merged.set(key, {
+        memberNumber: key,
+        name: r.memberName ?? r.name,
+        onRound: r.onRound,
+        owed: r.owed,
+        amount: String(round2((prev ? Number(prev.amount) : 0) + r.amount)),
+      });
+    }
+    setRows([...merged.values()]);
+    setPasted(null);
+    setPasteText("");
+    setPasteOpen(false);
+    setPasteNote(null);
   };
 
   const save = async () => {
@@ -269,6 +357,139 @@ export default function LineSplitDialog({
                 </tbody>
               </table>
             </div>
+
+            {pasteOpen && (
+              <div className="border border-sky-200 bg-sky-50/50 rounded p-3 space-y-2 text-sm">
+                <p className="text-slate-600">
+                  วางรายการจาก Excel หรือใบ Direct Debit ของธนาคาร — ต้องมี<strong>เลขบัญชี 10 หลัก</strong>กับ
+                  <strong>ยอด</strong>ในแต่ละแถว (มีชื่อด้วยก็ได้) ระบบจะหาเลขสมาชิกจากเลขบัญชีให้
+                </p>
+                {!pasted ? (
+                  <>
+                    <textarea
+                      value={pasteText}
+                      onChange={(e) => setPasteText(e.target.value)}
+                      rows={6}
+                      placeholder={"นางสิริเกศ คิสาลัง\t4300009414\t2500\nนายพิศาล พรหมจักร์\t4301387595\t5600"}
+                      className="w-full border border-slate-300 rounded px-2 py-1 font-mono text-xs"
+                    />
+                    <div className="flex gap-2">
+                      <button
+                        onClick={readPaste}
+                        disabled={busy || !pasteText.trim()}
+                        className="rounded px-3 py-1.5 text-white bg-sky-700 disabled:opacity-50"
+                      >
+                        อ่านรายการ
+                      </button>
+                      <button onClick={() => setPasteOpen(false)} className="border border-slate-300 rounded px-3 py-1.5">
+                        ปิด
+                      </button>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <div className="overflow-auto max-h-64 border border-slate-200 rounded bg-white">
+                      <table className="w-full text-xs">
+                        <thead className="text-slate-500 text-left">
+                          <tr className="[&>th]:sticky [&>th]:top-0 [&>th]:bg-slate-50 [&>th]:z-10">
+                            <th className="px-2 py-1.5" />
+                            <th className="px-2 py-1.5 font-semibold">เลขบัญชี · ชื่อในไฟล์</th>
+                            <th className="px-2 py-1.5 font-semibold">สมาชิก</th>
+                            <th className="px-2 py-1.5 font-semibold text-right">ยอด</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {pasted.map((r, i) => (
+                            <tr key={`${r.account}-${i}`} className={`border-t border-slate-100 ${r.include ? "" : "opacity-40"}`}>
+                              <td className="px-2 py-1">
+                                <input
+                                  type="checkbox"
+                                  checked={r.include}
+                                  aria-label={`ใช้แถว ${r.account}`}
+                                  onChange={(e) =>
+                                    setPasted((prev) =>
+                                      prev!.map((x, j) => (j === i ? { ...x, include: e.target.checked } : x))
+                                    )
+                                  }
+                                />
+                              </td>
+                              <td className="px-2 py-1">
+                                <span className="num font-mono">{r.account}</span>{" "}
+                                <span className="text-slate-500">{r.name ?? ""}</span>
+                              </td>
+                              <td className="px-2 py-1">
+                                {r.found ? (
+                                  <>
+                                    <span className="num">{r.memberNumber}</span> {r.memberName ?? ""}
+                                    {r.onRound === false && <span className="text-amber-700"> · ไม่อยู่ในรอบ</span>}
+                                    {r.owed !== null && r.owed > 0 && (
+                                      <span className="text-slate-500"> · ค้าง {formatAmount(r.owed)}</span>
+                                    )}
+                                  </>
+                                ) : (
+                                  <input
+                                    value={r.memberNumber}
+                                    onChange={(e) =>
+                                      setPasted((prev) =>
+                                        prev!.map((x, j) => (j === i ? { ...x, memberNumber: e.target.value } : x))
+                                      )
+                                    }
+                                    placeholder="ไม่พบบัญชีนี้ — ใส่เลขสมาชิก"
+                                    className="border border-amber-300 bg-amber-50 rounded px-2 py-0.5 w-48"
+                                  />
+                                )}
+                              </td>
+                              <td className="px-2 py-1 text-right num">{formatAmount(r.amount)}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-3">
+                      <span>
+                        ติ๊กไว้ {pasted.filter((r) => r.include).length} แถว รวม{" "}
+                        <strong className="num">{formatAmount(pastedSum)}</strong> จาก{" "}
+                        <span className="num">{formatAmount(total)}</span>
+                      </span>
+                      <span className={`num ${Math.abs(pastedSum - total) < 0.01 ? "text-emerald-700" : "text-amber-700"}`}>
+                        {Math.abs(pastedSum - total) < 0.01
+                          ? "✅ ตรงกับยอดเงินเข้า"
+                          : pastedSum > total
+                            ? `เกิน ${formatAmount(pastedSum - total)} — ติ๊กออกคนที่ธนาคารหักไม่สำเร็จ (Insufficient funds / Closed)`
+                            : `ขาด ${formatAmount(total - pastedSum)}`}
+                      </span>
+                    </div>
+                    {pastedMissing > 0 && (
+                      <p className="text-amber-800">
+                        ยังไม่รู้เลขสมาชิก {pastedMissing} แถว — ใส่เลขสมาชิก หรือติ๊กออก
+                      </p>
+                    )}
+                    <div className="flex gap-2">
+                      <button
+                        onClick={usePaste}
+                        disabled={pastedMissing > 0 || !pasted.some((r) => r.include)}
+                        className="rounded px-3 py-1.5 text-white bg-sky-700 disabled:opacity-50"
+                      >
+                        ใช้รายการนี้แบ่งยอด
+                      </button>
+                      <button onClick={() => setPasted(null)} className="border border-slate-300 rounded px-3 py-1.5">
+                        วางใหม่
+                      </button>
+                    </div>
+                  </>
+                )}
+                {pasteNote && <p className="text-xs text-slate-500">{pasteNote}</p>}
+              </div>
+            )}
+
+            {!pasteOpen && (
+              <button
+                onClick={() => setPasteOpen(true)}
+                className="self-start text-sm border border-sky-300 text-sky-800 rounded px-3 py-1.5 hover:bg-sky-50"
+              >
+                📋 วางรายการจาก Excel / ใบ Direct Debit
+              </button>
+            )}
 
             <div className="relative">
               <input

@@ -5,6 +5,7 @@ import { isMemberDeposit } from "@/lib/statementLines";
 import { DEDUCTION_CATEGORY } from "@/lib/statementSlipHints";
 import { recomputeRoundPayments } from "@/lib/statementRecompute";
 import { formatAmount } from "@/lib/format";
+import { normalizeAccountNumber } from "@/lib/statementReconcile";
 import { chooseLinePayer, linePayer } from "@/lib/linePayerStore";
 import { payerNamed, payersByKey } from "@/lib/linePayer";
 import {
@@ -461,4 +462,51 @@ export async function splitOriginsFor(
     }
   }
   return out;
+}
+
+// Who holds each account, for a list pasted from a Direct Debit
+// (lib/debitPaste.ts): the bank account directory first, which staff
+// confirmed, then the account this line's round has on file for a member.
+// An account two members share in the round is left for a person to pick.
+export async function membersForAccounts(lineId: string, accounts: string[]) {
+  const line = await prisma.statementLine.findUnique({ where: { id: lineId } });
+  if (!line) throw new SplitError("ไม่พบรายการเงินเข้านี้", 404);
+  const wanted = [...new Set(accounts.map((a) => normalizeAccountNumber(a)).filter((a): a is string => !!a))];
+  const round = line.postedAt ? await openRoundFor(line.postedAt) : null;
+
+  const [directory, onRound] = await Promise.all([
+    prisma.memberBankAccount.findMany({
+      where: { accountNumber: { in: wanted } },
+      select: { accountNumber: true, memberNumber: true },
+    }),
+    round
+      ? prisma.statementMember.findMany({
+          where: { roundId: round.id, accountNumber: { in: wanted } },
+          select: { accountNumber: true, memberNumber: true },
+        })
+      : Promise.resolve([]),
+  ]);
+
+  const holder = new Map<string, string>();
+  for (const row of directory) holder.set(row.accountNumber, row.memberNumber);
+  const fromRound = new Map<string, Set<string>>();
+  for (const row of onRound) {
+    if (!row.accountNumber) continue;
+    const set = fromRound.get(row.accountNumber) ?? new Set<string>();
+    set.add(memberNumberKey(row.memberNumber) ?? row.memberNumber);
+    fromRound.set(row.accountNumber, set);
+  }
+  for (const [account, numbers] of fromRound) {
+    if (!holder.has(account) && numbers.size === 1) holder.set(account, [...numbers][0]);
+  }
+
+  const members = await describeMembers([...new Set(holder.values())], round?.id ?? null);
+  return {
+    found: Object.fromEntries(
+      [...holder].map(([account, memberNumber]) => [
+        account,
+        { memberNumber, ...members.get(memberNumberKey(memberNumber) ?? memberNumber) },
+      ])
+    ),
+  };
 }
