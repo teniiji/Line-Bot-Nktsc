@@ -3,12 +3,14 @@ import {
   checkUploadedFile,
   describeReadError,
   listSheets,
+  readAllSheetRows,
   readFirstSheetRows,
 } from "@/lib/excelUpload";
 import { columnSamples, detectSheetColumns } from "@/lib/sheetColumns";
 import { readMappedSheet } from "@/lib/mappedSheet";
 import { parseConfirmedUpload } from "@/lib/uploadMapping";
 import { previousUploads } from "@/lib/uploadHistoryStore";
+import { chooseResultSheet, sheetsWithResults } from "@/lib/resultSheet";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -35,14 +37,37 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
 
   // Which page of the workbook to read. A unit's file carries "หน่วย" beside
   // "สรุป", and the results are not always on the first one.
-  const sheetRaw = Number(form.get("sheet"));
-  const sheetIndex = Number.isInteger(sheetRaw) && sheetRaw >= 0 ? sheetRaw : 0;
+  const sheetGiven = form.get("sheet");
+  const sheetRaw = Number(sheetGiven);
+  let sheetIndex = sheetGiven !== null && Number.isInteger(sheetRaw) && sheetRaw >= 0 ? sheetRaw : 0;
+
+  // A results file is read from whichever page has หักได้/หักไม่ได้ on it,
+  // unless somebody picked the page — see lib/resultSheet.ts. Every page is
+  // read for that, so the dialog can also name the right page when the one
+  // being shown has no results.
+  const forResults = form.get("kind") === "results";
 
   let sheets;
   let rows: unknown[][];
+  let resultSheets: number[] = [];
+  let autoPicked = false;
   try {
     sheets = await listSheets(checked.file);
-    rows = await readFirstSheetRows(checked.file, sheetIndex);
+    if (forResults && sheets.length > 1) {
+      const all = await readAllSheetRows(checked.file);
+      const readings = all.map((sheetRows, index) => ({
+        index,
+        mapping: detectSheetColumns(sheetRows).mapping,
+      }));
+      resultSheets = sheetsWithResults(readings);
+      if (sheetGiven === null) {
+        sheetIndex = chooseResultSheet(readings);
+        autoPicked = sheetIndex !== 0;
+      }
+      rows = all[sheetIndex] ?? all[0] ?? [];
+    } else {
+      rows = await readFirstSheetRows(checked.file, sheetIndex);
+    }
   } catch (err) {
     return NextResponse.json({ error: describeReadError(err) }, { status: 400 });
   }
@@ -77,6 +102,8 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
     previousUploads: await previousUploads(params.id, checked.file),
     sheets,
     sheetIndex,
+    resultSheets,
+    autoPicked,
     headerRow: reading.headerRow,
     firstDataRow: reading.firstDataRow,
     mapping: reading.mapping,

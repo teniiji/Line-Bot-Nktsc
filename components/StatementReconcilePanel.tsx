@@ -1,6 +1,7 @@
 "use client";
 
 import { previousUploadWarning } from "@/lib/uploadHistory";
+import { resultSheetNote } from "@/lib/resultSheet";
 import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 import {
   formatAmount,
@@ -703,6 +704,9 @@ export default function StatementReconcilePanel() {
     try {
       const form = new FormData();
       form.append("file", file);
+      // A results file is read from the page that has the results on it,
+      // not just page one — see lib/resultSheet.ts.
+      form.append("kind", kind);
       const res = await fetch(`/api/statement-rounds/${selectedId}/sheet-preview`, {
         method: "POST",
         body: form,
@@ -730,6 +734,7 @@ export default function StatementReconcilePanel() {
     const form = new FormData();
     form.append("file", pendingSheet.file);
     form.append("sheet", String(pendingSheet.sheet));
+    form.append("kind", pendingSheet.kind);
     form.append("mapping", JSON.stringify(mapping));
     form.append("firstDataRow", String(pendingSheet.preview.firstDataRow));
     const res = await fetch(`/api/statement-rounds/${selectedId}/sheet-preview`, {
@@ -741,7 +746,7 @@ export default function StatementReconcilePanel() {
     // Only the reading changes; the columns and the file stay as they were.
     setPendingSheet((prev) =>
       prev && prev.file === pendingSheet.file
-        ? { ...prev, preview: { ...body, mapping }, mapping }
+        ? { ...prev, preview: { ...body, mapping, autoPicked: prev.preview.autoPicked }, mapping }
         : prev
     );
   };
@@ -757,6 +762,7 @@ export default function StatementReconcilePanel() {
       const form = new FormData();
       form.append("file", pendingSheet.file);
       form.append("sheet", String(sheetIndex));
+      form.append("kind", pendingSheet.kind);
       const res = await fetch(`/api/statement-rounds/${selectedId}/sheet-preview`, {
         method: "POST",
         body: form,
@@ -3626,6 +3632,17 @@ export default function StatementReconcilePanel() {
                 pendingSheet.kind === "list" ? "list" : "results",
                 (iso) => cooperativeDateTime(new Date(iso))
               )
+            : null
+        }
+        sheetNote={
+          pendingSheet?.kind === "results"
+            ? resultSheetNote({
+                sheets: pendingSheet.preview.sheets,
+                sheetIndex: pendingSheet.preview.sheetIndex,
+                mapping: pendingSheet.mapping,
+                resultSheets: pendingSheet.preview.resultSheets ?? [],
+                autoPicked: pendingSheet.preview.autoPicked ?? false,
+              })
             : null
         }
       />

@@ -2,6 +2,7 @@
 
 import { formatAmount } from "@/lib/format";
 import { SHEET_FIELDS, type SheetField, type SheetMapping } from "@/lib/sheetColumns";
+import type { ResultSheetNote } from "@/lib/resultSheet";
 
 export interface SheetPreview {
   // Earlier uploads of this same file into the round (lib/uploadHistory.ts).
@@ -12,6 +13,10 @@ export interface SheetPreview {
   // broken file rather than the wrong page of a good one.
   sheets: { index: number; name: string; rows: number }[];
   sheetIndex: number;
+  // For a results upload: the pages that have หักได้/หักไม่ได้, and whether
+  // this page was chosen for that rather than being page one.
+  resultSheets?: number[];
+  autoPicked?: boolean;
   headerRow: number | null;
   firstDataRow: number;
   mapping: SheetMapping;
@@ -68,6 +73,7 @@ export default function SheetMappingDialog({
   busy,
   confirmLabel,
   warning,
+  sheetNote,
 }: {
   open: boolean;
   fileName: string;
@@ -82,6 +88,8 @@ export default function SheetMappingDialog({
   // Said above everything else: this file has been loaded into the round
   // before.
   warning?: string | null;
+  // Which page the results are on, when it matters (lib/resultSheet.ts).
+  sheetNote?: ResultSheetNote | null;
 }) {
   if (!open || !preview) return null;
 
@@ -128,6 +136,18 @@ export default function SheetMappingDialog({
                 ))}
               </select>
             </label>
+          )}
+          {sheetNote && (
+            <p
+              className={`mt-2 text-sm rounded px-3 py-2 border ${
+                sheetNote.tone === "warn"
+                  ? "border-rose-300 bg-rose-50 text-rose-900"
+                  : "border-sky-300 bg-sky-50 text-sky-900"
+              }`}
+            >
+              {sheetNote.tone === "warn" ? "⚠️ " : "📄 "}
+              {sheetNote.text}
+            </p>
           )}
           <p className="text-sm text-slate-500 mt-1">
             <span className="font-mono text-xs">{fileName}</span> ·{" "}

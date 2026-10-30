@@ -98,7 +98,22 @@ export async function readFirstSheetRows(file: File, sheetIndex = 0): Promise<un
 
   const sheet = workbook.worksheets[sheetIndex] ?? workbook.worksheets[0];
   if (!sheet) return [];
+  return sheetRows(sheet);
+}
 
+// Every page of the workbook, read once — for choosing which page holds the
+// results (lib/resultSheet.ts) without loading the file again per page.
+export async function readAllSheetRows(file: File): Promise<unknown[][][]> {
+  const buffer = await file.arrayBuffer();
+  const data = Buffer.from(buffer);
+  if (looksLikeHtml(data)) {
+    return [parseHtmlTableRows(data.toString("utf8"))];
+  }
+  const workbook = await loadWorkbook(buffer);
+  return workbook.worksheets.map((sheet) => sheetRows(sheet));
+}
+
+function sheetRows(sheet: ExcelJS.Worksheet): unknown[][] {
   const rows: unknown[][] = [];
   sheet.eachRow({ includeEmpty: false }, (row) => {
     const values: unknown[] = [];
