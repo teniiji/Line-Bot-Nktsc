@@ -429,11 +429,16 @@ export default function LineSplitDialog({
                                 ) : (
                                   <input
                                     value={r.memberNumber}
-                                    onChange={(e) =>
+                                    inputMode="numeric"
+                                    // The number alone: a name typed or
+                                    // pasted after it would be saved as part
+                                    // of the member number (lib/unitPayer.ts).
+                                    onChange={(e) => {
+                                      const digits = e.target.value.match(/\d+/)?.[0] ?? "";
                                       setPasted((prev) =>
-                                        prev!.map((x, j) => (j === i ? { ...x, memberNumber: e.target.value } : x))
-                                      )
-                                    }
+                                        prev!.map((x, j) => (j === i ? { ...x, memberNumber: digits } : x))
+                                      );
+                                    }}
                                     placeholder="ไม่พบบัญชีนี้ — ใส่เลขสมาชิก"
                                     className="border border-amber-300 bg-amber-50 rounded px-2 py-0.5 w-48"
                                   />
