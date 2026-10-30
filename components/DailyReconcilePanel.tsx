@@ -2012,13 +2012,37 @@ export default function DailyReconcilePanel() {
 // The day in the bank's order, with the conclusion the tab reached about each
 // line. See lib/statementDayView.ts — the sections above are sorted by
 // conclusion, which is what makes a twenty-line day look like a six-line one.
+// One colour per kind of answer the round gives about a line, shared by the
+// ทำรายการ text and the status beside it, so the three that read alike side
+// by side ("ตรงยอดเก็บไม่ได้", "ชำระแล้ว", "หักเงินเดือนได้แล้ว") are told
+// apart at a glance:
+//   exact     — pays a failed deduction exactly; record it   → blue
+//   settled   — the round counted it already; done            → green
+//   collected — payroll already took it; this is other money  → violet
+//   awaiting  — the unit's results are not in yet            → amber
+type HintKind = "exact" | "settled" | "collected" | "awaiting" | "other";
+const hintKind = (deduction: DailyStatementRow["deduction"]): HintKind => {
+  if (!deduction) return "other";
+  if (deduction.match === "settled") return "settled";
+  if (deduction.match === "exact") return "exact";
+  if (deduction.match === "counted") return deduction.deductionResult === "collected" ? "collected" : "awaiting";
+  return "other";
+};
+const HINT_TONE: Record<HintKind, { text: string; pill: string }> = {
+  exact: { text: "text-blue-700", pill: "bg-blue-50 text-blue-800 border-blue-200" },
+  settled: { text: "text-emerald-700", pill: "bg-green-50 text-green-700 border-green-200" },
+  collected: { text: "text-violet-700", pill: "bg-violet-50 text-violet-800 border-violet-200" },
+  awaiting: { text: "text-amber-700", pill: "bg-amber-50 text-amber-800 border-amber-200" },
+  other: { text: "text-slate-500", pill: "" },
+};
+
 const StatusTag = ({ row }: { row: DailyStatementRow }) => {
   // Counted by the month's round already: nothing left to do with it, said
   // as plainly as "ตรงกับสลิป" is.
   if (countedInRound(row) && row.deduction) {
     return (
       <span
-        className="inline-block px-2 py-0.5 rounded-full text-xs font-medium border bg-green-50 text-green-700 border-green-200"
+        className={`inline-block px-2 py-0.5 rounded-full text-xs font-medium border ${HINT_TONE.settled.pill}`}
         title={`รอบ ${row.deduction.label} นับเงินก้อนนี้กับสมาชิกแล้ว (จับคู่จากเลขบัญชีและยอดใน Statement) — ไม่ต้องบันทึกเพิ่ม · ถ้าอยากให้ขึ้นในแท็บธุรกรรมด้วย บันทึกได้ที่กลุ่ม "เงินเข้าที่รู้ว่าใครโอน แต่ไม่ได้ส่งสลิป"`}
       >
         ✅ {statusLabelOf(row)}
@@ -2028,11 +2052,29 @@ const StatusTag = ({ row }: { row: DailyStatementRow }) => {
   if (awaitingResult(row) && row.deduction) {
     return (
       <span
-        className="inline-block px-2 py-0.5 rounded-full text-xs font-medium border bg-amber-50 text-amber-800 border-amber-200"
+        className={`inline-block px-2 py-0.5 rounded-full text-xs font-medium border ${HINT_TONE.awaiting.pill}`}
         title={`รอบ ${row.deduction.label} จับคู่เงินก้อนนี้ไว้กับสมาชิกแล้ว แต่หน่วยงานยังไม่ส่งผลการหักกลับมา — ` +
           "ถ้าผลออกมาว่าหักไม่ได้ เงินก้อนนี้จะนับเป็นการชำระ ถ้าหักได้ เงินก้อนนี้น่าจะเป็นเงินอื่น ให้สอบถามแล้วบันทึก"}
       >
         ⏳ {statusLabelOf(row)}
+      </span>
+    );
+  }
+  // A known payer's line the round still has a say about: the same colour as
+  // its ทำรายการ text, in a pill.
+  const kind = row.status === "knownPayer" ? hintKind(row.deduction) : "other";
+  if (kind === "exact" || kind === "collected") {
+    return (
+      <span
+        className={`inline-block px-2 py-0.5 rounded-full text-xs font-medium border ${HINT_TONE[kind].pill}`}
+        title={
+          kind === "exact"
+            ? "ยอดตรงกับที่สมาชิกค้างเก็บไม่ได้พอดี — น่าจะเป็นการชำระเก็บไม่ได้ กดบันทึกได้เลย"
+            : "หน่วยงานหักเงินเดือนได้แล้ว เงินก้อนนี้น่าจะเป็นเงินอื่น — สอบถามสมาชิกแล้วบันทึก"
+        }
+      >
+        {kind === "exact" ? "📝 " : "❓ "}
+        {statusLabelOf(row)}
       </span>
     );
   }
@@ -2259,15 +2301,7 @@ const StatementTable = ({
                 // reason is always in the title tooltip below.
                 className={
                   "inline-block max-w-[220px] truncate align-bottom " +
-                  (row.deduction.match === "settled"
-                    ? "text-emerald-700"
-                    : row.deduction.match === "counted" && row.deduction.deductionResult === "collected"
-                      ? "text-amber-700"
-                      : row.deduction.match === "counted"
-                        ? "text-sky-700"
-                      : row.deduction.match === "exact"
-                        ? "text-amber-700"
-                        : "text-slate-500")
+                  HINT_TONE[hintKind(row.deduction)].text
                 }
                 title={
                   row.deduction.match === "settled"
