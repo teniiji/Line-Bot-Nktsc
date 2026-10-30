@@ -54,6 +54,11 @@ export function splitProblem(total: number, parts: SplitPart[]): string | null {
   for (const part of parts) {
     const key = memberNumberKey(part.memberNumber);
     if (!key) return "มีแถวที่ยังไม่ได้ใส่เลขสมาชิก";
+    // Digits only. "25686 นางพิศวง ด่านรัตนะ" typed into the box was saved
+    // as the member number itself, matched nobody on the round, and her
+    // ฿15,000 of a Direct Debit was filed as "ไม่อยู่ในรอบ" while she sat on
+    // it owing exactly that.
+    if (!/^\d+$/.test(key)) return `เลขสมาชิก "${part.memberNumber.trim()}" ต้องเป็นตัวเลขอย่างเดียว`;
     if (seen.has(key)) return `เลขสมาชิก ${part.memberNumber} ซ้ำ`;
     seen.add(key);
     if (!Number.isFinite(part.amount) || part.amount <= 0) {

@@ -70,6 +70,13 @@ describe("splitProblem", () => {
     ).toContain("มากกว่า 0");
     expect(splitProblem(100, [])).toBe("ยังไม่ได้ใส่สมาชิก");
   });
+
+  it("refuses a member number with a name typed after it", () => {
+    expect(
+      splitProblem(15000, [{ memberNumber: "25686 นางพิศวง ด่านรัตนะ", amount: 15000 }])
+    ).toContain("ต้องเป็นตัวเลขอย่างเดียว");
+    expect(splitProblem(15000, [{ memberNumber: "025686", amount: 15000 }])).toBeNull();
+  });
 });
 
 describe("splitFingerprint", () => {
