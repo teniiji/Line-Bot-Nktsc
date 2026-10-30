@@ -327,6 +327,49 @@ function mapFromContent(rows: unknown[][], columns: number): SheetMapping {
   return mapping;
 }
 
+// A heading row typed one cell short at the left.
+//
+// บำนาญหน่วยงานกลาง heads its sheet "เลขที่ | ชื่อ-สกุล | แจ้งหัก | สหกรณ์" over
+// data that runs "ลำดับ | เลขสมาชิก | ชื่อ | สหกรณ์": the ลำดับ column has no
+// heading, so every heading before สหกรณ์ sits one column to the left of
+// what it names. Taken at its word, the reading put members 1 to 7 — the
+// ลำดับ — in place of 2260, 6223, 6939…
+//
+// The tell is the content: a member number column that counts 1, 2, 3 with
+// member numbers beside it, and names that are numbers. The run of headings
+// from the member number is moved one column right, and kept only if the
+// name lands on Thai text.
+function alignShiftedHeader(
+  mapping: SheetMapping,
+  body: unknown[][],
+  columns: number
+): SheetMapping {
+  const start = mapping.memberNumber;
+  if (start === undefined) return mapping;
+  const stats = columnStats(body, columns);
+  const here = stats[start];
+  const next = stats[start + 1];
+  const memberLike = (s: ColumnStats | undefined) =>
+    !!s && !s.sequential && s.filled > 0 && s.smallInts / s.filled > 0.8;
+  if (!here?.sequential || !memberLike(next)) return mapping;
+
+  const fieldAt = (index: number) =>
+    (Object.keys(mapping) as SheetField[]).find((field) => mapping[field] === index);
+  const run: SheetField[] = [];
+  for (let index = start; index < columns; index += 1) {
+    const field = fieldAt(index);
+    if (!field) break;
+    run.push(field);
+  }
+
+  const shifted: SheetMapping = { ...mapping };
+  for (const field of run) shifted[field] = (mapping[field] as number) + 1;
+
+  const name = shifted.name !== undefined ? stats[shifted.name] : undefined;
+  if (name && name.thai / Math.max(1, name.filled) < 0.7) return mapping;
+  return shifted;
+}
+
 // A heading names a column; what is in it decides what the column is.
 //
 // "หน่วยคุม" and "รหัสหน่วย" sit over three different things in the files
@@ -380,7 +423,7 @@ export function detectSheetColumns(rows: unknown[][]): SheetReading {
       return {
         headerRow,
         firstDataRow: headerRow + 1,
-        mapping: placeCodeColumn(mapping, body, columns),
+        mapping: placeCodeColumn(alignShiftedHeader(mapping, body, columns), body, columns),
         fromHeader: true,
       };
     }
