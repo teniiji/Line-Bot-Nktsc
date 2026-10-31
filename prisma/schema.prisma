@@ -1115,6 +1115,11 @@ model StatementFileUpload {
   // SHA-256 of the file's bytes: the same file under another name is still
   // the same file.
   fileHash   String
+  // For a ผลการหัก upload onto a built round: whom it changed, from what
+  // to what (lib/uploadUndo.ts), so the file can be taken back out. Null for
+  // a รายการหัก, a file that built the round, or one uploaded before this
+  // was kept — those can only be taken off the list.
+  changes    Json?
   uploadedAt DateTime @default(now())
 
   @@index([roundId])
