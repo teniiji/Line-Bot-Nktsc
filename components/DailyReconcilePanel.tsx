@@ -519,6 +519,7 @@ export default function DailyReconcilePanel() {
   // The bank line being divided among several members, while its dialog is
   // open — see components/LineSplitDialog.tsx.
   const [splittingId, setSplittingId] = useState<string | null>(null);
+  const [splitFromLast, setSplitFromLast] = useState(false);
   // Offered after a recording, when the line's account is plainly the payer's
   // and nothing had claimed it — one click to make the next transfer from it
   // recognise itself.
@@ -1146,7 +1147,10 @@ export default function DailyReconcilePanel() {
     onRecord: recordDeposit,
     onBulkRecord: bulkRecordDeposits,
     onUnmark: unmarkMemberMoney,
-    onSplit: (lineId: string) => setSplittingId(lineId),
+    onSplit: (lineId: string, start?: "last") => {
+      setSplitFromLast(start === "last");
+      setSplittingId(lineId);
+    },
   };
 
   return (
@@ -1414,6 +1418,7 @@ export default function DailyReconcilePanel() {
       {splittingId && (
         <LineSplitDialog
           lineId={splittingId}
+          startFromLast={splitFromLast}
           onClose={() => setSplittingId(null)}
           onSaved={async (message) => {
             setSplittingId(null);
@@ -2571,7 +2576,8 @@ interface RecordActions {
   onUnmark: (lineId: string) => void;
   // Opens the dialog that divides one line among several members — a unit
   // paying for its people in a single transfer.
-  onSplit?: (lineId: string) => void;
+  // "last": open on the unit's last division rather than its remembered list.
+  onSplit?: (lineId: string, start?: "last") => void;
 }
 
 // What the round already knows about the member being typed in, fetched as
@@ -2963,6 +2969,27 @@ const DepositTable = ({
                         title="หน่วยงานโอนมาก้อนเดียวให้สมาชิกหลายคน — แบ่งยอดให้แต่ละคน นับในรอบเทียบ Statement และลงเป็นรายการของแต่ละคน"
                       >
                         แบ่งให้หลายคน
+                      </button>
+                    )}
+                    {/* The unit's last division, offered whole: the dialog
+                        opens filled in with those members and amounts, and
+                        only needs saving — or changing, if this month is
+                        different. */}
+                    {actions.onSplit && deposit.lastSplit && (!deposit.memberNumber || (!deposit.senderAccount && deposit.payerName)) && (
+                      <button
+                        onClick={() => actions.onSplit?.(deposit.id, "last")}
+                        className={`rounded px-1.5 border hover:underline ${
+                          Math.abs(deposit.lastSplit.total - deposit.amount) < 0.01
+                            ? "border-emerald-300 bg-emerald-50 text-emerald-800"
+                            : "border-sky-300 bg-sky-50 text-sky-800"
+                        }`}
+                        title="เปิดหน้าแบ่งยอดพร้อมรายชื่อและยอดตามที่เคยแบ่งครั้งก่อน — ตรวจแล้วกดบันทึก หรือแก้ก่อนบันทึก (เลือกครั้งอื่นที่เคยแบ่งได้ในหน้าแบ่งยอด)"
+                      >
+                        📋 แบ่งเหมือนครั้งก่อน ({deposit.lastSplit.members} คน ·{" "}
+                        {Math.abs(deposit.lastSplit.total - deposit.amount) < 0.01
+                          ? "ยอดตรง"
+                          : formatAmount(deposit.lastSplit.total)}
+                        )
                       </button>
                     )}
                     {/* The way back out of a mark a person made by hand. Not

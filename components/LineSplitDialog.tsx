@@ -28,6 +28,8 @@ interface Context {
   round: { id: string; label: string } | null;
   remembered: MemberInfo[];
   existing: MemberInfo[];
+  // Earlier divisions under the same unit, newest first.
+  history?: { lineId: string; postedAt: string | null; amount: number; parts: MemberInfo[] }[];
   blocked: string | null;
 }
 
@@ -57,10 +59,14 @@ const round2 = (v: number) => Math.round(v * 100) / 100;
 
 export default function LineSplitDialog({
   lineId,
+  startFromLast = false,
   onClose,
   onSaved,
 }: {
   lineId: string;
+  // Open on the unit's last division ("แบ่งเหมือนครั้งก่อน") rather than
+  // every member it has ever paid for.
+  startFromLast?: boolean;
   onClose: () => void;
   onSaved: (message: string) => void;
 }) {
@@ -92,7 +98,8 @@ export default function LineSplitDialog({
       setPayerName(ctx.payer?.name ?? ctx.suggestedName);
       // A split already made is edited as it stands; otherwise the members
       // this payer paid for last time, at what each paid then.
-      const start = ctx.existing.length ? ctx.existing : ctx.remembered;
+      const last = startFromLast ? ctx.history?.[0]?.parts : undefined;
+      const start = ctx.existing.length ? ctx.existing : last?.length ? last : ctx.remembered;
       setRows(
         start.map((m) => ({
           memberNumber: m.memberNumber,
@@ -103,7 +110,7 @@ export default function LineSplitDialog({
         }))
       );
     })();
-  }, [lineId]);
+  }, [lineId, startFromLast]);
 
   // Searching the roster to add somebody not on last time's list.
   useEffect(() => {
@@ -152,6 +159,22 @@ export default function LineSplitDialog({
         amount: String(i === prev.length - 1 ? round2(total - each * (prev.length - 1)) : each),
       }))
     );
+  };
+
+  // Starts over from an earlier division: its members at what each was given.
+  const startFromEarlier = (lineIdOfEarlier: string) => {
+    const earlier = context?.history?.find((h) => h.lineId === lineIdOfEarlier);
+    if (!earlier) return;
+    setRows(
+      earlier.parts.map((m) => ({
+        memberNumber: m.memberNumber,
+        name: m.name ?? null,
+        onRound: m.onRound ?? null,
+        owed: m.owed ?? null,
+        amount: String(m.amount ?? ""),
+      }))
+    );
+    setPastedAccounts([]);
   };
 
   // Reads the pasted list and finds who holds each account.
@@ -503,6 +526,25 @@ export default function LineSplitDialog({
                 )}
                 {pasteNote && <p className="text-xs text-slate-500">{pasteNote}</p>}
               </div>
+            )}
+
+            {(context.history?.length ?? 0) > 0 && (
+              <label className="text-sm flex flex-wrap items-center gap-2">
+                <span className="text-slate-600">📂 เลือกจากที่เคยแบ่ง</span>
+                <select
+                  value=""
+                  onChange={(e) => e.target.value && startFromEarlier(e.target.value)}
+                  className="border border-slate-300 rounded px-2 py-1 text-sm bg-white max-w-full"
+                >
+                  <option value="">— เลือกครั้งที่เคยแบ่ง แล้วรายชื่อด้านบนจะเปลี่ยนตาม —</option>
+                  {context.history!.map((h) => (
+                    <option key={h.lineId} value={h.lineId}>
+                      {h.postedAt ? formatStatementDateTime(h.postedAt) : "ไม่มีวันที่"} · {h.parts.length} คน ·{" "}
+                      {formatAmount(h.amount)}
+                    </option>
+                  ))}
+                </select>
+              </label>
             )}
 
             {!pasteOpen && (
