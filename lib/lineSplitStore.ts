@@ -6,6 +6,7 @@ import { DEDUCTION_CATEGORY } from "@/lib/statementSlipHints";
 import { recomputeRoundPayments } from "@/lib/statementRecompute";
 import { formatAmount } from "@/lib/format";
 import { normalizeAccountNumber } from "@/lib/statementReconcile";
+import { debitAccountsToKeep } from "@/lib/debitPaste";
 import { chooseLinePayer, linePayer } from "@/lib/linePayerStore";
 import { payerNamed, payersByKey } from "@/lib/linePayer";
 import {
@@ -509,4 +510,56 @@ export async function membersForAccounts(lineId: string, accounts: string[]) {
       ])
     ),
   };
+}
+
+// Which member each account of a pasted Direct Debit belongs to, kept once a
+// division using it is saved — so next month's paste finds them on its own.
+// 25686's Direct Debit came from 9851946753, an account the system had never
+// seen; she had to be typed in by hand, and would have been again.
+//
+// Only accounts nobody holds yet are written. One already bound to a member
+// is left as it is, even if the division named somebody else: who owns an
+// account is a fact staff confirmed, and a typing slip in a paste must not
+// move it. Those are reported, so the disagreement is seen.
+export async function rememberDebitAccounts(
+  pairs: { account: string; memberNumber: string }[],
+  parts: SplitPart[]
+) {
+  const wanted = debitAccountsToKeep(pairs, parts);
+  if (wanted.size === 0) return { learned: [] as string[], conflicts: [] as string[] };
+
+  const held = await prisma.memberBankAccount.findMany({
+    where: { accountNumber: { in: [...wanted.keys()] } },
+    select: { accountNumber: true, memberNumber: true },
+  });
+  const holderOf = new Map(held.map((h) => [h.accountNumber, h.memberNumber]));
+  const fresh = [...wanted].filter(([account]) => !holderOf.has(account));
+  const conflicts = [...wanted]
+    .filter(([account, key]) => holderOf.has(account) && memberNumberKey(holderOf.get(account)) !== key)
+    .map(([account]) => account);
+
+  const roster = await prisma.memberRoster.findMany({
+    where: { memberNumber: { in: spellings(fresh.map(([, key]) => key)) } },
+    select: { memberNumber: true, memberName: true },
+  });
+  const rosterOf = new Map(roster.map((r) => [memberNumberKey(r.memberNumber) ?? r.memberNumber, r]));
+
+  const learned: string[] = [];
+  for (const [account, key] of fresh) {
+    const row = rosterOf.get(key);
+    // createMany would fail the lot on one account written meanwhile.
+    const done = await prisma.memberBankAccount
+      .create({
+        data: {
+          accountNumber: account,
+          memberNumber: row?.memberNumber ?? key,
+          memberName: row?.memberName ?? null,
+          note: "จำจากการแบ่งยอด Direct Debit",
+        },
+      })
+      .then(() => true)
+      .catch(() => false);
+    if (done) learned.push(account);
+  }
+  return { learned, conflicts };
 }

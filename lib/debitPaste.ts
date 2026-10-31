@@ -1,3 +1,6 @@
+import { memberNumberKey } from "./memberNumber";
+import { normalizeAccountNumber } from "./statementReconcile";
+
 // Rows pasted from a list of bank accounts and amounts — the file a Direct
 // Debit was sent from, or the bank's CTF001 report of what it collected.
 //
@@ -72,4 +75,22 @@ export function parseDebitPaste(text: string): DebitPaste {
   }
 
   return { rows, skipped };
+}
+
+// The account → member pairs worth keeping from a saved division: digits
+// only, for members the division actually paid, one member per account (the
+// first named). Keyed by the account in its stored form, member by key.
+export function debitAccountsToKeep(
+  pairs: { account: string; memberNumber: string }[],
+  parts: { memberNumber: string }[]
+): Map<string, string> {
+  const inSplit = new Set(parts.map((p) => memberNumberKey(p.memberNumber)).filter(Boolean));
+  const keep = new Map<string, string>();
+  for (const pair of pairs) {
+    const account = normalizeAccountNumber(pair.account);
+    const key = memberNumberKey(String(pair.memberNumber ?? ""));
+    if (!account || !key || !/^\d+$/.test(key) || !inSplit.has(key) || keep.has(account)) continue;
+    keep.set(account, key);
+  }
+  return keep;
 }

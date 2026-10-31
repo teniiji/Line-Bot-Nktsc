@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseDebitPaste } from "../lib/debitPaste";
+import { debitAccountsToKeep, parseDebitPaste } from "../lib/debitPaste";
 
 describe("a Direct Debit list pasted into a division", () => {
   it("reads the sending file copied from Excel: name, account, amount", () => {
@@ -46,5 +46,50 @@ describe("a Direct Debit list pasted into a division", () => {
 
   it("skips a row with an account but no amount", () => {
     expect(parseDebitPaste("นายมงคล\t4130003992").skipped).toBe(1);
+  });
+});
+
+describe("which accounts a saved division teaches", () => {
+  const parts = [{ memberNumber: "25686" }, { memberNumber: "026127" }];
+
+  it("keeps accounts of members the division paid, by member key", () => {
+    expect(
+      debitAccountsToKeep(
+        [
+          { account: "9851946753", memberNumber: "25686" },
+          { account: "4300009414", memberNumber: "26127" },
+        ],
+        parts
+      )
+    ).toEqual(
+      new Map([
+        ["9851946753", "25686"],
+        ["4300009414", "26127"],
+      ])
+    );
+  });
+
+  it("leaves out a member removed from the division after the paste", () => {
+    expect(debitAccountsToKeep([{ account: "4131173352", memberNumber: "11111" }], parts).size).toBe(0);
+  });
+
+  it("leaves out a member number that is not digits", () => {
+    expect(
+      debitAccountsToKeep([{ account: "9851946753", memberNumber: "25686 นางพิศวง" }], [
+        { memberNumber: "25686 นางพิศวง" },
+      ]).size
+    ).toBe(0);
+  });
+
+  it("keeps the first member named for an account", () => {
+    expect(
+      debitAccountsToKeep(
+        [
+          { account: "9851946753", memberNumber: "25686" },
+          { account: "985-1946753", memberNumber: "26127" },
+        ],
+        parts
+      )
+    ).toEqual(new Map([["9851946753", "25686"]]));
   });
 });

@@ -1,5 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
-import { SplitError, applySplit, splitContext, undoSplit } from "@/lib/lineSplitStore";
+import {
+  SplitError,
+  applySplit,
+  rememberDebitAccounts,
+  splitContext,
+  undoSplit,
+} from "@/lib/lineSplitStore";
 
 export const dynamic = "force-dynamic";
 
@@ -24,7 +30,8 @@ export async function GET(_request: NextRequest, { params }: { params: { id: str
   }
 }
 
-// body: { payerName, parts: [{ memberNumber, amount }] }
+// body: { payerName, parts: [{ memberNumber, amount }], accounts?: [{ account, memberNumber }] }
+// accounts — the bank accounts of a pasted Direct Debit, kept for next time.
 export async function POST(request: NextRequest, { params }: { params: { id: string } }) {
   const body = await request.json().catch(() => ({}) as Record<string, unknown>);
   const parts = (Array.isArray(body.parts) ? body.parts : []).map(
@@ -33,8 +40,17 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
       amount: Number(p?.amount),
     })
   );
+  const accounts = (Array.isArray(body.accounts) ? body.accounts : [])
+    .slice(0, 500)
+    .map((a: { account?: unknown; memberNumber?: unknown }) => ({
+      account: String(a?.account ?? ""),
+      memberNumber: String(a?.memberNumber ?? ""),
+    }));
   try {
-    return NextResponse.json({ ok: true, ...(await applySplit(params.id, String(body.payerName ?? ""), parts)) });
+    const saved = await applySplit(params.id, String(body.payerName ?? ""), parts);
+    // After the division, so a refused one teaches nothing.
+    const accountsKept = await rememberDebitAccounts(accounts, parts);
+    return NextResponse.json({ ok: true, ...saved, accountsKept });
   } catch (err) {
     return fail(err);
   }
