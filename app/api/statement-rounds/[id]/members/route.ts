@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { rememberUpload } from "@/lib/uploadHistoryStore";
+import { recordedChanges } from "@/lib/uploadUndo";
 import { prisma } from "@/lib/prisma";
 import { ROUND_CLOSED_ERROR } from "@/lib/carriedDebt";
 import {
@@ -131,6 +132,7 @@ export async function POST(
       hCode: true,
       deductionResult: true,
       expectedAmount: true,
+      amountDue: true,
     },
   });
   const seeded = wasSeeded(roster);
@@ -155,13 +157,15 @@ export async function POST(
         columns.mapping.hCode !== undefined &&
         columns.mapping.unitCode !== undefined,
     });
+    // Read before applying: what each member was, so the file can be undone.
+    const changes = recordedChanges(roster, plan);
     const filled = await applyRoundSheet(round.id, plan);
     const progress = await refreshRoundProgress(round.id);
     const missingAccountNow = await prisma.statementMember.count({
       where: { roundId: round.id, accountNumber: null, deductionResult: "uncollected" },
     });
 
-    await rememberUpload(round.id, checked.file, "results");
+    await rememberUpload(round.id, checked.file, "results", changes);
     return NextResponse.json({
       applied: true,
       imported: progress.members,
@@ -219,10 +223,12 @@ export async function POST(
         columns.mapping.hCode !== undefined &&
         columns.mapping.unitCode !== undefined,
     });
+    // Read before applying: what each member was, so the file can be undone.
+    const changes = recordedChanges(roster, plan);
     const filled = await applyRoundSheet(round.id, plan);
     const progress = await refreshRoundProgress(round.id);
 
-    await rememberUpload(round.id, checked.file, "results");
+    await rememberUpload(round.id, checked.file, "results", changes);
     return NextResponse.json({
       applied: true,
       appended: true,

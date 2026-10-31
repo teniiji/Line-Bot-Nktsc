@@ -1712,6 +1712,8 @@ export default function StatementReconcilePanel() {
                   roundId={selected.id}
                   // Reloaded when an upload changes what the round knows.
                   refreshKey={`${selected.populationMembers}|${selected.awaitingMembers}|${selected.awaitingUnits}`}
+                  // An undone file changes the members, so the round reloads.
+                  onChanged={() => fetchRound(selected.id)}
                 />
               )}
 

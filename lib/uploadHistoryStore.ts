@@ -1,5 +1,7 @@
 import { createHash } from "crypto";
+import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
+import type { UploadChange } from "@/lib/uploadUndo";
 import type { PreviousUpload } from "@/lib/uploadHistory";
 
 export async function fileHash(file: File): Promise<string> {
@@ -24,10 +26,22 @@ export async function previousUploads(roundId: string, file: File): Promise<Prev
 
 // Best-effort: the upload itself has already been applied, and a history row
 // that failed to write must not turn it into an error.
-export async function rememberUpload(roundId: string, file: File, kind: "results" | "list"): Promise<void> {
+export async function rememberUpload(
+  roundId: string,
+  file: File,
+  kind: "results" | "list",
+  // What a results upload changed, so it can be undone (lib/uploadUndo.ts).
+  changes?: UploadChange[]
+): Promise<void> {
   try {
     await prisma.statementFileUpload.create({
-      data: { roundId, kind, fileName: file.name, fileHash: await fileHash(file) },
+      data: {
+        roundId,
+        kind,
+        fileName: file.name,
+        fileHash: await fileHash(file),
+        ...(changes ? { changes: changes as unknown as Prisma.InputJsonValue } : {}),
+      },
     });
   } catch (err) {
     console.error("upload history not written", err);
