@@ -75,6 +75,9 @@ export default function LineSplitDialog({
   const [pasteText, setPasteText] = useState("");
   const [pasted, setPasted] = useState<PastedRow[] | null>(null);
   const [pasteNote, setPasteNote] = useState<string | null>(null);
+  // Accounts from the last paste used, sent with the save so the system
+  // keeps who holds each one (rememberDebitAccounts).
+  const [pastedAccounts, setPastedAccounts] = useState<{ account: string; memberNumber: string }[]>([]);
 
   useEffect(() => {
     (async () => {
@@ -214,6 +217,11 @@ export default function LineSplitDialog({
       });
     }
     setRows([...merged.values()]);
+    setPastedAccounts(
+      pasted
+        .filter((r) => r.include && r.memberNumber.trim())
+        .map((r) => ({ account: r.account, memberNumber: r.memberNumber.trim() }))
+    );
     setPasted(null);
     setPasteText("");
     setPasteOpen(false);
@@ -230,6 +238,9 @@ export default function LineSplitDialog({
         body: JSON.stringify({
           payerName,
           parts: rows.map((r) => ({ memberNumber: r.memberNumber, amount: Number(r.amount) })),
+          // Only for members still in the division: a row removed after the
+          // paste is not evidence of who holds its account.
+          accounts: pastedAccounts.filter((a) => rows.some((r) => r.memberNumber === a.memberNumber)),
         }),
       });
       const body = await res.json().catch(() => ({}));
@@ -239,10 +250,16 @@ export default function LineSplitDialog({
       }
       const placed = (body.placed ?? []).length;
       const missing: string[] = body.notOnRound ?? [];
+      const learned: string[] = body.accountsKept?.learned ?? [];
+      const conflicts: string[] = body.accountsKept?.conflicts ?? [];
       onSaved(
         `แบ่งยอด ${formatAmount(total)} ของ ${body.payerName} ให้สมาชิก ${rows.length} คนแล้ว` +
           (body.roundLabel ? ` — นับในรอบ ${body.roundLabel} ${placed} คน` : " — ยังไม่มีรอบที่เปิดของเดือนนี้ จึงยังไม่ได้นับในรอบ") +
-          (missing.length ? ` · ไม่อยู่ในรอบ: ${missing.join(", ")} (บันทึกเป็นรายการในแถบธุรกรรมอย่างเดียว)` : "")
+          (missing.length ? ` · ไม่อยู่ในรอบ: ${missing.join(", ")} (บันทึกเป็นรายการในแถบธุรกรรมอย่างเดียว)` : "") +
+          (learned.length ? ` · จำเลขบัญชีใหม่ ${learned.length} บัญชีไว้ในทะเบียนแล้ว ครั้งหน้าจะหาเจอเอง` : "") +
+          (conflicts.length
+            ? ` · ⚠️ บัญชี ${conflicts.join(", ")} ผูกกับสมาชิกคนอื่นในทะเบียนอยู่แล้ว ระบบไม่ได้เปลี่ยน — ตรวจที่ตั้งค่าระบบ › ทะเบียนเลขบัญชี`
+            : "")
       );
     } finally {
       setBusy(false);
@@ -362,7 +379,8 @@ export default function LineSplitDialog({
               <div className="border border-sky-200 bg-sky-50/50 rounded p-3 space-y-2 text-sm">
                 <p className="text-slate-600">
                   วางรายการจาก Excel หรือใบ Direct Debit ของธนาคาร — ต้องมี<strong>เลขบัญชี 10 หลัก</strong>กับ
-                  <strong>ยอด</strong>ในแต่ละแถว (มีชื่อด้วยก็ได้) ระบบจะหาเลขสมาชิกจากเลขบัญชีให้
+                  <strong>ยอด</strong>ในแต่ละแถว (มีชื่อด้วยก็ได้) ระบบจะหาเลขสมาชิกจากเลขบัญชีให้ ·
+                  บัญชีที่ใส่เลขสมาชิกเอง ระบบจะจำไว้หลังบันทึก ครั้งหน้าจะหาเจอเอง
                 </p>
                 {!pasted ? (
                   <>
