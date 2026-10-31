@@ -78,6 +78,34 @@ export async function GET(request: NextRequest) {
   const payerIdOfLine = (line: { id: string }) => unitOfLine.get(line.id)?.payer?.id ?? null;
   // The units sharing the line's wording, when several do — the chooser.
   const payerChoicesOf = (line: { id: string }) => unitOfLine.get(line.id)?.choices ?? [];
+  // Each named unit's last division — the newest line divided under it, not
+  // the members it remembers, which only ever grow: a Direct Debit names
+  // different people each month, and the union of them all is nobody's list.
+  const unitIds = [...new Set([...unitOfLine.values()].map((u) => u.payer?.id).filter((id): id is string => !!id))];
+  const divided = unitIds.length
+    ? await prisma.statementLineSplit.findMany({
+        where: { payerId: { in: unitIds } },
+        select: { payerId: true, lineId: true, amount: true, createdAt: true },
+        orderBy: { createdAt: "desc" },
+      })
+    : [];
+  const lastSplitOf = new Map<string, { lineId: string; members: number; total: number }>();
+  for (const share of divided) {
+    if (!share.payerId) continue;
+    const entry = lastSplitOf.get(share.payerId) ?? { lineId: share.lineId, members: 0, total: 0 };
+    if (entry.lineId !== share.lineId) continue;
+    entry.members += 1;
+    entry.total = Math.round((entry.total + share.amount) * 100) / 100;
+    lastSplitOf.set(share.payerId, entry);
+  }
+  // A unit that paid for one member is not a division to repeat.
+  // Nor is the line itself, once it has been divided.
+  const lastSplitOfLine = (line: { id: string }) => {
+    const entry = lastSplitOf.get(payerIdOfLine(line) ?? "");
+    return entry && entry.members > 1 && entry.lineId !== line.id
+      ? { members: entry.members, total: entry.total }
+      : null;
+  };
   // A divided line whose description files no payer (numbers only) keeps the
   // name staff gave it on the division itself.
   const payerOfLine = (line: { id: string; description: string }) =>
@@ -121,6 +149,7 @@ export async function GET(request: NextRequest) {
     payerName: payerOf(deposit),
     payerId: payerIdOfLine(deposit),
     payerChoices: payerChoicesOf(deposit),
+    lastSplit: lastSplitOfLine(deposit),
   });
 
   // The same day again, in the bank's order rather than by conclusion — see

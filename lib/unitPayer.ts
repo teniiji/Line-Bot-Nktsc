@@ -19,11 +19,19 @@ const round2 = (value: number) => Math.round(value * 100) / 100;
  * evened out. Null for a description with nothing to go on.
  *
  *   "KHON KAEN CM TA/เทศบาลนครขอนแก่น/200405" → "khon kaen cm ta/เทศบาลนครขอนแก่น"
+ *   "ออมทรัพย์ครูฯ - 2352639"                   → "ออมทรัพย์ครูฯ"
+ *
+ * The second is the cooperative's Direct Debit coming back from Krungthai,
+ * its batch number after a dash rather than a slash — a new number every
+ * month, which made each month's Direct Debit a payer nobody had seen.
  */
+// " - 2352639" at the end of a segment: a reference, not part of the name.
+const TRAILING_REFERENCE = /\s*-\s*\d{4,}$/;
+
 export function payerKey(description: string | null | undefined): string | null {
   const segments = String(description ?? "")
     .split("/")
-    .map((s) => s.replace(/\s+/g, " ").trim().toLowerCase())
+    .map((s) => s.replace(/\s+/g, " ").trim().toLowerCase().replace(TRAILING_REFERENCE, ""))
     .filter((s) => s !== "" && !/^[\d\s.,-]+$/.test(s));
   return segments.length ? segments.join("/") : null;
 }

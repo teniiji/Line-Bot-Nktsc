@@ -397,6 +397,9 @@ export interface DailyDepositRow {
   // The units sharing this line's wording, when several do (lib/linePayer.ts):
   // the line asks which one it is from rather than guessing.
   payerChoices?: { id: string; name: string }[];
+  // How that unit was divided last time — offered as "แบ่งเหมือนครั้งก่อน",
+  // which opens the division already filled in, waiting to be saved.
+  lastSplit?: { members: number; total: number } | null;
   // For a unit's line nothing names yet: the one member of the newest round
   // owing exactly this amount — a guess for staff to check, not a match.
   suggestion?: { memberNumber: string; name: string | null; owed: number; roundLabel: string } | null;

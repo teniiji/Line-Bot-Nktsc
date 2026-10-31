@@ -89,8 +89,37 @@ export async function splitContext(lineId: string) {
   });
   const round = line.postedAt ? await openRoundFor(line.postedAt) : null;
 
+  // Earlier divisions under the same unit, newest first, to start from any
+  // of them — last month's list is not always the one this month repeats.
+  const earlier = payer
+    ? await prisma.statementLineSplit.findMany({
+        where: { payerId: payer.id, lineId: { not: line.id } },
+        orderBy: { createdAt: "desc" },
+        take: 300,
+      })
+    : [];
+  const earlierLines = earlier.length
+    ? await prisma.statementLine.findMany({
+        where: { id: { in: [...new Set(earlier.map((s) => s.lineId))] } },
+        select: { id: true, postedAt: true, amount: true },
+      })
+    : [];
+  const history = earlierLines
+    .sort((a, b) => (b.postedAt?.getTime() ?? 0) - (a.postedAt?.getTime() ?? 0))
+    .slice(0, SPLIT_HISTORY)
+    .map((l) => ({
+      lineId: l.id,
+      postedAt: l.postedAt,
+      amount: l.amount,
+      parts: earlier.filter((s) => s.lineId === l.id).map((s) => ({ memberNumber: s.memberNumber, amount: s.amount })),
+    }));
+
   const numbers = [
-    ...new Set([...remembered.map((m) => m.memberNumber), ...existing.map((s) => s.memberNumber)]),
+    ...new Set([
+      ...remembered.map((m) => m.memberNumber),
+      ...existing.map((s) => s.memberNumber),
+      ...history.flatMap((h) => h.parts.map((p) => p.memberNumber)),
+    ]),
   ];
   const members = await describeMembers(numbers, round?.id ?? null);
 
@@ -119,9 +148,16 @@ export async function splitContext(lineId: string) {
       amount: s.amount,
       ...members.get(memberNumberKey(s.memberNumber) ?? s.memberNumber),
     })),
+    history: history.map((h) => ({
+      ...h,
+      parts: h.parts.map((p) => ({ ...p, ...members.get(memberNumberKey(p.memberNumber) ?? p.memberNumber) })),
+    })),
     blocked: existing.length ? null : await blockedBecause(line),
   };
 }
+
+// How many earlier divisions the dialog offers to start from.
+const SPLIT_HISTORY = 6;
 
 // Name from the roster, and where the member stands on the round the money
 // would go to — so staff can divide it against what each one owes.

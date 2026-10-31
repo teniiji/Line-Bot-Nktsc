@@ -16,6 +16,11 @@ describe("payerKey", () => {
   it("keeps the payer and drops the per-transfer reference", () => {
     expect(payerKey("KHON KAEN CM TA/เทศบาลนครขอนแก่น/200405")).toBe("khon kaen cm ta/เทศบาลนครขอนแก่น");
     expect(payerKey("KHON KAEN CM TA/เทศบาลนครขอนแก่น/200512")).toBe("khon kaen cm ta/เทศบาลนครขอนแก่น");
+    // The Direct Debit's batch number follows a dash, not a slash.
+    expect(payerKey("ออมทรัพย์ครูฯ - 2352639")).toBe("ออมทรัพย์ครูฯ");
+    expect(payerKey("ออมทรัพย์ครูฯ-2361188")).toBe("ออมทรัพย์ครูฯ");
+    // A short number after a dash is part of the name.
+    expect(payerKey("สพป.หนองคาย - 2")).toBe("สพป.หนองคาย - 2");
   });
 
   it("evens out spacing and case", () => {
