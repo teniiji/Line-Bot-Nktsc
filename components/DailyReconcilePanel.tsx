@@ -1482,7 +1482,17 @@ export default function DailyReconcilePanel() {
 
       {error && <p className="px-4 py-3 text-sm text-red-600">{error}</p>}
 
-      {loading ? (
+      {/* Only the first load blanks the page. A refresh after บันทึก used to
+          swap the whole list for "กำลังโหลด…", the page shrank to that one
+          line, and the browser threw the reader back to the top — away from
+          the row they had just recorded and the next one under it. The list
+          now stays where it is while the new figures come in. */}
+      {loading && data && (
+        <p className="fixed bottom-4 right-4 z-40 text-xs text-slate-600 bg-white border border-slate-200 rounded px-3 py-1.5 shadow">
+          กำลังอัปเดต…
+        </p>
+      )}
+      {loading && !data ? (
         <p className="text-slate-500 text-sm py-10 text-center">กำลังโหลด…</p>
       ) : !data ? null : !data.loaded ? (
         <p className="text-slate-500 text-sm py-10 text-center px-4">
