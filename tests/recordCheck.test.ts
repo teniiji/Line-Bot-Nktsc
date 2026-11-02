@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseRecordTarget, recordCheckNotes, recordTargetValue } from "../lib/recordCheck";
+import { memberNote, parseRecordTarget, recordCheckNotes, recordTargetValue } from "../lib/recordCheck";
 
 const base = { roundLabel: "ก.ย. 2569", onRound: true, sameAmount: [] as { amount: number; date: string; where: "round" | "recorded" }[] };
 
@@ -64,5 +64,30 @@ describe("record targets", () => {
     expect(parseRecordTarget("")).toBeNull();
     expect(parseRecordTarget("member:1")).toBeNull();
     expect(parseRecordTarget(undefined)).toBeNull();
+  });
+});
+
+describe("who the typed number is", () => {
+  it("names the member from the register, with สังกัด and LINE", () => {
+    expect(memberNote({ name: "นางสาวทดสอบ ใจดี", unitName: "ร.ร.บ้านหนองหอย", inRoster: true, onLine: true })).toEqual({
+      tone: "ok",
+      text: "👤 นางสาวทดสอบ ใจดี · ร.ร.บ้านหนองหอย · เชื่อม LINE แล้ว",
+    });
+  });
+
+  it("says when the name came only from the round", () => {
+    expect(memberNote({ name: "นายทดสอบ", unitName: null, inRoster: false, onLine: false })?.text).toContain(
+      "ยังไม่มีในทะเบียนสมาชิก"
+    );
+  });
+
+  it("warns about a number nobody has", () => {
+    expect(memberNote(null)?.tone).toBe("warn");
+  });
+
+  it("comes first among the notes, and stays out when not looked up", () => {
+    const base = { roundLabel: null, onRound: false, sameAmount: [] };
+    expect(recordCheckNotes({ ...base, member: null })[0].text).toContain("ไม่พบเลขสมาชิกนี้");
+    expect(recordCheckNotes(base)[0].text).toBe("ยังไม่มีรอบหักไม่ได้ของเดือนที่เงินเข้า");
   });
 });

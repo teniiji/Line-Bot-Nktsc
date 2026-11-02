@@ -39,6 +39,7 @@ import {
   recordTargetValue,
   type RecordCheck,
   type RecordCheckNote,
+  type RecordMember,
   type RecordTarget,
 } from "@/lib/recordCheck";
 import LineSplitDialog from "@/components/LineSplitDialog";
@@ -2598,16 +2599,21 @@ const MemberCheckNotes = ({
   lineId,
   memberNumber,
   onOwed,
+  onMember,
 }: {
   lineId: string;
   memberNumber: string;
   onOwed?: (owed: RecordTarget[]) => void;
+  // Who the number is, once known — the form drops its name box for a
+  // member already in the register.
+  onMember?: (member: RecordMember | null | undefined) => void;
 }) => {
   const [notes, setNotes] = useState<RecordCheckNote[]>([]);
   useEffect(() => {
     const number = memberNumber.trim();
     setNotes([]);
     onOwed?.([]);
+    onMember?.(undefined);
     if (number.replace(/\D/g, "").length < 4) return;
     let live = true;
     const timer = setTimeout(async () => {
@@ -2620,6 +2626,7 @@ const MemberCheckNotes = ({
         if (live) {
           setNotes(recordCheckNotes(check));
           onOwed?.(check.otherOwed ?? []);
+          onMember?.(check.member);
         }
       } catch {
         // A note that failed to load is no note; recording still works.
@@ -2670,6 +2677,10 @@ const ActionForm = ({
 }) => {
   // Earlier months this member still owes, from the member check below.
   const [owed, setOwed] = useState<RecordTarget[]>([]);
+  // Who the typed number is (MemberCheckNotes): a name in the register needs
+  // no typing.
+  const [member, setMember] = useState<RecordMember | null | undefined>(undefined);
+  const knownName = member?.inRoster ? member.name : null;
   // A month chosen for one member is not another member's to pay.
   useEffect(() => {
     if (actions.target && !owed.some((o) => recordTargetValue(o) === actions.target)) actions.setTarget("");
@@ -2733,7 +2744,7 @@ const ActionForm = ({
           <input
             value={actions.memberName}
             onChange={(e) => actions.setMemberName(e.target.value)}
-            placeholder="ชื่อ-นามสกุล (ใส่เมื่อไม่มีในทะเบียน)"
+            placeholder={knownName ? `${knownName} (จากทะเบียน)` : "ชื่อ-นามสกุล (ใส่เมื่อไม่มีในทะเบียน)"}
             title="ปล่อยว่างได้ถ้าเลขสมาชิกมีในทะเบียนอยู่แล้ว — ระบบจะใช้ชื่อจากทะเบียนเสมอ"
             className="border border-slate-300 rounded px-2 py-1 w-64 bg-white"
           />
@@ -2792,7 +2803,12 @@ const ActionForm = ({
         </div>
       )}
       {mode === "record" && (
-        <MemberCheckNotes lineId={targetId} memberNumber={actions.memberNumber} onOwed={setOwed} />
+        <MemberCheckNotes
+          lineId={targetId}
+          memberNumber={actions.memberNumber}
+          onOwed={setOwed}
+          onMember={setMember}
+        />
       )}
     </div>
   );
