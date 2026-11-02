@@ -25,6 +25,20 @@ export interface RecordCheck {
   // 30047: ฿4,870 arriving in October, for a member October was still
   // awaiting a result on, paid for a month already gone.
   otherOwed?: RecordTarget[];
+  // Who the number is, from the member register (or, for a member the
+  // register lacks, the round's own list) — so staff see the person they are
+  // recording for before saving, not a bare number. 31744 typed into the
+  // form said nothing about who that was.
+  member?: RecordMember | null;
+}
+
+export interface RecordMember {
+  name: string | null;
+  unitName: string | null;
+  // In the member register at all; false when only the round knows the name.
+  inRoster: boolean;
+  // Linked to the cooperative's LINE OA.
+  onLine: boolean;
 }
 
 export interface RecordTarget {
@@ -51,8 +65,24 @@ const day = (iso: string) => {
   return `${d.getUTCDate()}/${d.getUTCMonth() + 1}/${d.getUTCFullYear() + 543}`;
 };
 
+// Who the member is, as the first note: name and สังกัด, or that the number
+// is in no register — the cue to type the name in, or to recheck the number.
+export function memberNote(m: RecordMember | null | undefined): RecordCheckNote | null {
+  if (m === undefined) return null;
+  if (!m || !m.name) {
+    return { tone: "warn", text: "⚠️ ไม่พบเลขสมาชิกนี้ในทะเบียนสมาชิก — ตรวจเลขอีกครั้ง หรือใส่ชื่อในช่องถัดไป" };
+  }
+  const parts = [`👤 ${m.name}`];
+  if (m.unitName) parts.push(m.unitName);
+  if (m.onLine) parts.push("เชื่อม LINE แล้ว");
+  if (!m.inRoster) parts.push("(ชื่อจากรายชื่อในรอบ ยังไม่มีในทะเบียนสมาชิก)");
+  return { tone: m.inRoster ? "ok" : "info", text: parts.join(" · ") };
+}
+
 export function recordCheckNotes(c: RecordCheck): RecordCheckNote[] {
   const notes: RecordCheckNote[] = [];
+  const who = memberNote(c.member);
+  if (who) notes.push(who);
   if (c.roundLabel && c.thisLineCounted) {
     const due = c.amountDue ?? 0;
     const paid = c.amountPaid ?? 0;

@@ -26,9 +26,29 @@ export async function GET(request: NextRequest, { params }: { params: { id: stri
   const member = round
     ? await prisma.statementMember.findFirst({
         where: { roundId: round.id, memberNumber: { in: spellings } },
-        select: { memberNumber: true, deductionResult: true, amountDue: true, expectedAmount: true, amountPaid: true },
+        select: {
+          memberNumber: true,
+          name: true,
+          unitName: true,
+          deductionResult: true,
+          amountDue: true,
+          expectedAmount: true,
+          amountPaid: true,
+        },
       })
     : null;
+
+  // Who the number is: the register first, the round's list for a member
+  // the register lacks.
+  const roster = await prisma.memberRoster.findFirst({
+    where: { memberNumber: { in: spellings } },
+    select: { memberName: true, unitName: true, lineUserId: true },
+  });
+  const who: RecordCheck["member"] = roster
+    ? { name: roster.memberName, unitName: roster.unitName, inRoster: true, onLine: !!roster.lineUserId }
+    : member?.name
+      ? { name: member.name, unitName: member.unitName, inRoster: false, onLine: false }
+      : null;
 
   const near = line.postedAt
     ? { gte: new Date(line.postedAt.getTime() - WINDOW_MS), lte: new Date(line.postedAt.getTime() + WINDOW_MS) }
@@ -112,6 +132,7 @@ export async function GET(request: NextRequest, { params }: { params: { id: stri
   ];
 
   const check: RecordCheck = {
+    member: who,
     otherOwed,
     thisLineCounted,
     roundLabel: round?.label ?? null,
