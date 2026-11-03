@@ -3,7 +3,12 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { ROUND_CLOSED_ERROR } from "@/lib/carriedDebt";
 import { memberNumberKey } from "@/lib/memberNumber";
-import { isFullSplit, remainingAfterSplit, splitAmountProblem } from "@/lib/statementSplitTransfer";
+import {
+  isFullSplit,
+  pastSplitTargets,
+  remainingAfterSplit,
+  splitAmountProblem,
+} from "@/lib/statementSplitTransfer";
 import { recomputeRoundPayments } from "@/lib/statementRecompute";
 
 export const dynamic = "force-dynamic";
@@ -119,4 +124,57 @@ export async function POST(
   await recomputeRoundPayments(round.id);
 
   return NextResponse.json({ ok: true });
+}
+
+// Who this account's money was given to before (pastSplitTargets), offered
+// when the form opens — with their names, and whether they are on this round
+// to receive it.
+export async function GET(_request: NextRequest, { params }: { params: { id: string; transferId: string } }) {
+  const transfer = await prisma.statementTransfer.findFirst({
+    where: { id: params.transferId, roundId: params.id },
+    select: { memberNumber: true, accountNumber: true },
+  });
+  if (!transfer) {
+    return NextResponse.json({ error: "ไม่พบรายการโอนนี้ในรอบนี้" }, { status: 404 });
+  }
+  if (!transfer.accountNumber || !transfer.memberNumber) return NextResponse.json({ suggestions: [] });
+
+  const rows = await prisma.statementTransfer.findMany({
+    where: { accountNumber: transfer.accountNumber },
+    select: { memberNumber: true, amount: true, transferredAt: true, manualMemberNumber: true },
+    orderBy: { transferredAt: "desc" },
+    take: 300,
+  });
+  const targets = pastSplitTargets(
+    rows.filter((r): r is typeof r & { memberNumber: string } => !!r.memberNumber),
+    transfer.memberNumber
+  );
+  if (targets.length === 0) return NextResponse.json({ suggestions: [] });
+
+  const numbers = targets.map((t) => t.memberNumber);
+  const [roster, onRound] = await Promise.all([
+    prisma.memberRoster.findMany({
+      where: { memberNumber: { in: numbers } },
+      select: { memberNumber: true, memberName: true },
+    }),
+    prisma.statementMember.findMany({
+      where: { roundId: params.id },
+      select: { memberNumber: true, name: true },
+    }),
+  ]);
+  const key = (n: string) => memberNumberKey(n) ?? n;
+  const nameOf = new Map(roster.map((r) => [key(r.memberNumber), r.memberName]));
+  const roundOf = new Map(onRound.map((m) => [key(m.memberNumber), m]));
+  return NextResponse.json({
+    suggestions: targets.map((t) => {
+      const here = roundOf.get(key(t.memberNumber));
+      return {
+        ...t,
+        // The round's spelling, so the move finds the member.
+        memberNumber: here?.memberNumber ?? t.memberNumber,
+        name: nameOf.get(key(t.memberNumber)) ?? here?.name ?? null,
+        onRound: !!here,
+      };
+    }),
+  });
 }
