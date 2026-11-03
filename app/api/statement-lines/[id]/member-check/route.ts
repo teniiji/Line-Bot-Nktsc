@@ -30,6 +30,7 @@ export async function GET(request: NextRequest, { params }: { params: { id: stri
           memberNumber: true,
           name: true,
           unitName: true,
+          accountNumber: true,
           deductionResult: true,
           amountDue: true,
           expectedAmount: true,
@@ -42,12 +43,32 @@ export async function GET(request: NextRequest, { params }: { params: { id: stri
   // the register lacks.
   const roster = await prisma.memberRoster.findFirst({
     where: { memberNumber: { in: spellings } },
-    select: { memberName: true, unitName: true, lineUserId: true },
+    select: { memberName: true, unitName: true, lineUserId: true, phone: true },
   });
+  // Accounts bound to the member: the directory, then the round's own.
+  const bound = await prisma.memberBankAccount.findMany({
+    where: { memberNumber: { in: spellings } },
+    select: { accountNumber: true },
+    orderBy: { createdAt: "asc" },
+  });
+  const accountNumbers = [
+    ...new Set([...bound.map((b) => b.accountNumber), ...(member?.accountNumber ? [member.accountNumber] : [])]),
+  ];
+  const accounts = accountNumbers.map((accountNumber) => ({
+    accountNumber,
+    paidFrom: line.senderAccount !== null && accountNumber === line.senderAccount,
+  }));
   const who: RecordCheck["member"] = roster
-    ? { name: roster.memberName, unitName: roster.unitName, inRoster: true, onLine: !!roster.lineUserId }
+    ? {
+        name: roster.memberName,
+        unitName: roster.unitName,
+        inRoster: true,
+        onLine: !!roster.lineUserId,
+        phone: roster.phone,
+        accounts,
+      }
     : member?.name
-      ? { name: member.name, unitName: member.unitName, inRoster: false, onLine: false }
+      ? { name: member.name, unitName: member.unitName, inRoster: false, onLine: false, phone: null, accounts }
       : null;
 
   const near = line.postedAt

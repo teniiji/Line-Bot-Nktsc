@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { memberNote, parseRecordTarget, recordCheckNotes, recordTargetValue } from "../lib/recordCheck";
+import { memberContactNote, memberNote, parseRecordTarget, recordCheckNotes, recordTargetValue } from "../lib/recordCheck";
 
 const base = { roundLabel: "ก.ย. 2569", onRound: true, sameAmount: [] as { amount: number; date: string; where: "round" | "recorded" }[] };
 
@@ -89,5 +89,30 @@ describe("who the typed number is", () => {
     const base = { roundLabel: null, onRound: false, sameAmount: [] };
     expect(recordCheckNotes({ ...base, member: null })[0].text).toContain("ไม่พบเลขสมาชิกนี้");
     expect(recordCheckNotes(base)[0].text).toBe("ยังไม่มีรอบหักไม่ได้ของเดือนที่เงินเข้า");
+  });
+});
+
+describe("the member's phone and accounts", () => {
+  const who = { name: "นางสาวทดสอบ ใจดี", unitName: null, inRoster: true, onLine: false };
+
+  it("lists the phone and bound accounts, marking the one this money came from", () => {
+    expect(
+      memberContactNote({
+        ...who,
+        phone: "0812345678",
+        accounts: [
+          { accountNumber: "4130001111", paidFrom: false },
+          { accountNumber: "4960599999", paidFrom: true },
+        ],
+      })?.text
+    ).toBe("📞 0812345678 · 🏦 บัญชีที่ผูกไว้: 4130001111, 4960599999 (บัญชีที่โอนมานี้)");
+  });
+
+  it("says when no account is bound", () => {
+    expect(memberContactNote({ ...who, phone: null, accounts: [] })?.text).toBe("🏦 ยังไม่ได้ผูกเลขบัญชี");
+  });
+
+  it("says nothing for a number nobody has", () => {
+    expect(memberContactNote(null)).toBeNull();
   });
 });

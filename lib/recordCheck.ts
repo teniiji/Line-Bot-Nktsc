@@ -39,6 +39,11 @@ export interface RecordMember {
   inRoster: boolean;
   // Linked to the cooperative's LINE OA.
   onLine: boolean;
+  // From the register, to call about the payment.
+  phone?: string | null;
+  // Bank accounts bound to the member (ทะเบียนเลขบัญชี, and the account the
+  // round has on file); `paidFrom` marks the one this line came from.
+  accounts?: { accountNumber: string; paidFrom: boolean }[];
 }
 
 export interface RecordTarget {
@@ -79,10 +84,29 @@ export function memberNote(m: RecordMember | null | undefined): RecordCheckNote 
   return { tone: m.inRoster ? "ok" : "info", text: parts.join(" · ") };
 }
 
+// The member's phone and bound accounts, on a line of their own under the
+// name — and whether this money came from one of them.
+export function memberContactNote(m: RecordMember | null | undefined): RecordCheckNote | null {
+  if (!m || !m.name) return null;
+  const parts: string[] = [];
+  if (m.phone) parts.push(`📞 ${m.phone}`);
+  const accounts = m.accounts ?? [];
+  parts.push(
+    accounts.length
+      ? `🏦 บัญชีที่ผูกไว้: ${accounts
+          .map((a) => (a.paidFrom ? `${a.accountNumber} (บัญชีที่โอนมานี้)` : a.accountNumber))
+          .join(", ")}`
+      : "🏦 ยังไม่ได้ผูกเลขบัญชี"
+  );
+  return { tone: "info", text: parts.join(" · ") };
+}
+
 export function recordCheckNotes(c: RecordCheck): RecordCheckNote[] {
   const notes: RecordCheckNote[] = [];
   const who = memberNote(c.member);
   if (who) notes.push(who);
+  const contact = memberContactNote(c.member);
+  if (contact) notes.push(contact);
   if (c.roundLabel && c.thisLineCounted) {
     const due = c.amountDue ?? 0;
     const paid = c.amountPaid ?? 0;
