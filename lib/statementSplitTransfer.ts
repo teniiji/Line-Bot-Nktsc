@@ -1,3 +1,4 @@
+import { memberNumberKey } from "./memberNumber";
 // Moving part — or all — of one transfer's credit to a different member.
 //
 // A statement line is one payment; it is not always one person's. Somebody
@@ -107,6 +108,46 @@ export function overstatedParents(rows: SplitFamilyRow[]): { fingerprint: string
     if (whole === null) continue;
     const amount = remainingAfterSplit(whole, takenSum);
     if (amount > EPSILON && r.amount - amount > EPSILON) out.push({ fingerprint: r.fingerprint, amount });
+  }
+  return out;
+}
+
+/**
+ * Who this account's money has been given to before — for the next time the
+ * same transfer arrives and has to be divided the same way. ชูศักดิ์'s
+ * account 4301008047 pays for other members every month; each month the
+ * form opened empty and the numbers had to be found and typed again.
+ *
+ * Rows staff placed by hand (manualMemberNumber) on someone other than the
+ * account's holder, newest first, one per member, with the amount last given.
+ */
+export interface PastSplitRow {
+  memberNumber: string;
+  amount: number;
+  transferredAt: Date | string | null;
+  manualMemberNumber: boolean;
+}
+
+export function pastSplitTargets(
+  rows: PastSplitRow[],
+  holder: string,
+  limit = 6
+): { memberNumber: string; lastAmount: number; lastAt: string | null }[] {
+  const holderKey = memberNumberKey(holder) ?? holder;
+  const time = (r: PastSplitRow) => (r.transferredAt ? new Date(r.transferredAt).getTime() : 0);
+  const seen = new Set<string>();
+  const out: { memberNumber: string; lastAmount: number; lastAt: string | null }[] = [];
+  for (const r of [...rows].sort((a, b) => time(b) - time(a))) {
+    if (!r.manualMemberNumber) continue;
+    const key = memberNumberKey(r.memberNumber) ?? r.memberNumber;
+    if (key === holderKey || seen.has(key)) continue;
+    seen.add(key);
+    out.push({
+      memberNumber: r.memberNumber,
+      lastAmount: r.amount,
+      lastAt: r.transferredAt ? new Date(r.transferredAt).toISOString() : null,
+    });
+    if (out.length >= limit) break;
   }
   return out;
 }

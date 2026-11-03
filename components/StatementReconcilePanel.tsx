@@ -215,6 +215,11 @@ export default function StatementReconcilePanel() {
   const [asideCategory, setAsideCategory] = useState<string>(SET_ASIDE_CATEGORIES[0]);
   const [asideError, setAsideError] = useState<string | null>(null);
   const [splitError, setSplitError] = useState<string | null>(null);
+  // Who this account's money was given to before — one click fills the form
+  // (GET …/split, pastSplitTargets).
+  const [splitSuggestions, setSplitSuggestions] = useState<
+    { memberNumber: string; name: string | null; lastAmount: number; lastAt: string | null; onRound: boolean }[]
+  >([]);
   // The one member currently offering the "บันทึกเงินสด" form — a payment
   // that never touches a bank account at all, so no Statement upload could
   // ever bring it in on its own. See app/api/statement-rounds/[id]/cash.
@@ -354,6 +359,13 @@ export default function StatementReconcilePanel() {
     // the figure already on screen would be asking for a slip.
     setSplitAmountInput(String(transfer.amount));
     setSplitError(null);
+    setSplitSuggestions([]);
+    if (selectedId) {
+      fetch(`/api/statement-rounds/${selectedId}/transfers/${transfer.id}/split`)
+        .then((res) => (res.ok ? res.json() : { suggestions: [] }))
+        .then((body) => setSplitSuggestions(body.suggestions ?? []))
+        .catch(() => setSplitSuggestions([]));
+    }
   };
 
   const closeSplit = () => {
@@ -2786,6 +2798,39 @@ export default function StatementReconcilePanel() {
                                     {t.recordedLineId && reassignForm(t.recordedLineId, t.amount, m.name)}
                                     {splittingTransfer === t.id && (
                                       <div className="w-full flex flex-wrap items-center gap-2 pt-1 pl-1 border-t border-dashed border-slate-200 mt-1">
+                                        {splitSuggestions.length > 0 && (
+                                          <div className="w-full flex flex-wrap items-center gap-1.5 text-xs">
+                                            <span className="text-slate-500">เคยแบ่งให้:</span>
+                                            {splitSuggestions.map((sg) => (
+                                              <button
+                                                key={sg.memberNumber}
+                                                type="button"
+                                                disabled={!sg.onRound}
+                                                onClick={() => {
+                                                  setSplitMemberNumber(sg.memberNumber);
+                                                  // Last time's share, while it fits in this line.
+                                                  if (sg.lastAmount > 0 && sg.lastAmount <= t.amount) {
+                                                    setSplitAmountInput(String(sg.lastAmount));
+                                                  }
+                                                }}
+                                                className={`border rounded-full px-2 py-0.5 disabled:opacity-50 ${
+                                                  splitMemberNumber.trim() === sg.memberNumber
+                                                    ? "border-sky-500 bg-sky-50 text-sky-800"
+                                                    : "border-slate-300 text-slate-700 hover:bg-sky-50"
+                                                }`}
+                                                title={
+                                                  sg.onRound
+                                                    ? `ครั้งก่อนแบ่งให้ ${formatAmount(sg.lastAmount)}${sg.lastAt ? ` เมื่อ ${formatStatementDateTime(sg.lastAt)}` : ""} — กดเพื่อใส่เลขสมาชิกและยอดเดิม`
+                                                    : `ไม่มีชื่อในรอบ ${selected?.label ?? "นี้"} จึงรับยอดในรอบนี้ไม่ได้`
+                                                }
+                                              >
+                                                <span className="num">{sg.memberNumber}</span> {sg.name ?? ""}
+                                                <span className="text-slate-400"> ({formatAmount(sg.lastAmount)})</span>
+                                                {!sg.onRound && <span className="text-slate-400"> · ไม่อยู่ในรอบ</span>}
+                                              </button>
+                                            ))}
+                                          </div>
+                                        )}
                                         <span className="text-xs text-slate-500">ย้าย</span>
                                         <input
                                           type="number"

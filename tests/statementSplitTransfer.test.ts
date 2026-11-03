@@ -6,6 +6,7 @@ import {
   parentOfPiece,
   remainingAfterSplit,
   splitAmountProblem,
+  pastSplitTargets,
 } from "../lib/statementSplitTransfer";
 
 describe("splitAmountProblem", () => {
@@ -115,5 +116,22 @@ describe("overstatedParents", () => {
     expect(
       overstatedParents([row(fp, 5600), row(`${fp}::split:a`, 2000), row(`${fp}::split:a::split:b`, 1000)])
     ).toEqual([]);
+  });
+});
+
+describe("who an account's money went to before", () => {
+  it("lists members staff gave it to, newest first, once each, without the holder", () => {
+    const rows = [
+      { memberNumber: "15000", amount: 3000, transferredAt: "2026-10-30T08:07:00Z", manualMemberNumber: false },
+      { memberNumber: "31744", amount: 1500, transferredAt: "2026-09-28T06:48:00Z", manualMemberNumber: true },
+      { memberNumber: "031744", amount: 1200, transferredAt: "2026-08-28T06:48:00Z", manualMemberNumber: true },
+      { memberNumber: "22820", amount: 2000, transferredAt: "2026-10-29T06:19:00Z", manualMemberNumber: true },
+      // The holder's own row, kept by hand after a piece was taken.
+      { memberNumber: "15000", amount: 1740, transferredAt: "2026-10-29T06:19:00Z", manualMemberNumber: true },
+    ];
+    expect(pastSplitTargets(rows, "15000")).toEqual([
+      { memberNumber: "22820", lastAmount: 2000, lastAt: "2026-10-29T06:19:00.000Z" },
+      { memberNumber: "31744", lastAmount: 1500, lastAt: "2026-09-28T06:48:00.000Z" },
+    ]);
   });
 });
