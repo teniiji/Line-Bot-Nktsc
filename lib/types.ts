@@ -400,6 +400,10 @@ export interface DailyDepositRow {
   // How that unit was divided last time — offered as "แบ่งเหมือนครั้งก่อน",
   // which opens the division already filled in, waiting to be saved.
   lastSplit?: { members: number; total: number } | null;
+  // Who sent it, as staff found at the bank before knowing the member
+  // (lib/senderName.ts), and members registered under that name.
+  senderName?: string | null;
+  senderMatches?: { memberNumber: string; memberName: string }[];
   // For a unit's line nothing names yet: the one member of the newest round
   // owing exactly this amount — a guess for staff to check, not a match.
   suggestion?: { memberNumber: string; name: string | null; owed: number; roundLabel: string } | null;

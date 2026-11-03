@@ -348,6 +348,92 @@ const UnitTag = ({
   );
 };
 
+// The sender's name staff found at the bank, before anybody knows which
+// member it is (lib/senderName.ts) — kept against the paying account, so the
+// next transfer from it reads the same.
+const SenderNameTag = ({ deposit }: { deposit: DailyDepositRow }) => {
+  const refresh = useContext(RefreshDay);
+  const [draft, setDraft] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const save = async () => {
+    if (draft === null) return;
+    setSaving(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/statement-lines/${deposit.id}/sender-name`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: draft }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setError(body.error || "บันทึกชื่อไม่สำเร็จ");
+        return;
+      }
+      setDraft(null);
+      await refresh();
+    } finally {
+      setSaving(false);
+    }
+  };
+  if (draft !== null) {
+    return (
+      <span className="inline-flex flex-wrap items-center gap-1.5 no-print">
+        👤
+        <input
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") save();
+            if (e.key === "Escape") setDraft(null);
+          }}
+          autoFocus
+          disabled={saving}
+          placeholder="ชื่อผู้โอนตามที่ธนาคารแจ้ง"
+          aria-label="ชื่อผู้โอน"
+          className="border border-slate-300 rounded px-1.5 py-0.5 text-xs w-52"
+        />
+        <button type="button" onClick={save} disabled={saving} className="text-xs text-slate-900 hover:underline">
+          {saving ? "กำลังบันทึก…" : "บันทึก"}
+        </button>
+        <button type="button" onClick={() => setDraft(null)} className="text-xs text-slate-500 hover:underline">
+          ยกเลิก
+        </button>
+        {error && <span className="text-xs text-red-600">{error}</span>}
+      </span>
+    );
+  }
+  const title = deposit.senderAccount
+    ? "ชื่อผู้โอนผูกกับเลขบัญชีนี้ — ยอดครั้งต่อไปจากบัญชีนี้จะขึ้นชื่อนี้ด้วย"
+    : "ชื่อผู้โอนของรายการนี้";
+  return deposit.senderName ? (
+    <span title={title}>
+      <span className="text-slate-700">👤 {deposit.senderName}</span>
+      <span className="text-xs text-slate-400"> (ยังไม่รู้เลขสมาชิก)</span>
+      <button
+        type="button"
+        onClick={() => setDraft(deposit.senderName ?? "")}
+        className="ml-1.5 text-xs text-slate-400 hover:text-slate-900 hover:underline no-print"
+      >
+        แก้ชื่อ
+      </button>
+    </span>
+  ) : (
+    <span>
+      <span className="text-slate-400">ไม่รู้ว่าใคร</span>
+      <button
+        type="button"
+        onClick={() => setDraft("")}
+        className="ml-1.5 text-xs text-sky-700 hover:underline no-print"
+        title="ใส่ชื่อผู้โอนที่ได้จากธนาคารไว้ก่อน ยังไม่ต้องรู้เลขสมาชิก — คนที่เปิดดูต่อจะเห็นชื่อนี้"
+      >
+        ✏️ ใส่ชื่อผู้โอน
+      </button>
+    </span>
+  );
+};
+
 // Who a payment came from, as far as anything knows. The account number is
 // what staff match against the bank; the member number is only there when the
 // directory recognised it.
@@ -382,7 +468,7 @@ const Payer = ({ deposit }: { deposit: DailyDepositRow }) => (
         />
       </span>
     ) : (
-      <span className="text-slate-400">ไม่รู้ว่าใคร</span>
+      <SenderNameTag deposit={deposit} />
     )}
     {deposit.senderAccount && (
       <span className="font-mono text-xs text-slate-400"> · {deposit.senderAccount}</span>
@@ -2988,6 +3074,21 @@ const DepositTable = ({
                     >
                       บันทึกรายการ
                     </button>
+                    {/* The sender's name is a member's name: one click opens
+                        the form for that member. */}
+                    {!deposit.memberNumber &&
+                      (deposit.senderMatches ?? []).map((m) => (
+                        <button
+                          key={m.memberNumber}
+                          onClick={() =>
+                            actions.open({ id: deposit.id, kind: "record", scope: "deposits" }, m.memberNumber)
+                          }
+                          className="rounded px-1.5 border border-sky-300 bg-sky-50 text-sky-800 hover:underline"
+                          title={`ชื่อผู้โอนตรงกับสมาชิก ${m.memberNumber} ${m.memberName} ในทะเบียน — กดเพื่อเปิดฟอร์มบันทึกให้คนนี้ (ตรวจอีกครั้งก่อนบันทึก)`}
+                        >
+                          บันทึกให้ {m.memberNumber}
+                        </button>
+                      ))}
                     {actions.onSplit && (!deposit.memberNumber || (!deposit.senderAccount && deposit.payerName)) && (
                       <button
                         onClick={() => actions.onSplit?.(deposit.id)}
