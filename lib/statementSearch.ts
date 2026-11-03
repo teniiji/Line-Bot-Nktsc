@@ -91,6 +91,7 @@ export function depositHaystack(row: DailyDepositRow): string {
     ...amountForms(row.amount),
     row.memberNumber ?? "",
     row.senderAccount ?? "",
+    row.senderName ?? "",
     CHANNEL_LABELS[row.channel] ?? row.channel,
     row.branch,
     row.description,

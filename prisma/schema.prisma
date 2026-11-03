@@ -1124,3 +1124,16 @@ model StatementFileUpload {
 
   @@index([roundId])
 }
+
+// The name of whoever sent a payment nobody could place yet, as staff found
+// it at the bank (lib/senderName.ts). Kept against the paying account when
+// the line has one, so every line from that account reads the same; else
+// against the line itself.
+model SenderName {
+  id            String   @id @default(cuid())
+  accountNumber String?  @unique
+  lineId        String?  @unique
+  name          String
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+}

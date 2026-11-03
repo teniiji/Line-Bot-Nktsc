@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { linePayers } from "@/lib/linePayerStore";
 import { likelyDuplicates } from "@/lib/slipDuplicates";
 import { prisma } from "@/lib/prisma";
+import { firstName, sameName } from "@/lib/senderName";
 import type { DepositLine, SlipRecord } from "@/lib/dailyReconcile";
 import { loadReconciliation } from "@/lib/dailyReconcileStore";
 import { isUnitPayerLine, soleOwing } from "@/lib/unitPayer";
@@ -110,6 +111,31 @@ export async function GET(request: NextRequest) {
   // name staff gave it on the division itself.
   const payerOfLine = (line: { id: string; description: string }) =>
     payerOf(line) ?? splits.get(line.id)?.find((p) => p.payerName)?.payerName ?? null;
+  // Names staff found for senders nobody could place (lib/senderName.ts):
+  // by the paying account, else by the line.
+  const senderAccounts = [...new Set(lines.map((l) => l.senderAccount).filter((a): a is string => !!a))];
+  const senderNames = await prisma.senderName.findMany({
+    where: { OR: [{ accountNumber: { in: senderAccounts } }, { lineId: { in: lines.map((l) => l.id) } }] },
+    select: { accountNumber: true, lineId: true, name: true },
+  });
+  const nameByLine = new Map(senderNames.filter((n) => n.lineId).map((n) => [n.lineId!, n.name]));
+  const nameByAccount = new Map(senderNames.filter((n) => n.accountNumber).map((n) => [n.accountNumber!, n.name]));
+  const senderNameOf = (line: { id: string; senderAccount: string | null }) =>
+    nameByLine.get(line.id) ?? (line.senderAccount ? nameByAccount.get(line.senderAccount) : undefined) ?? null;
+  // Members registered under that name — very often the sender is one.
+  const firstNames = [...new Set(senderNames.map((n) => firstName(n.name)).filter((f): f is string => !!f))];
+  const namesakes = firstNames.length
+    ? await prisma.memberRoster.findMany({
+        where: { OR: firstNames.map((f) => ({ memberName: { contains: f } })) },
+        select: { memberNumber: true, memberName: true },
+        take: 500,
+      })
+    : [];
+  const senderMatchesOf = (line: { id: string; senderAccount: string | null }) => {
+    const name = senderNameOf(line);
+    return name ? sameName(name, namesakes).slice(0, 3) : [];
+  };
+
   // Slips outside the window itself only count when they pair with money
   // inside it; on their own they belong to their own day's view, not this one.
   const inRange = (date: Date) => date >= start && date < end;
@@ -150,6 +176,8 @@ export async function GET(request: NextRequest) {
     payerId: payerIdOfLine(deposit),
     payerChoices: payerChoicesOf(deposit),
     lastSplit: lastSplitOfLine(deposit),
+    senderName: senderNameOf(deposit),
+    senderMatches: senderMatchesOf(deposit),
   });
 
   // The same day again, in the bank's order rather than by conclusion — see
