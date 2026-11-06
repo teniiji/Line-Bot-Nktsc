@@ -36,14 +36,83 @@ export type StatementSort =
   | "paidAt"
   // The ส่วนต่าง column: most overpaid first, or furthest short first.
   | "differenceDesc"
-  | "differenceAsc";
+  | "differenceAsc"
+  // The other columns' second direction, for sorting from their headers.
+  | "memberNumberDesc"
+  | "nameDesc"
+  | "hCodeDesc"
+  | "accountNumber"
+  | "accountNumberDesc"
+  | "amountDueDesc"
+  | "amountDueAsc"
+  | "amountPaidDesc"
+  | "amountPaidAsc"
+  | "paidAtAsc"
+  | "status"
+  | "statusDesc";
 
-// The two directions of ส่วนต่าง are one ordering asked two ways — choosing
-// one takes the other out rather than stacking a sort that can never apply.
-export const OPPOSITE_SORT: Partial<Record<StatementSort, StatementSort>> = {
-  differenceDesc: "differenceAsc",
-  differenceAsc: "differenceDesc",
+// Each column of the member table, sorted from its header: the first click
+// takes the first direction, the second the other, the third goes back to
+// the usual order. Money opens on the biggest, the way ส่วนต่าง always has.
+export type StatementColumn =
+  | "memberNumber"
+  | "name"
+  | "unit"
+  | "accountNumber"
+  | "amountDue"
+  | "amountPaid"
+  | "difference"
+  | "paidAt"
+  | "status";
+
+export const COLUMN_SORTS: Record<StatementColumn, [StatementSort, StatementSort]> = {
+  memberNumber: ["memberNumber", "memberNumberDesc"],
+  name: ["name", "nameDesc"],
+  unit: ["hCode", "hCodeDesc"],
+  accountNumber: ["accountNumber", "accountNumberDesc"],
+  amountDue: ["amountDueDesc", "amountDueAsc"],
+  amountPaid: ["amountPaidDesc", "amountPaidAsc"],
+  difference: ["differenceDesc", "differenceAsc"],
+  paidAt: ["paidAt", "paidAtAsc"],
+  status: ["status", "statusDesc"],
 };
+
+// The two directions of a column are one ordering asked two ways — choosing
+// one takes the other out rather than stacking a sort that can never apply.
+export const OPPOSITE_SORT: Partial<Record<StatementSort, StatementSort>> = Object.fromEntries(
+  Object.values(COLUMN_SORTS).flatMap(([a, b]) => [
+    [a, b],
+    [b, a],
+  ])
+);
+
+// Which column, and which way, a sort list is ordered by from a header —
+// only when that column's ordering is the whole list.
+export function columnSortOf(
+  sort: StatementSort[],
+  column: StatementColumn
+): "first" | "second" | null {
+  if (sort.length !== 1) return null;
+  const [first, second] = COLUMN_SORTS[column];
+  return sort[0] === first ? "first" : sort[0] === second ? "second" : null;
+}
+
+// The next ordering a header click asks for (see COLUMN_SORTS).
+export function nextColumnSort(
+  sort: StatementSort[],
+  column: StatementColumn,
+  fallback: StatementSort[]
+): StatementSort[] {
+  const [first, second] = COLUMN_SORTS[column];
+  const now = columnSortOf(sort, column);
+  return now === "first" ? [second] : now === "second" ? fallback : [first];
+}
+
+// The status column, in the order of what is left to do: still owing, then
+// awaiting a result, overpaid, then settled.
+const STATUS_ORDER: Record<string, number> = { unpaid: 0, awaiting: 1, overpaid: 2, paid: 3, collected: 4 };
+const statusRank = (m: StatementMemberRow) =>
+  STATUS_ORDER[m.deductionResult === "awaiting" ? "awaiting" : m.deductionResult === "collected" ? "collected" : m.status] ?? 5;
 
 const digitsOnly = (value: string) => value.replace(/\D/g, "");
 
@@ -209,6 +278,24 @@ const COMPARATORS: Record<Exclude<StatementSort, "default">, Comparator> = {
   // on screen is the order of the numbers staff are reading.
   differenceDesc: (a, b) => memberDifference(b) - memberDifference(a),
   differenceAsc: (a, b) => memberDifference(a) - memberDifference(b),
+  memberNumberDesc: (a, b) => byMemberNumber(b, a),
+  nameDesc: (a, b) => stripHonorific(b.name).localeCompare(stripHonorific(a.name), "th"),
+  hCodeDesc: (a, b) =>
+    compareCode(b.hCode, a.hCode) || compareCode(b.unitCode, a.unitCode) || compareUnitName(b.unitName, a.unitName),
+  // No account sorts last both ways: the gap is what staff are looking for.
+  accountNumber: (a, b) => compareCode(a.accountNumber, b.accountNumber),
+  accountNumberDesc: (a, b) =>
+    !a.accountNumber || !b.accountNumber
+      ? compareCode(a.accountNumber, b.accountNumber)
+      : compareCode(b.accountNumber, a.accountNumber),
+  amountDueDesc: (a, b) => b.amountDue - a.amountDue,
+  amountDueAsc: (a, b) => a.amountDue - b.amountDue,
+  amountPaidDesc: (a, b) => b.amountPaid - a.amountPaid,
+  amountPaidAsc: (a, b) => a.amountPaid - b.amountPaid,
+  // Never-paid sorts last both ways, as in paidAt.
+  paidAtAsc: (a, b) => (!a.paidAt || !b.paidAt ? comparePaidAt(a.paidAt, b.paidAt) : comparePaidAt(b.paidAt, a.paidAt)),
+  status: (a, b) => statusRank(a) - statusRank(b),
+  statusDesc: (a, b) => statusRank(b) - statusRank(a),
 };
 
 // Several orderings at once, applied in the order they were chosen: หน่วยคุม

@@ -56,6 +56,9 @@ import {
 import {
   StatementSort,
   OPPOSITE_SORT,
+  type StatementColumn,
+  columnSortOf,
+  nextColumnSort,
   filterStatementMembers,
   excessOf,
   hCodesOf,
@@ -81,6 +84,24 @@ const SORT_OPTIONS: { value: StatementSort; label: string }[] = [
   { value: "name", label: "ชื่อ ก-ฮ" },
   { value: "memberNumber", label: "เลขสมาชิก" },
 ];
+
+// What a chip says for an ordering picked from a column header rather than
+// the dropdown.
+const SORT_LABELS: Partial<Record<StatementSort, string>> = {
+  ...Object.fromEntries(SORT_OPTIONS.map((o) => [o.value, o.label])),
+  memberNumberDesc: "เลขสมาชิก (มาก → น้อย)",
+  nameDesc: "ชื่อ ฮ-ก",
+  hCodeDesc: "หน่วยคุม (มาก → น้อย)",
+  accountNumber: "เลขบัญชี",
+  accountNumberDesc: "เลขบัญชี (มาก → น้อย)",
+  amountDueDesc: "ยอดหักไม่ได้ มาก → น้อย",
+  amountDueAsc: "ยอดหักไม่ได้ น้อย → มาก",
+  amountPaidDesc: "โอนมาแล้ว มาก → น้อย",
+  amountPaidAsc: "โอนมาแล้ว น้อย → มาก",
+  paidAtAsc: "วันที่โอน (เก่าสุดก่อน)",
+  status: "สถานะ (ยังค้างก่อน)",
+  statusDesc: "สถานะ (ครบก่อน)",
+};
 
 // หน่วยคุม, because that is how the work is divided: whoever is chasing a
 // unit wants that unit's people together before anything else.
@@ -1496,18 +1517,38 @@ export default function StatementReconcilePanel() {
         : [...prev.filter((k) => k !== OPPOSITE_SORT[key]), key]
     );
 
-  // The ส่วนต่าง header sorts the table by that column alone — clicking a
+  // Every column header sorts the table by that column alone — clicking a
   // column is "order by this", not "add this under หน่วยคุม". Each click
-  // turns it over: เกินมากก่อน, then ขาดมากก่อน, then back to the usual order.
-  const differenceSort = sort[0] === "differenceDesc" || sort[0] === "differenceAsc" ? sort[0] : null;
-  const cycleDifferenceSort = () =>
-    setSort(
-      differenceSort === "differenceDesc"
-        ? ["differenceAsc"]
-        : differenceSort === "differenceAsc"
-          ? DEFAULT_SORT
-          : ["differenceDesc"]
+  // turns it over, then the third goes back to the usual order
+  // (lib/statementFilters.ts COLUMN_SORTS).
+  const sortHeader = (column: StatementColumn, label: string, className = "", hint: [string, string]) => {
+    const now = columnSortOf(sort, column);
+    // Money starts from the biggest, so its first direction points down.
+    const firstIsDown = column === "amountDue" || column === "amountPaid" || column === "difference";
+    const down = now === "first" ? firstIsDown : now === "second" ? !firstIsDown : null;
+    return (
+      <th
+        className={`px-4 py-2.5 font-semibold ${className}`}
+        aria-sort={down === null ? "none" : down ? "descending" : "ascending"}
+      >
+        <button
+          type="button"
+          onClick={() => setSort(nextColumnSort(sort, column, DEFAULT_SORT))}
+          title={
+            now === "first"
+              ? `เรียง${hint[0]}อยู่ — กดเพื่อเรียง${hint[1]}`
+              : now === "second"
+                ? `เรียง${hint[1]}อยู่ — กดเพื่อกลับไปเรียงตามหน่วยคุม`
+                : `กดเพื่อเรียงตาม${label} (${hint[0]})`
+          }
+          className="inline-flex items-center gap-1 uppercase tracking-wide hover:text-slate-900"
+        >
+          <span>{label}</span>
+          <span className={now ? "text-slate-700" : "text-slate-400"}>{down === null ? "↕" : down ? "▼" : "▲"}</span>
+        </button>
+      </th>
     );
+  };
 
   return (
     <div className="bg-white rounded-lg shadow">
@@ -2062,7 +2103,7 @@ export default function StatementReconcilePanel() {
                       className="inline-flex items-center gap-1 rounded-full border border-slate-300 bg-slate-50 pl-2 pr-1.5 py-0.5 text-xs hover:bg-slate-100"
                     >
                       <span className="num text-slate-400">{index + 1}</span>
-                      {SORT_OPTIONS.find((o) => o.value === key)?.label ?? key}
+                      {SORT_LABELS[key] ?? key}
                       <span className="text-slate-400">✕</span>
                     </button>
                   ))}
@@ -2243,46 +2284,15 @@ export default function StatementReconcilePanel() {
                         across three lines is hard to match against a list. */}
                     <thead className="sticky top-0 z-10 bg-slate-100 text-slate-600 text-left text-xs uppercase tracking-wide">
                       <tr>
-                        <th className="px-4 py-2.5 font-semibold">เลขสมาชิก</th>
-                        <th className="px-4 py-2.5 font-semibold min-w-[13rem]">ชื่อ-สกุล</th>
-                        <th className="px-4 py-2.5 font-semibold min-w-[12rem]">หน่วยคุม · สังกัด</th>
-                        <th className="px-4 py-2.5 font-semibold">เลขบัญชี</th>
-                        <th className="px-4 py-2.5 font-semibold text-right">ยอดหักไม่ได้</th>
-                        <th className="px-4 py-2.5 font-semibold text-right">โอนมาแล้ว</th>
-                        <th
-                          className="px-4 py-2.5 font-semibold text-right"
-                          aria-sort={
-                            differenceSort === "differenceDesc"
-                              ? "descending"
-                              : differenceSort === "differenceAsc"
-                                ? "ascending"
-                                : "none"
-                          }
-                        >
-                          <button
-                            type="button"
-                            onClick={cycleDifferenceSort}
-                            title={
-                              differenceSort === "differenceDesc"
-                                ? "เรียงเกินมากก่อนอยู่ — กดเพื่อเรียงขาดมากก่อน"
-                                : differenceSort === "differenceAsc"
-                                  ? "เรียงขาดมากก่อนอยู่ — กดเพื่อกลับไปเรียงตามหน่วยคุม"
-                                  : "กดเพื่อเรียงตามส่วนต่าง (เกินมากก่อน)"
-                            }
-                            className="inline-flex items-center gap-1 uppercase tracking-wide hover:text-slate-900"
-                          >
-                            ส่วนต่าง
-                            <span className={differenceSort ? "text-slate-700" : "text-slate-400"}>
-                              {differenceSort === "differenceDesc"
-                                ? "▼"
-                                : differenceSort === "differenceAsc"
-                                  ? "▲"
-                                  : "↕"}
-                            </span>
-                          </button>
-                        </th>
-                        <th className="px-4 py-2.5 font-semibold">วันเวลาที่โอน</th>
-                        <th className="px-4 py-2.5 font-semibold">สถานะ</th>
+                        {sortHeader("memberNumber", "เลขสมาชิก", "", ["น้อยไปมาก", "มากไปน้อย"])}
+                        {sortHeader("name", "ชื่อ-สกุล", "min-w-[13rem]", ["ก-ฮ", "ฮ-ก"])}
+                        {sortHeader("unit", "หน่วยคุม · สังกัด", "min-w-[12rem]", ["หน่วยคุมน้อยไปมาก", "หน่วยคุมมากไปน้อย"])}
+                        {sortHeader("accountNumber", "เลขบัญชี", "", ["น้อยไปมาก", "มากไปน้อย"])}
+                        {sortHeader("amountDue", "ยอดหักไม่ได้", "text-right", ["มากก่อน", "น้อยก่อน"])}
+                        {sortHeader("amountPaid", "โอนมาแล้ว", "text-right", ["มากก่อน", "น้อยก่อน"])}
+                        {sortHeader("difference", "ส่วนต่าง", "text-right", ["เกินมากก่อน", "ขาดมากก่อน"])}
+                        {sortHeader("paidAt", "วันเวลาที่โอน", "", ["ล่าสุดก่อน", "เก่าสุดก่อน"])}
+                        {sortHeader("status", "สถานะ", "", ["ยังค้างก่อน", "ครบก่อน"])}
                       </tr>
                     </thead>
                     <tbody>
