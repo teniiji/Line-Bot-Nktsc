@@ -9,6 +9,8 @@ import {
   subUnitsOf,
   encodeSubUnit,
   parseSubUnit,
+  nextColumnSort,
+  columnSortOf,
 } from "../lib/statementFilters";
 import { StatementMemberRow } from "../lib/types";
 
@@ -518,5 +520,37 @@ describe("ordering by รหัสสังกัด", () => {
       member({ unitCode: "23003", unitName: "ง" }),
     ]).map((u) => u.code);
     expect(codes).toEqual(["100", "13003", "23003", "103003"]);
+  });
+});
+
+describe("sorting from the column headers", () => {
+  const a = member({ memberNumber: "100", name: "นายข", accountNumber: "4130000002", amountDue: 500, amountPaid: 500, status: "paid", paidAt: "2026-10-02T00:00:00Z" });
+  const b = member({ memberNumber: "200", name: "นางก", accountNumber: null, amountDue: 3000, amountPaid: 0, status: "unpaid", paidAt: null });
+  const c = member({ memberNumber: "300", name: "นางสาวค", accountNumber: "4130000001", amountDue: 1000, amountPaid: 200, status: "unpaid", paidAt: "2026-10-01T00:00:00Z" });
+  const nums = (sort: Parameters<typeof sortStatementMembers>[1]) =>
+    sortStatementMembers([a, b, c], sort).map((m) => m.memberNumber);
+
+  it("turns each column over and back to the usual order", () => {
+    expect(nextColumnSort(["hCode"], "amountDue", ["hCode"])).toEqual(["amountDueDesc"]);
+    expect(nextColumnSort(["amountDueDesc"], "amountDue", ["hCode"])).toEqual(["amountDueAsc"]);
+    expect(nextColumnSort(["amountDueAsc"], "amountDue", ["hCode"])).toEqual(["hCode"]);
+    expect(columnSortOf(["memberNumberDesc"], "memberNumber")).toBe("second");
+    // Not a header's ordering when stacked with another.
+    expect(columnSortOf(["hCode", "memberNumber"], "memberNumber")).toBeNull();
+  });
+
+  it("orders by each column both ways", () => {
+    expect(nums("memberNumberDesc")).toEqual(["300", "200", "100"]);
+    expect(nums("name")).toEqual(["200", "100", "300"]);
+    expect(nums("nameDesc")).toEqual(["300", "100", "200"]);
+    expect(nums("amountDueDesc")).toEqual(["200", "300", "100"]);
+    expect(nums("amountPaidAsc")).toEqual(["200", "300", "100"]);
+    expect(nums("status")).toEqual(["200", "300", "100"]);
+  });
+
+  it("keeps the missing at the end both ways", () => {
+    expect(nums("accountNumber")).toEqual(["300", "100", "200"]);
+    expect(nums("accountNumberDesc")).toEqual(["100", "300", "200"]);
+    expect(nums("paidAtAsc")).toEqual(["300", "100", "200"]);
   });
 });
