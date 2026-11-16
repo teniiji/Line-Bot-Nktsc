@@ -30,21 +30,53 @@ import {
   computeQuickReplies,
 } from "./agent/state";
 import { executeTool } from "./agent/handlers";
+import {
+  EFFORT,
+  MAX_TOKENS,
+  SLIP_MODEL,
+  TEXT_MODEL,
+  fallbackModelFor,
+  mustCallToolNote,
+  resolveToolChoice,
+} from "./agent/models";
 import { buildInitialUserMessage } from "./agent/messages";
 import type { FinanceAgentReply, ToolContext } from "./agent/types";
 import type { ReplyKind } from "./replyKind";
 
 export type { FinanceAgentReply } from "./agent/types";
 
-// Haiku is fast/cheap and reliable for plain text, but has repeatedly
-// misread slips with busy/themed backgrounds (inventing reasons to decline
-// a perfectly legible transaction). Use a stronger model whenever the
-// message includes an image or PDF attachment.
-const TEXT_MODEL = "claude-haiku-4-5";
-
-const VISION_MODEL = "claude-sonnet-5";
+// Which model answers, how hard it thinks, and how a required tool call is
+// enforced on it — see lib/agent/models.ts. Haiku has misread slips with
+// busy/themed backgrounds, so a message with an image or PDF goes to the
+// stronger model.
 
 const MAX_TOOL_TURNS = 3;
+
+// One call to the model. Claude Sonnet 5.5 goes through the Messages API's
+// server-side fallback (a beta): a request it declines is re-run on Claude
+// Sonnet 5 within the same call instead of reaching the member as "ไม่สามารถ
+// ตอบได้". Request and response keep the shapes this agent sends and reads.
+async function callModel(
+  params: Anthropic.MessageCreateParamsNonStreaming
+): Promise<Anthropic.Message> {
+  const fallback = fallbackModelFor(params.model);
+  const response = fallback
+    ? ((await anthropic.beta.messages.create({
+        ...(params as unknown as Anthropic.Beta.Messages.MessageCreateParamsNonStreaming),
+        betas: ["server-side-fallback-2026-07-01"],
+        fallbacks: [{ model: fallback }],
+      })) as unknown as Anthropic.Message)
+    : await anthropic.messages.create(params);
+  // A decline (or a reply cut off by the token cap) used to surface only as
+  // the generic apology; say why in the logs.
+  if (response.stop_reason === "refusal" || response.stop_reason === "max_tokens") {
+    console.error(
+      "[financeAgent] model stopped early:",
+      JSON.stringify({ model: response.model, stopReason: response.stop_reason, stopDetails: response.stop_details })
+    );
+  }
+  return response;
+}
 
 // True for either an image (photo) or a document (PDF) attachment — the
 // two ways a member can send a slip or supporting document. Used to decide
@@ -172,7 +204,9 @@ export async function runFinanceAgent(
     { type: "text", text: base, cache_control: { type: "ephemeral" } },
     { type: "text", text: dynamic },
   ];
-  const model = hasAttachmentContent(userContent) ? VISION_MODEL : TEXT_MODEL;
+  const isAttachment = hasAttachmentContent(userContent);
+  const model = isAttachment ? SLIP_MODEL : TEXT_MODEL;
+  const effort = EFFORT[isAttachment ? "slip" : "text"];
   // buildInitialUserMessage adds a second cache breakpoint on a slip
   // attachment so the loop's later calls read the image from cache.
   const messages: Anthropic.MessageParam[] = [buildInitialUserMessage(userContent)];
@@ -201,21 +235,34 @@ export async function runFinanceAgent(
       !pending && !pendingService && pendingLookup
         ? computeLookupRequirement(pendingLookup)
         : null;
-    const toolChoice = forcedToolChoice({
+    const forced = forcedToolChoice({
       turn,
       hasAttachment: hasAttachmentContent(userContent),
       next,
       serviceNext,
       lookupNext,
     });
-    const response = await anthropic.messages.create({
-      model,
-      max_tokens: 1024,
-      system,
-      tools: availableTools,
-      messages,
-      ...(toolChoice ? { tool_choice: toolChoice } : {}),
-    });
+    // A model that cannot be forced is asked with "auto" and checked.
+    const { toolChoice, mustCallTool } = resolveToolChoice(model, forced);
+    const ask = () =>
+      callModel({
+        model,
+        max_tokens: MAX_TOKENS,
+        system,
+        tools: availableTools,
+        messages,
+        output_config: { effort },
+        ...(toolChoice ? { tool_choice: toolChoice } : {}),
+      });
+    let response = await ask();
+    if (mustCallTool && !response.content.some((block) => block.type === "tool_use")) {
+      // Once more, with the requirement said outright. The note stays in the
+      // conversation: the reply after it was written with it in view, and
+      // taking it out later would change what came before that reply.
+      console.warn(`[financeAgent] ${model} answered without a required tool call; asking again`);
+      messages.push({ role: "system", content: mustCallToolNote(forced) });
+      response = await ask();
+    }
 
     const toolUseBlocks = response.content.filter(
       (block): block is Anthropic.ToolUseBlock => block.type === "tool_use"
@@ -298,11 +345,17 @@ export async function runFinanceAgent(
   // Make one more call with tools disabled so the model must summarize what
   // actually happened instead of the caller returning a generic "failed"
   // message for work that already succeeded.
-  const finalResponse = await anthropic.messages.create({
+  // Tools stay in the request with tool_choice "none" rather than being
+  // dropped: thinking blocks from the turns above stay valid only while
+  // everything sent before them is unchanged, tools included.
+  const finalResponse = await callModel({
     model,
-    max_tokens: 1024,
+    max_tokens: MAX_TOKENS,
     system,
+    tools: availableTools,
+    tool_choice: { type: "none" },
     messages,
+    output_config: { effort },
   });
   const finalText = finalResponse.content.findLast(
     (block): block is Anthropic.TextBlock => block.type === "text"

@@ -345,6 +345,15 @@ async function handleEvent(event: webhook.Event, origin: string): Promise<void> 
   // deliberately stays silent on. Best-effort inside; never blocks.
   if (incomingText) {
     rememberMessage(event.message.id, lineUserId, incomingText.text, false);
+  } else if (event.message.type === "image" || event.message.type === "file") {
+    // A slip or document has no text, but the บทสนทนาบอท page needs to show
+    // that one arrived before the bot's reply about it.
+    rememberMessage(
+      event.message.id,
+      lineUserId,
+      event.message.type === "image" ? "📷 [ส่งรูปภาพ]" : "📄 [ส่งไฟล์ PDF]",
+      false
+    );
   }
 
   let replyText: string;

@@ -14,6 +14,7 @@ import ControlUnitsPanel from "@/components/ControlUnitsPanel";
 import FeatureFlagsPanel from "@/components/FeatureFlagsPanel";
 import ServiceRequestsPanel from "@/components/ServiceRequestsPanel";
 import KnowledgePanel from "@/components/KnowledgePanel";
+import BotConversationsPanel from "@/components/BotConversationsPanel";
 import FormLinksPanel from "@/components/FormLinksPanel";
 import DepartmentContactsPanel from "@/components/DepartmentContactsPanel";
 import ResponsibleContactsPanel from "@/components/ResponsibleContactsPanel";
@@ -380,6 +381,11 @@ export default function Dashboard() {
                 <MemberBankAccountsPanel />
               </div>
             ),
+          },
+          {
+            id: "bot-conversations",
+            label: "บทสนทนาบอท",
+            content: <BotConversationsPanel />,
           },
           {
             id: "knowledge",

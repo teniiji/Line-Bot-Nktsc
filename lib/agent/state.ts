@@ -10,7 +10,7 @@ import { CATEGORIES } from "../categories";
 import { LOAN_TYPES } from "../loanTypes";
 import type { RecentAction } from "../closingReply";
 import { quoteReply, type PreviousReply } from "../recentReply";
-import { quotableText, QUOTED_RETENTION_MS, type QuotedMessage } from "../quotedMessage";
+import { storedText, QUOTED_RETENTION_MS, type QuotedMessage } from "../quotedMessage";
 import type { LastReply, ReplyKind } from "../replyKind";
 import {
   isFeatureEnabled,
@@ -433,7 +433,7 @@ export async function rememberMessage(
   text: string,
   fromBot: boolean
 ): Promise<void> {
-  const kept = quotableText(text);
+  const kept = storedText(text);
   if (!kept) return;
   await prisma.quotableMessage
     .create({ data: { id: messageId, lineUserId, text: kept, fromBot } })

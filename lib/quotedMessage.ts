@@ -46,6 +46,16 @@ export interface QuotedMessage {
 }
 
 /** What gets stored, and what gets quoted back — trimmed and capped. */
+// How much of a message is kept. Longer than what is quoted back to the model
+// (QUOTED_TEXT_LIMIT, applied again when the note is written), so the
+// dashboard's บทสนทนาบอท page shows a reply whole rather than cut at 400.
+export const STORED_TEXT_LIMIT = 2000;
+
+export function storedText(text: string): string {
+  const trimmed = text.trim();
+  return trimmed.length > STORED_TEXT_LIMIT ? `${trimmed.slice(0, STORED_TEXT_LIMIT)}…` : trimmed;
+}
+
 export function quotableText(text: string): string {
   const trimmed = text.trim();
   return trimmed.length > QUOTED_TEXT_LIMIT
