@@ -10,6 +10,9 @@ export const MESSAGING_ENABLED = "messaging_enabled";
 export const TRANSACTIONS_ENABLED = "transactions_enabled";
 export const SERVICE_REQUESTS_ENABLED = "service_requests_enabled";
 export const MEMBER_LOOKUP_ENABLED = "member_lookup_enabled";
+// A short "received, staff will answer in office hours" to a member whose
+// message was left to staff outside office hours — see lib/staffHandoff.ts.
+export const AFTER_HOURS_ACK_ENABLED = "after_hours_ack_enabled";
 
 // Per-question switches for the transaction-recording flow (lib/agent/state.ts's
 // computeNextRequirement) — lets staff skip a specific follow-up question
@@ -45,6 +48,11 @@ export const DEFAULT_FLAGS: { key: string; label: string; enabled: boolean }[] =
   {
     key: MEMBER_LOOKUP_ENABLED,
     label: "ค้นหาเลขสมาชิก (ยืนยันตัวตน)",
+    enabled: true,
+  },
+  {
+    key: AFTER_HOURS_ACK_ENABLED,
+    label: "นอกเวลาทำการ: ตอบสมาชิกว่าได้รับข้อความแล้ว เมื่อบอทส่งเรื่องให้เจ้าหน้าที่ (เจ้าหน้าที่จะตอบในเวลาทำการ)",
     enabled: true,
   },
   {

@@ -3,6 +3,31 @@
 import { useCallback, useEffect, useState } from "react";
 import type { MessageFlag, ThreadFilter } from "@/lib/botConversations";
 
+interface Handoff {
+  id: string;
+  kind: string;
+  department: string | null;
+  reason: string;
+  status: string;
+  notifiedTo: string | null;
+  notifyError: string | null;
+  claimedBy: string | null;
+  claimedAt: string | null;
+  reminderCount: number;
+  createdAt: string;
+}
+
+const KIND_LABELS: Record<string, string> = {
+  exception: "ขออนุมัติ/ขอยกเว้น",
+  money_dispute: "ร้องเรียนเรื่องเงิน",
+  unclear: "บอทไม่แน่ใจว่าหมายถึงอะไร",
+};
+
+const NOTIFY_ERRORS: Record<string, string> = {
+  muted: "ไม่ได้แจ้ง — ปิดแจ้งเตือนแผนกนี้ไว้ในตั้งค่าระบบ",
+  unconfigured: "ไม่ได้แจ้ง — แผนกนี้ยังไม่มีผู้รับผิดชอบหรือกลุ่ม LINE",
+};
+
 interface Thread {
   lineUserId: string;
   name: string | null;
@@ -13,6 +38,8 @@ interface Thread {
   unanswered: number;
   failed: number;
   noInfo: number;
+  handoffs: Handoff[];
+  waiting: number;
 }
 
 interface Response {
@@ -28,6 +55,11 @@ interface Response {
 
 const FILTER_LABELS: { id: ThreadFilter; label: string; hint: string }[] = [
   { id: "all", label: "ทั้งหมด", hint: "" },
+  {
+    id: "waiting",
+    label: "รอรับเรื่อง",
+    hint: "บอทส่งเรื่องให้เจ้าหน้าที่แล้ว แต่ยังไม่มีใครกด \"รับเรื่องนี้\" ใน LINE — ถ้าตอบสมาชิกไปแล้ว กด \"ทำเครื่องหมายว่ารับแล้ว\" ได้",
+  },
   {
     id: "unanswered",
     label: "บอทไม่ได้ตอบ",
@@ -97,6 +129,15 @@ export default function BotConversationsPanel() {
       else next.add(id);
       return next;
     });
+
+  const markClaimed = async (id: string) => {
+    const res = await fetch(`/api/staff-handoffs/${id}`, { method: "PATCH" });
+    if (!res.ok) {
+      const body = await res.json().catch(() => null);
+      setError(body?.error ?? "บันทึกไม่สำเร็จ");
+    }
+    load();
+  };
 
   const pages = data ? Math.max(1, Math.ceil(data.total / data.pageSize)) : 1;
   const hint = FILTER_LABELS.find((f) => f.id === filter)?.hint;
@@ -196,6 +237,15 @@ export default function BotConversationsPanel() {
                         <span className="text-xs text-slate-400">LINE: {t.displayName}</span>
                       ) : null}
                       <span className="text-xs text-slate-400">{t.messages.length} ข้อความ</span>
+                      {t.waiting ? (
+                        <span className="text-xs rounded px-1.5 py-0.5 bg-orange-100 text-orange-800">
+                          รอรับเรื่อง {t.waiting}
+                        </span>
+                      ) : t.handoffs.length ? (
+                        <span className="text-xs rounded px-1.5 py-0.5 bg-emerald-100 text-emerald-800">
+                          รับเรื่องแล้ว
+                        </span>
+                      ) : null}
                       {t.unanswered ? <Tag flag="unanswered" n={t.unanswered} /> : null}
                       {t.failed ? <Tag flag="failed" n={t.failed} /> : null}
                       {t.noInfo ? <Tag flag="noInfo" n={t.noInfo} /> : null}
@@ -211,32 +261,36 @@ export default function BotConversationsPanel() {
                 </button>
                 {isOpen ? (
                   <div className="px-4 pb-4 space-y-2 bg-slate-50/60">
-                    {t.messages.map((m) => (
-                      <div key={m.id} className={`flex ${m.fromBot ? "justify-end" : "justify-start"}`}>
+                    {timeline(t).map((item) =>
+                      item.handoff ? (
+                        <HandoffRow key={item.handoff.id} h={item.handoff} onClaim={markClaimed} />
+                      ) : (
+                      <div key={item.m.id} className={`flex ${item.m.fromBot ? "justify-end" : "justify-start"}`}>
                         <div className="max-w-[85%] sm:max-w-[70%]">
                           <div
                             className={`rounded-2xl px-3 py-2 text-sm whitespace-pre-wrap break-words ${
-                              m.fromBot
+                              item.m.fromBot
                                 ? "bg-emerald-600 text-white rounded-br-sm"
                                 : "bg-white border border-slate-200 text-slate-800 rounded-bl-sm"
                             }`}
                           >
-                            {m.text}
+                            {item.m.text}
                           </div>
                           <div
                             className={`flex items-center gap-1.5 mt-0.5 text-[11px] text-slate-400 ${
-                              m.fromBot ? "justify-end" : ""
+                              item.m.fromBot ? "justify-end" : ""
                             }`}
                           >
-                            <span>{m.fromBot ? "บอท" : "สมาชิก"}</span>
-                            <span>{time(m.createdAt)}</span>
-                            {m.flag ? (
-                              <span className={`rounded px-1.5 ${FLAG_TAG[m.flag].cls}`}>{FLAG_TAG[m.flag].label}</span>
+                            <span>{item.m.fromBot ? "บอท" : "สมาชิก"}</span>
+                            <span>{time(item.m.createdAt)}</span>
+                            {item.m.flag ? (
+                              <span className={`rounded px-1.5 ${FLAG_TAG[item.m.flag].cls}`}>{FLAG_TAG[item.m.flag].label}</span>
                             ) : null}
                           </div>
                         </div>
                       </div>
-                    ))}
+                      )
+                    )}
                   </div>
                 ) : null}
               </li>
@@ -270,6 +324,62 @@ export default function BotConversationsPanel() {
           </span>
         </div>
       ) : null}
+    </div>
+  );
+}
+
+type TimelineItem =
+  | { handoff: null; m: Thread["messages"][number]; at: string }
+  | { handoff: Handoff; m: null; at: string };
+
+// Messages and handoffs in one line, in time order.
+function timeline(t: Thread): TimelineItem[] {
+  const items: TimelineItem[] = [
+    ...t.messages.map((m) => ({ handoff: null, m, at: m.createdAt })),
+    ...t.handoffs.map((h) => ({ handoff: h, m: null, at: h.createdAt })),
+  ];
+  return items.sort((a, b) => a.at.localeCompare(b.at));
+}
+
+function HandoffRow({ h, onClaim }: { h: Handoff; onClaim: (id: string) => void }) {
+  const open = h.status === "open";
+  return (
+    <div className="flex justify-center">
+      <div
+        className={`text-xs rounded-lg border px-3 py-2 max-w-[90%] ${
+          open ? "bg-orange-50 border-orange-200 text-orange-900" : "bg-emerald-50 border-emerald-200 text-emerald-900"
+        }`}
+      >
+        <div className="font-medium">
+          🔔 ส่งเรื่องให้เจ้าหน้าที่ · {KIND_LABELS[h.kind] ?? h.kind}
+          {h.department ? ` · แผนก${h.department}` : ""} · {time(h.createdAt)}
+        </div>
+        <div className="mt-0.5">{h.reason}</div>
+        {h.notifyError ? (
+          <div className="mt-0.5 text-red-700">⚠️ {NOTIFY_ERRORS[h.notifyError] ?? `แจ้งไม่สำเร็จ: ${h.notifyError}`}</div>
+        ) : null}
+        <div className="mt-1 flex flex-wrap items-center gap-2">
+          {open ? (
+            <>
+              <span>
+                ⏳ ยังไม่มีใครรับเรื่อง{h.reminderCount ? ` (เตือนซ้ำแล้ว ${h.reminderCount} ครั้ง)` : ""}
+              </span>
+              <button
+                type="button"
+                onClick={() => onClaim(h.id)}
+                className="rounded border border-orange-300 bg-white px-2 py-0.5 hover:bg-orange-100"
+              >
+                ทำเครื่องหมายว่ารับแล้ว
+              </button>
+            </>
+          ) : (
+            <span>
+              ✅ รับเรื่องแล้วโดย {h.claimedBy ?? "เจ้าหน้าที่"}
+              {h.claimedAt ? ` · ${time(h.claimedAt)}` : ""}
+            </span>
+          )}
+        </div>
+      </div>
     </div>
   );
 }

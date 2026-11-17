@@ -221,6 +221,7 @@ export async function runFinanceAgent(
   // Set by a tool whose reply can repeat itself into noise, and read by the
   // caller to decide whether to send this one at all — see lib/replyKind.ts.
   let replyKind: ReplyKind = null;
+  let holdingReply: string | null = null;
 
   for (let turn = 0; turn < MAX_TOOL_TURNS; turn++) {
     // Which tool call, if any, this turn is required to make — see
@@ -313,6 +314,7 @@ export async function runFinanceAgent(
         ),
         quickReplies: await computeQuickReplies(lineUserId),
         replyKind,
+        holdingReply,
       };
     }
 
@@ -322,6 +324,9 @@ export async function runFinanceAgent(
       lineUserId,
       noteReplyKind: (kind) => {
         replyKind = kind;
+      },
+      noteHoldingReply: (text) => {
+        holdingReply = text;
       },
       slipImageUrl: await resolveSlipImageUrl(),
       slipImageHash,
@@ -367,6 +372,7 @@ export async function runFinanceAgent(
     ),
     quickReplies: await computeQuickReplies(lineUserId),
     replyKind,
+    holdingReply,
   };
 }
 

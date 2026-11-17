@@ -28,6 +28,8 @@ import { prisma } from "@/lib/prisma";
 import { conversationKeyOf, groupBySource } from "@/lib/eventOrdering";
 import { withConversationLock } from "@/lib/conversationLock";
 import { isFeatureEnabled, MESSAGING_ENABLED } from "@/lib/featureFlags";
+import { claimHandoff, sendDueHandoffReminders } from "@/lib/agent/handoffs";
+import { parseClaimPostback } from "@/lib/staffHandoff";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -190,7 +192,38 @@ async function handleGroupEvent(event: webhook.Event, ref: GroupRef): Promise<vo
   }
 }
 
+// An officer tapping รับเรื่องนี้ on a staff-handoff notice — in a group or
+// one-to-one. Answered in the same chat, so the group sees who took it.
+async function handlePostback(event: webhook.PostbackEvent): Promise<void> {
+  const id = parseClaimPostback(event.postback?.data);
+  if (!id || !event.replyToken || !event.source) return;
+  const source = event.source;
+  const userId = source.userId ?? null;
+  const groupId = source.type === "group" ? (source as webhook.GroupSource).groupId : null;
+  const chatId =
+    groupId ?? (source.type === "room" ? (source as webhook.RoomSource).roomId : userId) ?? "";
+  let text: string;
+  try {
+    text = await claimHandoff(id, { userId, groupId, chatId });
+  } catch (err) {
+    console.error("[line/webhook] handoff claim failed:", err);
+    text = "บันทึกการรับเรื่องไม่สำเร็จ ลองกดใหม่อีกครั้ง";
+  }
+  try {
+    await lineClient.replyMessage({ replyToken: event.replyToken, messages: [{ type: "text", text }] });
+  } catch (err) {
+    console.error("[line/webhook] handoff claim reply failed:", err);
+  }
+}
+
 async function handleEvent(event: webhook.Event, origin: string): Promise<void> {
+  // A tap on a notice's button, from wherever the notice went (a group
+  // included) — before the group check, which would only record the group.
+  if (event.type === "postback") {
+    await handlePostback(event as webhook.PostbackEvent);
+    return;
+  }
+
   // Checked first: a group event must never reach the agent, and it carries
   // the only thing that makes forwarding to a group possible at all.
   const groupRef = groupRefOf(event.source);
@@ -359,6 +392,7 @@ async function handleEvent(event: webhook.Event, origin: string): Promise<void> 
   let replyText: string;
   let quickReplies: string[] = [];
   let replyKind: ReplyKind = null;
+  let holdingReply: string | null = null;
   try {
     // Independent of building the message content — run concurrently
     // instead of adding its (usually skipped, but occasionally a real LINE
@@ -379,6 +413,7 @@ async function handleEvent(event: webhook.Event, origin: string): Promise<void> 
     replyText = result.text;
     quickReplies = result.quickReplies;
     replyKind = result.replyKind;
+    holdingReply = result.holdingReply;
   } catch (err) {
     console.error("[line/webhook] finance agent error:", err);
     replyText = "ขอโทษค่ะ เกิดข้อผิดพลาด ลองใหม่อีกครั้งนะคะ";
@@ -397,11 +432,15 @@ async function handleEvent(event: webhook.Event, origin: string): Promise<void> 
   // only the cooperative can answer, and staff read this chat. See
   // lib/replyKind.ts for the ten-line non-answer that made this worth having.
   if (alwaysSilent(replyKind)) {
-    console.log(`[line/webhook] leaving this one to staff (${replyKind})`);
-    return;
-  }
-
-  if (replyKind !== null) {
+    // Out of office hours a member left to staff is told it was received —
+    // a fixed line, never the model's (lib/staffHandoff.ts).
+    if (!holdingReply) {
+      console.log(`[line/webhook] leaving this one to staff (${replyKind})`);
+      return;
+    }
+    replyText = holdingReply;
+    quickReplies = [];
+  } else if (replyKind !== null) {
     const previous = await loadLastReplyKind(lineUserId).catch((err) => {
       // Never a reason to withhold a reply — not knowing what was said last
       // means sending this one, which is the behaviour that existed before.
@@ -492,8 +531,13 @@ export async function POST(request: NextRequest) {
   //
   // Still never lets a single failure block the 200 response — LINE retries
   // the whole delivery on a non-2xx, re-triggering already-handled messages.
-  await Promise.all(
-    groupBySource(events, (event) => event.source).map(async (run) => {
+  await Promise.all([
+    // Staff-handoff notices nobody has claimed are sent again from here —
+    // there is no scheduler, and it runs alongside the events, not before.
+    sendDueHandoffReminders().catch((err) =>
+      console.error("[line/webhook] handoff reminders failed:", err)
+    ),
+    ...groupBySource(events, (event) => event.source).map(async (run) => {
       const key = conversationKeyOf(run[0]?.source);
       const handleRun = async () => {
         for (const event of run) {
@@ -504,8 +548,8 @@ export async function POST(request: NextRequest) {
       };
       // No identifiable source means nothing to serialise against.
       return key === null ? handleRun() : withConversationLock(key, handleRun);
-    })
-  );
+    }),
+  ]);
 
   return NextResponse.json({ status: "ok" });
 }

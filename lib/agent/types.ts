@@ -63,6 +63,9 @@ export type ToolContext = {
   // the caller can withhold it rather than send a reworded repeat. See
   // lib/replyKind.ts.
   noteReplyKind: (kind: ReplyKind) => void;
+  // A fixed message to send in place of silence when the reply kind is one
+  // that is never sent — the after-hours acknowledgement (lib/staffHandoff.ts).
+  noteHoldingReply: (text: string) => void;
   slipImageUrl: string | null;
   slipImageHash: string | null;
   hasSlipImage: boolean;
@@ -102,5 +105,7 @@ export type FinanceAgentReply = {
   quickReplies: string[];
   // What this reply is, when it is a kind that can repeat itself into noise.
   replyKind: ReplyKind;
+  // Sent instead of nothing when replyKind is never sent; null otherwise.
+  holdingReply: string | null;
 };
 

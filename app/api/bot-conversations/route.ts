@@ -8,7 +8,7 @@ export const dynamic = "force-dynamic";
 const PAGE_SIZE = 20;
 // A fortnight of a busy OA is a few thousand rows; past this the oldest drop.
 const MAX_ROWS = 5000;
-const FILTERS: ThreadFilter[] = ["all", "unanswered", "failed", "noInfo"];
+const FILTERS: ThreadFilter[] = ["all", "waiting", "unanswered", "failed", "noInfo"];
 
 // GET /api/bot-conversations?days=7&filter=all&search=&page=1
 export async function GET(request: NextRequest) {
@@ -53,7 +53,13 @@ export async function GET(request: NextRequest) {
     ])
   );
 
-  const threads = buildThreads(rows, members);
+  const handoffs = ids.length
+    ? await prisma.staffHandoff.findMany({
+        where: { lineUserId: { in: ids }, createdAt: { gte: since } },
+        orderBy: { createdAt: "asc" },
+      })
+    : [];
+  const threads = buildThreads(rows, members, handoffs);
   const counts = Object.fromEntries(
     FILTERS.map((f) => [f, f === "all" ? threads.length : threads.filter((t) => t[f] > 0).length])
   );
