@@ -31,6 +31,19 @@ describe("bot conversation threads", () => {
     expect(threads[0].noInfo).toBe(1);
   });
 
+  it("attaches handoffs and counts the ones nobody has taken", () => {
+    const withHandoffs = buildThreads(rows, members, [
+      {
+        id: "h1", lineUserId: "U2", kind: "money_dispute", department: "บัญชี", reason: "โอนแล้วยอดไม่เข้า",
+        status: "open", notifiedTo: "Cabc", notifyError: null, claimedBy: null, claimedAt: null,
+        reminderCount: 0, createdAt: at(3),
+      },
+    ]);
+    const u2 = withHandoffs.find((t) => t.lineUserId === "U2")!;
+    expect(u2.waiting).toBe(1);
+    expect(filterThreads(withHandoffs, "waiting", "").map((t) => t.lineUserId)).toEqual(["U2"]);
+  });
+
   it("filters by flag and by name, number or text", () => {
     expect(filterThreads(threads, "unanswered", "").map((t) => t.lineUserId)).toEqual(["U2"]);
     expect(filterThreads(threads, "all", "31744").map((t) => t.lineUserId)).toEqual(["U1"]);

@@ -234,10 +234,22 @@ export const tools: Anthropic.Tool[] = [
         reason: {
           type: "string",
           description:
-            "Short note, in Thai, on what the member asked and why it is staff's to answer. Recorded in the logs only — the member never sees it.",
+            "One short line, in Thai, on what the member is asking about — the officer reads it in a notification before opening the chat (e.g. \"แจ้งว่าโอนชำระหักไม่ได้วันที่ 10 แล้วยอดยังไม่ตัด\"). Never include a national ID, bank account number, or password. The member never sees it.",
+        },
+        kind: {
+          type: "string",
+          enum: ["exception", "money_dispute", "unclear"],
+          description:
+            "Which of the three reasons above: exception = (1) approval/waiver/exception; money_dispute = (2) complaint or dispute about money; unclear = (3) you do not know what the member means.",
+        },
+        department: {
+          type: "string",
+          enum: [...DEPARTMENTS],
+          description:
+            "The department whose officer should answer: สินเชื่อ for loans and guarantors, บัญชี for deductions, payments and transfers, เงินฝาก for deposits, สวัสดิการ / ฌาปนกิจ for welfare and funeral funds, อื่นๆ when unsure.",
         },
       },
-      required: ["reason"],
+      required: ["reason", "kind", "department"],
     },
   },
   {

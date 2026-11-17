@@ -1137,3 +1137,34 @@ model SenderName {
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 }
+
+// A member's message the bot left to staff (leave_to_staff), and whether an
+// officer has taken it. The bot cannot see replies typed in chat.line.biz, so
+// "answered" is what the officer says by tapping รับเรื่องนี้ on the notice
+// — see lib/staffHandoff.ts.
+model StaffHandoff {
+  id                  String    @id @default(cuid())
+  lineUserId          String
+  memberName          String?
+  memberNumber        String?
+  // exception / money_dispute / unclear (HANDOFF_KINDS)
+  kind                String
+  department          String?
+  // The bot's one-line note on what the member asked.
+  reason              String
+  // open → claimed
+  status              String    @default("open")
+  // Who the notice reached (LINE user or group ids), and why not, if not:
+  // "muted" / "unconfigured" / LINE's error.
+  notifiedTo          String?
+  notifyError         String?
+  claimedBy           String?
+  claimedByLineUserId String?
+  claimedAt           DateTime?
+  remindedAt          DateTime?
+  reminderCount       Int       @default(0)
+  createdAt           DateTime  @default(now())
+
+  @@index([lineUserId, createdAt])
+  @@index([status])
+}
