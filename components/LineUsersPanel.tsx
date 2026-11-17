@@ -1,6 +1,7 @@
 "use client";
 
 import { Fragment, useCallback, useEffect, useState } from "react";
+import LineLinkBulk from "@/components/LineLinkBulk";
 import { LineUser } from "@/lib/types";
 import ConfirmDialog from "@/components/ConfirmDialog";
 import PanelHelp from "@/components/PanelHelp";
@@ -189,7 +190,11 @@ export default function LineUsersPanel() {
             <p>
               ถ้ายังไม่มีเลขสมาชิก แต่ชื่อที่พิมพ์ไว้ตรงกับคนเดียวในฐานข้อมูลส่งเก็บไม่ได้พอดี
               จะมีข้อเสนอ "อาจเป็น ..." ขึ้นให้กดยืนยัน — ไม่กรอกให้อัตโนมัติ
-              และถือเป็น "ยังไม่ยืนยัน" เหมือนเจ้าหน้าที่พิมพ์เอง
+            </p>
+            <p>
+              เมื่อเจ้าหน้าที่ใส่หรือยืนยันเลขสมาชิก ระบบจะผูกบัญชี LINE กับทะเบียนสมาชิกให้ด้วย
+              บอทจะรู้จักคนนั้นโดยไม่ถามชื่อและเลขสมาชิกอีก — ผูกทีละหลายคนได้ด้วยปุ่ม
+              "ผูกตามที่แนะนำทั้งหมด" หรือนำเข้า LINE UserID จากชีต สมาชิก_LINE_OA
             </p>
           </PanelHelp>
         </div>
@@ -221,6 +226,8 @@ export default function LineUsersPanel() {
           </div>
         </div>
       </div>
+
+      <LineLinkBulk onDone={fetchUsers} />
 
       {confirmError && (
         <p className="px-4 py-2 text-sm text-red-600 border-b border-slate-100">{confirmError}</p>
