@@ -12,6 +12,7 @@ import type { RecentAction } from "../closingReply";
 import { quoteReply, type PreviousReply } from "../recentReply";
 import { storedText, QUOTED_RETENTION_MS, type QuotedMessage } from "../quotedMessage";
 import type { LastReply, ReplyKind } from "../replyKind";
+import { resolveLineUserIdentity } from "../lineUserIdentity";
 import {
   isFeatureEnabled,
   ASK_MEMBER_INFO_ENABLED,
@@ -160,36 +161,27 @@ export const PENDING_TRANSACTION_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
 export async function loadLineUser(lineUserId: string): Promise<LineUserInfo | null> {
   // Prefer the imported roster keyed by this LINE account's own userId —
   // that's LINE's account identity, so it can't be spoofed by typing
-  // someone else's name/number. Covers members whose LINE is already
-  // linked in the roster; they never get asked for their info at all.
-  // phone always comes from LineUser regardless — MemberRoster has no
-  // phone column, and it's this bot's own self-reported field either way.
-  const [roster, user] = await Promise.all([
+  // someone else's name/number. Otherwise the member number on the account
+  // (set by staff on สมาชิก LINE, or given by the member) fills the name and
+  // phone from the register — see lib/lineUserIdentity.ts.
+  const [bound, user] = await Promise.all([
     prisma.memberRoster.findFirst({
       where: { lineUserId },
-      select: { memberName: true, memberNumber: true },
+      select: { memberName: true, memberNumber: true, phone: true, lineUserId: true },
     }),
     prisma.lineUser.findUnique({
       where: { id: lineUserId },
-      select: { fullName: true, memberNumber: true, phone: true },
+      select: { id: true, fullName: true, memberNumber: true, phone: true },
     }),
   ]);
-  if (roster) {
-    return {
-      fullName: roster.memberName,
-      memberNumber: roster.memberNumber,
-      verified: true,
-      phone: user?.phone ?? null,
-    };
-  }
-
-  if (!user) return null;
-  return {
-    fullName: user.fullName,
-    memberNumber: user.memberNumber,
-    verified: false,
-    phone: user.phone,
-  };
+  const byNumber =
+    !bound && user?.memberNumber
+      ? await prisma.memberRoster.findUnique({
+          where: { memberNumber: user.memberNumber },
+          select: { memberName: true, memberNumber: true, phone: true, lineUserId: true },
+        })
+      : null;
+  return resolveLineUserIdentity({ bound, user, byNumber });
 }
 
 

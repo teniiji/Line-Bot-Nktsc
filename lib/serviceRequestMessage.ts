@@ -36,7 +36,7 @@ export function serviceRequestText(
 ): string {
   const verifyMark = facts.memberVerified
     ? "✅ ยืนยันตัวตนจากทะเบียน"
-    : "⚠️ ยังไม่ยืนยัน (เลขสมาชิกไม่พบในทะเบียน — กรุณาตรวจสอบ)";
+    : "⚠️ ยังไม่ยืนยันตัวตน (LINE นี้ยังไม่ผูกกับทะเบียนสมาชิก — กรุณาตรวจสอบ)";
   const documentLine =
     facts.documentType === NO_DOCUMENT ? "" : `เอกสารที่ส่งมา: ${facts.documentType}\n`;
   const header = resentFrom
