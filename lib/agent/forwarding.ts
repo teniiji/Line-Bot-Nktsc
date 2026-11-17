@@ -313,7 +313,7 @@ export async function notifyTransactionForward(
 
     const verifyMark = lineUser.verified
       ? "✅ ยืนยันตัวตนจากทะเบียน"
-      : "⚠️ ยังไม่ยืนยัน (เลขสมาชิกไม่พบในทะเบียน — กรุณาตรวจสอบ)";
+      : "⚠️ ยังไม่ยืนยันตัวตน (LINE นี้ยังไม่ผูกกับทะเบียนสมาชิก — กรุณาตรวจสอบ)";
     const text = `💰 มีรายการธุรกรรมใหม่ (ผ่าน LINE Bot)\nประเภท: ${expense.category}${
       expense.loanType ? ` (${expense.loanType})` : ""
     }\nจำนวนเงิน: ${formatAmount(expense.amount)}\nวันที่: ${expense.date

@@ -124,6 +124,13 @@ export async function PUT(
         createdAt: true,
       },
     });
+    // Staff setting the number is the binding: the register row for it now
+    // belongs to this LINE account, so the bot knows the member without
+    // asking (lib/lineUserIdentity.ts). A row this account held under another
+    // number, or under a number now cleared, is let go.
+    if (memberNumber !== undefined) {
+      await bindRosterToLineUser(params.id, user.memberNumber);
+    }
     return NextResponse.json(user);
   } catch {
     return NextResponse.json({ error: "User not found" }, { status: 404 });
@@ -147,5 +154,18 @@ export async function DELETE(
     return NextResponse.json({ ok: true });
   } catch {
     return NextResponse.json({ error: "User not found" }, { status: 404 });
+  }
+}
+
+async function bindRosterToLineUser(lineUserId: string, memberNumber: string | null): Promise<void> {
+  await prisma.memberRoster.updateMany({
+    where: { lineUserId, ...(memberNumber ? { NOT: { memberNumber } } : {}) },
+    data: { lineUserId: null },
+  });
+  if (memberNumber) {
+    await prisma.memberRoster.updateMany({
+      where: { memberNumber, lineUserId: null },
+      data: { lineUserId },
+    });
   }
 }

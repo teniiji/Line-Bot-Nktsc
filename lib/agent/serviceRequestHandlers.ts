@@ -12,6 +12,8 @@ import {
   loadLineUser,
   loadPendingServiceRequest,
   computeServiceRequirement,
+  computeServiceMissing,
+  describeServiceMissing,
 } from "./state";
 import { forwardServiceRequest } from "./forwarding";
 import type { LineUserInfo, PendingServiceInfo, ToolContext } from "./types";
@@ -72,13 +74,33 @@ async function advanceServiceRequest(
 ): Promise<string> {
   const lineUser = await loadLineUser(lineUserId);
   const next = computeServiceRequirement(lineUser, pendingService);
-  if (next === "member_info") {
-    return "Still missing: member full name and member number, needed to forward this request. Ask the user for their ชื่อ-นามสกุล and เลขสมาชิก next, in Thai.";
+  if (next === null) {
+    return await forwardServiceRequest(lineUserId, pendingService, lineUser as LineUserInfo);
   }
-  if (next === "phone") {
-    return "Still missing: a callback phone number for this request, needed to forward it. Ask the user next, in Thai.";
-  }
-  return await forwardServiceRequest(lineUserId, pendingService, lineUser as LineUserInfo);
+  return stillMissingInstruction(lineUser, pendingService);
+}
+
+// Names exactly what is still missing, and what is already on record so the
+// member is not asked for it again — the name and number of a member the
+// cooperative already knows are said back to them instead.
+export function stillMissingInstruction(
+  lineUser: LineUserInfo | null,
+  pendingService: PendingServiceInfo
+): string {
+  const labels = describeServiceMissing(computeServiceMissing(lineUser, pendingService), lineUser);
+  const known = [
+    lineUser?.fullName ? `name ${lineUser.fullName}` : "",
+    lineUser?.memberNumber ? `member number ${lineUser.memberNumber}` : "",
+    lineUser?.phone ? `phone ${lineUser.phone}` : "",
+  ].filter(Boolean);
+  return (
+    `Still missing before this request can be forwarded: ${labels.join(" / ")}. ` +
+    "Ask the user for exactly these, in Thai, together in one short message." +
+    (known.length
+      ? ` Already on record — do NOT ask for these again: ${known.join(", ")}. ` +
+        "Say the name and member number back to the member (e.g. ส่งเรื่องในนาม … เลขสมาชิก …) so they can see it is them."
+      : "")
+  );
 }
 
 
@@ -220,11 +242,6 @@ export async function submitContactPhone(
 
   const lineUser = await loadLineUser(ctx.lineUserId);
   const next = computeServiceRequirement(lineUser, pendingService);
-  if (next === "purpose") {
-    return "Still missing: what request/service the supporting document is for. Ask the user next, in Thai.";
-  }
-  if (next === "member_info") {
-    return "Still missing: member full name and member number, needed to forward this request. Ask the user for their ชื่อ-นามสกุล and เลขสมาชิก next, in Thai.";
-  }
+  if (next !== null) return stillMissingInstruction(lineUser, pendingService);
   return await forwardServiceRequest(ctx.lineUserId, pendingService, lineUser as LineUserInfo);
 }
