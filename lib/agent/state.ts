@@ -68,7 +68,13 @@ export function computeNextRequirement(
   pending: PendingInfo,
   disabled: ReadonlySet<QuestionRequirement> = new Set()
 ): Requirement {
-  if (!disabled.has("member_info") && (!lineUser?.fullName || !lineUser?.memberNumber)) {
+  // A deposit into an account the member has named needs only their name:
+  // the account says whose money it is (lib/agent/identityHandlers.ts).
+  const depositByAccount = pending.category === "ฝากเงิน" && !!pending.depositAccountNumber;
+  if (
+    !disabled.has("member_info") &&
+    (!lineUser?.fullName || (!lineUser?.memberNumber && !depositByAccount))
+  ) {
     return "member_info";
   }
   if (!pending.hasSlip) return "slip";
