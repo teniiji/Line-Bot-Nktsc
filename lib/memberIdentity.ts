@@ -111,11 +111,33 @@ export function memberNumberProblem(memberNumber: string): string | null {
   if (/^\d{13}$/.test(memberNumber)) {
     return "เลข 13 หลักนี้น่าจะเป็นเลขประจำตัวประชาชน ไม่ใช่เลขสมาชิก — เลขสมาชิกของสหกรณ์สั้นกว่านี้มาก";
   }
+  // A phone number or a deposit account number. A member asked for her member
+  // number answered with her phone (081-7691294), and later with her deposit
+  // account (300-00-24794); both were saved as her member number. Member
+  // numbers are a handful of digits with no separators.
+  const kind = notMemberNumberKind(memberNumber);
+  if (kind === "phone") return "เลขนี้น่าจะเป็นเบอร์โทรศัพท์ ไม่ใช่เลขสมาชิก";
+  if (kind === "account") return "เลขนี้น่าจะเป็นเลขบัญชี ไม่ใช่เลขสมาชิก — เลขสมาชิกของสหกรณ์สั้นกว่านี้";
   // Deliberately nothing about shape beyond that. Member numbers here look
   // numeric in every sample seen, but "looks numeric in the samples I saw" is
   // not the same as "the cooperative never issued another kind", and a rule
   // that rejects a real member's number is worse than one that accepts an odd
   // one a person can see and correct.
+  return null;
+}
+
+// What a value given as a member number more likely is, if not one.
+export function notMemberNumberKind(value: string): "nationalId" | "phone" | "account" | null {
+  const raw = value.trim();
+  const digits = raw.replace(/[\s-]/g, "");
+  if (!/^\d+$/.test(digits)) return null;
+  if (digits.length === 13) return "nationalId";
+  // 0X-XXXX-XXXX, also once its leading zero has been taken off as if it
+  // were a member number's (memberNumberKey).
+  if (/^0?[689]\d{8}$/.test(digits) || /^0\d{8}$/.test(digits)) return "phone";
+  // Eight digits or more: an account number. A dash alone proves nothing —
+  // "29252-1" is a member number with a suffix.
+  if (digits.length >= 8) return "account";
   return null;
 }
 

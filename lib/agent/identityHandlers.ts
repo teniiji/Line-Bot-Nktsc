@@ -10,10 +10,13 @@ import { isPlaceholderText } from "../placeholderText";
 import {
   askForMissingIdentity,
   memberNumberProblem,
+  notMemberNumberKind,
   statedMemberNumber,
   mergeIdentity,
   statedValue,
 } from "../memberIdentity";
+import { digitsOnly, memberNumberByName } from "../memberByName";
+import { firstName } from "../senderName";
 import { matchesIdentity } from "../memberLookup";
 import { rosterCanVerify } from "../lookupReadiness";
 import { isFeatureEnabled, MEMBER_LOOKUP_ENABLED } from "../featureFlags";
@@ -71,13 +74,25 @@ export async function submitMemberInfo(
     where: { id: ctx.lineUserId },
     select: { fullName: true, memberNumber: true },
   });
-  const merged = mergeIdentity(
+  let merged = mergeIdentity(
     { fullName: givenName, memberNumber: givenNumber },
     { fullName: savedIdentity?.fullName ?? null, memberNumber: savedIdentity?.memberNumber ?? null }
   );
 
   if (merged.missing === "both") {
     return await askForIdentity(merged, ctx.lineUserId);
+  }
+
+  // A name without a number: the register usually knows the number, so the
+  // member is not asked for it (lib/memberByName.ts). Found this way, it is
+  // not a verification — the roster row is not bound to this LINE account.
+  let derivedNumber = false;
+  if (merged.missing === "memberNumber" && merged.fullName) {
+    const found = await findMemberNumberByName(ctx.lineUserId, merged.fullName);
+    if (found) {
+      merged = { ...merged, memberNumber: found, missing: null };
+      derivedNumber = true;
+    }
   }
 
   const fullName = merged.fullName ?? "";
@@ -94,6 +109,16 @@ export async function submitMemberInfo(
   // The rule lives in lib/memberIdentity.ts so the dashboard applies exactly
   // the same one; the message stays here because this audience is the model,
   // which needs telling where to route the member instead.
+  const notNumber =
+    givenNumber !== null && memberNumberProblem(givenNumber) !== null
+      ? notMemberNumberKind(typeof input.memberNumber === "string" ? input.memberNumber : givenNumber)
+      : null;
+  if (notNumber === "phone") {
+    return "Error: this looks like a PHONE NUMBER, not a เลขสมาชิก (member number) — cooperative member numbers are a few digits with no dashes. Do not save it as the member number. If a callback phone is being collected, call submit_contact_phone with it. Do not ask for the member number again just because of this.";
+  }
+  if (notNumber === "account") {
+    return "Error: this looks like a BANK/DEPOSIT ACCOUNT NUMBER, not a เลขสมาชิก (member number) — cooperative member numbers are a few digits with no dashes. Do not save it as the member number. If it is the account a deposit goes into, call submit_deposit_account with it. Do not ask for the member number again just because of this.";
+  }
   if (givenNumber !== null && memberNumberProblem(givenNumber) !== null) {
     return "Error: this looks like a 13-digit เลขประจำตัวประชาชน (national ID number), not a เลขสมาชิก (member number) — cooperative member numbers are much shorter. If the member was actually trying to look up their own member number, use submit_lookup_info instead (it needs their name, national ID, and phone). If they really do have a member number, ask them to confirm it — don't save this value as-is.";
   }
@@ -110,7 +135,7 @@ export async function submitMemberInfo(
     return "Error: this member number is already linked to a different LINE account. Do not proceed. Tell the user, in Thai, that this member number is registered to another LINE account, and ask them to contact the cooperative office if they believe this is a mistake.";
   }
 
-  const verified = roster !== null;
+  const verified = roster !== null && !derivedNumber;
 
   // Written before the completeness check, so half an identity survives to the
   // next message. Only fields we actually have are set — a piece not given
@@ -135,7 +160,13 @@ export async function submitMemberInfo(
   // Half an identity is stored but cannot log anything yet, so the bot asks
   // for exactly the piece still outstanding and says the other is already on
   // record — never for both again.
-  if (merged.missing !== null) {
+  // A deposit into a named account does not need the member number: the
+  // account says whose money it is. Asking for a number the member has said
+  // they do not remember only lengthens the chat.
+  if (merged.missing === "memberNumber" && !(await depositCanProceed(ctx.lineUserId, merged.fullName))) {
+    return await askForIdentity(merged, ctx.lineUserId);
+  }
+  if (merged.missing !== null && merged.missing !== "memberNumber") {
     return await askForIdentity(merged, ctx.lineUserId);
   }
 
@@ -146,7 +177,7 @@ export async function submitMemberInfo(
   // and a member number on its own is weaker evidence than a number given
   // together with a matching name. Storing half an identity on LineUser is
   // cheap to undo; binding the roster row on half of one is not.
-  if (roster && !roster.lineUserId) {
+  if (roster && !roster.lineUserId && !derivedNumber) {
     await prisma.memberRoster
       .update({ where: { memberNumber }, data: { lineUserId: ctx.lineUserId } })
       .catch(() => {});
@@ -157,13 +188,17 @@ export async function submitMemberInfo(
   // from any earlier submit_contact_phone call — this tool never touches it.
   const identity: LineUserInfo = {
     fullName: roster?.memberName ?? fullName,
-    memberNumber,
+    memberNumber: memberNumber || null,
     verified,
     phone: savedUser.phone,
   };
-  const unverifiedNote = verified
-    ? ""
-    : " (Note to you: this member number is NOT in the cooperative roster, so it could not be verified — proceed, but mention gently in Thai that staff will verify their membership.)";
+  const unverifiedNote = derivedNumber
+    ? ` (Note to you: the member did not give a member number — it was found from the register by their name: ${memberNumber}. Do NOT ask them for their member number. Say the name and number back in your reply so they can see it is them.)`
+    : !memberNumber
+      ? " (Note to you: the member number is not known, and is not needed for this deposit — the deposit account says whose money it is. Do NOT ask for the member number again.)"
+      : verified
+        ? ""
+        : " (Note to you: this member number is NOT in the cooperative roster, so it could not be verified — proceed, but mention gently in Thai that staff will verify their membership.)";
 
   // Every payment waiting, not just the first. Identity is the requirement
   // that blocks all of them at once — a member who sent two slips before
@@ -413,4 +448,45 @@ export async function submitLookupInfo(
   }
 
   return `Verified: this member's เลขสมาชิก is ${match.memberNumber}. Tell them clearly, in Thai.`;
+}
+
+
+// The register's member number for a member who gave only their name — see
+// lib/memberByName.ts.
+async function findMemberNumberByName(lineUserId: string, fullName: string): Promise<string | null> {
+  const first = firstName(fullName);
+  if (!first) return null;
+  const [roster, pendings] = await Promise.all([
+    prisma.memberRoster.findMany({
+      where: { memberName: { contains: first } },
+      select: { memberNumber: true, memberName: true, lineUserId: true },
+      take: 200,
+    }),
+    loadAllPending(lineUserId),
+  ]);
+  const accounts = pendings.map((p) => digitsOnly(p.depositAccountNumber)).filter((d) => d.length >= 6);
+  let depositMembers: string[] = [];
+  if (accounts.length > 0) {
+    const earlier = await prisma.expense.findMany({
+      where: {
+        memberNumber: { not: null },
+        OR: accounts.map((a) => ({ depositAccountNumber: { contains: a.slice(-4) } })),
+      },
+      select: { memberNumber: true, depositAccountNumber: true },
+      orderBy: { createdAt: "desc" },
+      take: 200,
+    });
+    depositMembers = earlier
+      .filter((e) => accounts.includes(digitsOnly(e.depositAccountNumber)))
+      .map((e) => e.memberNumber as string);
+  }
+  return memberNumberByName({ fullName, lineUserId, roster, depositMembers });
+}
+
+// True when a payment is waiting that can go ahead with the name alone: a
+// deposit whose account number is already known.
+async function depositCanProceed(lineUserId: string, fullName: string | null): Promise<boolean> {
+  if (!fullName) return false;
+  const queued = await loadAllPending(lineUserId);
+  return queued.some((p) => p.category === "ฝากเงิน" && !!p.depositAccountNumber);
 }
