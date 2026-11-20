@@ -38,8 +38,15 @@ export const STAFF_CATEGORIES = [...CATEGORIES, OTHER_CATEGORY] as const;
 
 export type StaffCategory = (typeof STAFF_CATEGORIES)[number];
 
+// Money that reached the cooperative's account but is no member's: a
+// company's deposit for a photocopier lease, a refund from a supplier. It
+// still has to leave the "ไม่รู้ว่าใครโอน" list, and there is no member number
+// to give it. Offered only where a bank line is recorded (the daily view) —
+// never to the bot, and not in the member transaction form.
+export const NON_MEMBER_CATEGORY = "ไม่ใช่เงินของสมาชิก";
+
 export function isStaffCategory(value: string): boolean {
-  return (STAFF_CATEGORIES as readonly string[]).includes(value);
+  return (STAFF_CATEGORIES as readonly string[]).includes(value) || value === NON_MEMBER_CATEGORY;
 }
 
 // อื่นๆ on its own says nothing. Whoever chose it knows what the payment was
@@ -47,7 +54,7 @@ export function isStaffCategory(value: string): boolean {
 // down at the moment it is known rather than reconstructed months later from
 // an amount and a date.
 export function categoryNeedsDetail(category: string): boolean {
-  return category === OTHER_CATEGORY;
+  return category === OTHER_CATEGORY || category === NON_MEMBER_CATEGORY;
 }
 
 // Why this category and detail cannot be filed. Null when they can. Shared by

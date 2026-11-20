@@ -24,7 +24,7 @@
 // they can be tested and so the route and the panel cannot drift on what
 // counts as a bindable account.
 
-import { categoryNeedsDetail, isStaffCategory } from "./categories";
+import { categoryNeedsDetail, isStaffCategory, NON_MEMBER_CATEGORY } from "./categories";
 import { bankFromDescription } from "./thaiBanks";
 
 // Channels where the digits the statement shows are known to be the paying
@@ -112,6 +112,9 @@ export function recordProblem(input: {
   category: string;
   note?: string;
 }): string | null {
+  if (input.category === NON_MEMBER_CATEGORY) {
+    return (input.note ?? "").trim() ? null : "ระบุด้วยว่าเงินก้อนนี้เป็นเงินอะไร (เช่น เงินประกันเครื่องถ่ายเอกสาร)";
+  }
   if (!input.memberNumber.trim()) {
     return "ต้องระบุเลขสมาชิกของคนที่โอนเงินก้อนนี้";
   }

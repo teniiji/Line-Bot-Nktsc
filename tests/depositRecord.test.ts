@@ -177,3 +177,13 @@ describe("NO_NAME_TO_VERIFY_ERROR", () => {
     expect(NO_NAME_TO_VERIFY_ERROR).toContain("แก้ไข");
   });
 });
+
+describe("money that is no member's", () => {
+  it("needs no member number, only what it is", async () => {
+    const { recordProblem } = await import("../lib/depositRecord");
+    const { NON_MEMBER_CATEGORY } = await import("../lib/categories");
+    expect(recordProblem({ memberNumber: "", category: NON_MEMBER_CATEGORY, note: "เงินประกันเครื่องถ่ายเอกสาร" })).toBeNull();
+    expect(recordProblem({ memberNumber: "", category: NON_MEMBER_CATEGORY, note: "" })).toContain("เงินอะไร");
+    expect(recordProblem({ memberNumber: "", category: "อื่นๆ", note: "x" })).toContain("เลขสมาชิก");
+  });
+});
