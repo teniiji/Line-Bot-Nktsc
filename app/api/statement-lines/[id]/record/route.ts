@@ -9,6 +9,7 @@ import {
 import { isMemberDeposit } from "@/lib/statementLines";
 import { memberNumberKey } from "@/lib/memberNumber";
 import { DEDUCTION_CATEGORY } from "@/lib/statementSlipHints";
+import { NON_MEMBER_CATEGORY } from "@/lib/categories";
 import { rememberUnitMember } from "@/lib/unitPayerStore";
 import { bridgeLineToRound } from "@/lib/lineBridgeStore";
 import { parseRecordTarget } from "@/lib/recordCheck";
@@ -32,8 +33,10 @@ export async function POST(
   { params }: { params: { id: string } }
 ) {
   const body = await request.json().catch(() => ({}) as Record<string, unknown>);
-  const memberNumber = memberNumberKey(String(body.memberNumber ?? "")) ?? "";
   const category = String(body.category ?? "").trim();
+  // Money that is no member's carries no member number, whatever was typed.
+  const nonMember = category === NON_MEMBER_CATEGORY;
+  const memberNumber = nonMember ? "" : memberNumberKey(String(body.memberNumber ?? "")) ?? "";
   const note = String(body.note ?? "").trim() || null;
   // Optional, and only used when the roster cannot supply one. Staff ringing
   // round to place a payment learn the name along with the number, and a
@@ -90,10 +93,12 @@ export async function POST(
 
   // Same rule as the manual entry form: "verified" means the number matched
   // the imported roster, not that a person typed it confidently.
-  const rosterMatch = await prisma.memberRoster.findUnique({
-    where: { memberNumber },
-    select: { memberName: true },
-  });
+  const rosterMatch = nonMember
+    ? null
+    : await prisma.memberRoster.findUnique({
+        where: { memberNumber },
+        select: { memberName: true },
+      });
 
   let expense: {
     id: string;
@@ -111,10 +116,10 @@ export async function POST(
         // The bank's timestamp, so the transaction sits on the day the money
         // actually arrived and the daily view finds it there.
         date: line.postedAt,
-        memberNumber,
+        memberNumber: nonMember ? null : memberNumber,
         // The roster is canonical where it knows the member; the name staff
         // typed is the fallback, not an override.
-        memberFullName: rosterMatch?.memberName ?? statedName,
+        memberFullName: nonMember ? null : rosterMatch?.memberName ?? statedName,
         memberVerified: rosterMatch !== null,
         statementLineId: line.id,
       },
@@ -198,7 +203,7 @@ export async function POST(
     // Flagged rather than refused, the same way the bank-account directory
     // flags a member number the roster has never heard of: it is usually a
     // typo, and staff should see it rather than have the work stopped.
-    inRoster: rosterMatch !== null,
+    inRoster: nonMember || rosterMatch !== null,
     bridgedRound,
     carriedDebt,
     // The month staff chose could not take it; the transaction stands.

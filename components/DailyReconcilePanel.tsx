@@ -8,7 +8,7 @@ import {
   formatStatementTime,
   formatStatementTimeExact,
 } from "@/lib/format";
-import { STAFF_CATEGORIES, categoryNeedsDetail } from "@/lib/categories";
+import { NON_MEMBER_CATEGORY, STAFF_CATEGORIES, categoryNeedsDetail } from "@/lib/categories";
 import { accountCaveat, canBindAccount } from "@/lib/depositRecord";
 import { CHANNEL_LABELS, STAFF_CHANNEL } from "@/lib/statementLines";
 import { awaitingResult, canRecordFromLine, countedInRound, statusLabelOf } from "@/lib/statementDayView";
@@ -842,6 +842,12 @@ export default function DailyReconcilePanel() {
       const body = await res.json();
       if (!res.ok) {
         setError(body.error || "บันทึกรายการไม่สำเร็จ");
+        return;
+      }
+      if (body.category === NON_MEMBER_CATEGORY) {
+        setActionNotice(`บันทึก ${formatAmount(body.amount)} เป็นเงินที่ไม่ใช่ของสมาชิก (${actNote.trim()}) แล้ว`);
+        closeForm();
+        await fetchDay(from, to);
         return;
       }
       setActionNotice(
@@ -2478,7 +2484,8 @@ const StatementTable = ({
               <p className="text-xs text-slate-500 mt-2">
                 ยอดและวันที่ใช้ตามที่ธนาคารบันทึกไว้ ไม่ต้องพิมพ์เอง ·
                 ชื่อใส่เฉพาะตอนที่เลขสมาชิกยังไม่มีในทะเบียน · ถ้าไม่เข้าหมวดไหนเลย เลือก
-                &ldquo;อื่นๆ&rdquo; แล้วเขียนว่าเป็นค่าอะไร — ถ้าบันทึกผิด ลบได้ที่แท็บ
+                &ldquo;อื่นๆ&rdquo; แล้วเขียนว่าเป็นค่าอะไร · ถ้าไม่ใช่เงินของสมาชิก (เช่น เงินจากบริษัท) เลือก
+                &ldquo;ไม่ใช่เงินของสมาชิก&rdquo; ไม่ต้องใส่เลขสมาชิก — ถ้าบันทึกผิด ลบได้ที่แท็บ
                 &ldquo;รายการ&rdquo;
               </p>
             </td>
@@ -2773,8 +2780,11 @@ const ActionForm = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [owed]);
   const detailMissing = categoryNeedsDetail(actions.category) && !actions.note.trim();
+  // Money that is no member's (a company's deposit, a refund): no member
+  // number to give, only what it is.
+  const nonMember = mode === "record" && actions.category === NON_MEMBER_CATEGORY;
   const ready =
-    actions.memberNumber.trim() !== "" &&
+    (nonMember || actions.memberNumber.trim() !== "") &&
     (mode === "bind" ? senderAccount !== null : actions.category !== "" && !detailMissing);
   const submit = () => {
     if (mode === "bind" && senderAccount) actions.onBind(senderAccount);
@@ -2812,8 +2822,11 @@ const ActionForm = ({
       <span className="text-slate-500">
         {mode === "bind"
           ? `เลขบัญชี ${senderAccount} เป็นของสมาชิกเลข`
-          : `${formatAmount(amount)} นี้ เป็นเงินของสมาชิกเลข`}
+          : nonMember
+            ? `${formatAmount(amount)} นี้ ไม่ใช่เงินของสมาชิก`
+            : `${formatAmount(amount)} นี้ เป็นเงินของสมาชิกเลข`}
       </span>
+      {!nonMember && (
       <input
         value={actions.memberNumber}
         onChange={(e) => actions.setMemberNumber(e.target.value)}
@@ -2825,8 +2838,10 @@ const ActionForm = ({
         autoFocus
         className="border border-slate-300 rounded px-2 py-1 w-40 bg-white"
       />
+      )}
       {mode === "record" && (
         <>
+          {!nonMember && (
           <input
             value={actions.memberName}
             onChange={(e) => actions.setMemberName(e.target.value)}
@@ -2834,7 +2849,8 @@ const ActionForm = ({
             title="ปล่อยว่างได้ถ้าเลขสมาชิกมีในทะเบียนอยู่แล้ว — ระบบจะใช้ชื่อจากทะเบียนเสมอ"
             className="border border-slate-300 rounded px-2 py-1 w-64 bg-white"
           />
-          <span className="text-slate-500">จ่ายเป็น</span>
+          )}
+          <span className="text-slate-500">{nonMember ? "ประเภท" : "จ่ายเป็น"}</span>
           <select
             value={actions.category}
             onChange={(e) => actions.setCategory(e.target.value)}
@@ -2846,6 +2862,8 @@ const ActionForm = ({
                 {c}
               </option>
             ))}
+            <option disabled>──────────</option>
+            <option value={NON_MEMBER_CATEGORY}>{NON_MEMBER_CATEGORY} (ไม่ต้องใส่เลขสมาชิก)</option>
           </select>
           {/* อื่นๆ on its own says nothing, so it brings its own question with
               it rather than filing a transaction nobody can read back. */}
@@ -2853,7 +2871,7 @@ const ActionForm = ({
             <input
               value={actions.note}
               onChange={(e) => actions.setNote(e.target.value)}
-              placeholder="ระบุว่าเป็นรายการอะไร"
+              placeholder={nonMember ? "เป็นเงินอะไร เช่น เงินประกันเครื่องถ่ายเอกสาร" : "ระบุว่าเป็นรายการอะไร"}
               autoFocus
               title="เลือกอื่นๆ แล้วต้องเขียนด้วยว่าเงินก้อนนี้เป็นค่าอะไร ข้อความนี้จะไปอยู่ในรายละเอียดของรายการ"
               className="border border-amber-400 rounded px-2 py-1 w-56 bg-white"
@@ -2888,7 +2906,7 @@ const ActionForm = ({
           </select>
         </div>
       )}
-      {mode === "record" && (
+      {mode === "record" && !nonMember && (
         <MemberCheckNotes
           lineId={targetId}
           memberNumber={actions.memberNumber}
@@ -3154,7 +3172,7 @@ const DepositTable = ({
                   <p className="text-xs text-slate-500 mt-2">
                     {open === "bind"
                       ? "ผูกเลขบัญชีไว้กับสมาชิก — ไม่ได้บันทึกเงินก้อนนี้เป็นรายการ ถ้าต้องการบันทึกด้วย ให้กด \"บันทึกรายการ\" อีกที"
-                      : "ยอดและวันที่ใช้ตามที่ธนาคารบันทึกไว้ ไม่ต้องพิมพ์เอง · ชื่อใส่เฉพาะตอนที่เลขสมาชิกยังไม่มีในทะเบียน (ถ้ามีแล้วระบบใช้ชื่อจากทะเบียน) · ถ้าไม่เข้าหมวดไหนเลย เลือก \"อื่นๆ\" แล้วเขียนว่าเป็นค่าอะไร — ถ้าบันทึกผิด ลบได้ที่แท็บ \"รายการ\""}
+                      : "ยอดและวันที่ใช้ตามที่ธนาคารบันทึกไว้ ไม่ต้องพิมพ์เอง · ชื่อใส่เฉพาะตอนที่เลขสมาชิกยังไม่มีในทะเบียน (ถ้ามีแล้วระบบใช้ชื่อจากทะเบียน) · ถ้าไม่เข้าหมวดไหนเลย เลือก \"อื่นๆ\" แล้วเขียนว่าเป็นค่าอะไร · ถ้าไม่ใช่เงินของสมาชิก (เช่น เงินจากบริษัท) เลือก \"ไม่ใช่เงินของสมาชิก\" ไม่ต้องใส่เลขสมาชิก — ถ้าบันทึกผิด ลบได้ที่แท็บ \"รายการ\""}
                   </p>
                 </td>
               </tr>
