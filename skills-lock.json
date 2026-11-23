@@ -7,6 +7,20 @@
       "sourceType": "github",
       "skillPath": "skills/find-skills/SKILL.md",
       "computedHash": "7bc223e2aafbdbf6e50ea243ba6ef67fe432bb069ab439fea0390795dac0bf7f"
+    },
+    "line-flex-message": {
+      "source": "lis186/line-flex-message-skill",
+      "commit": "db1df4863a6df233e7121252a9c2aba2bfb01942",
+      "sourceType": "github",
+      "skillPath": "skills/line-flex-message/SKILL.md",
+      "computedHash": "e52aea4d7ed08bc1811cae56118386a798087be6a86cc36863d8cd25f4f3c4f6"
+    },
+    "line-webhooks": {
+      "source": "hookdeck/webhook-skills",
+      "commit": "60c323851294d450f10e87fde68ca3ec5130a4a9",
+      "sourceType": "github",
+      "skillPath": "skills/line-webhooks/SKILL.md",
+      "computedHash": "fb0cb92a482d1d6b876292b3148bdbd1da39af4e0faf3528abe1ca13999d183f"
     }
   }
 }
