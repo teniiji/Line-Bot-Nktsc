@@ -283,6 +283,15 @@ export async function rematchRoundsForAccounts(accountNumbers: string[]): Promis
 // A closed round's figures are what its carried debts were taken from, so a
 // directory edit must not quietly move its money after the fact — see
 // StatementRound.closedAt.
+// One round, after its directory changed: fill blank accounts again, match
+// its transfers again, recount. Closed rounds are left as they were closed.
+export async function rematchRoundAccounts(roundId: string): Promise<void> {
+  if ((await openRoundsAmong([roundId])).length === 0) return;
+  await applyDirectoryAccounts(roundId);
+  await rematchRoundTransfers(roundId);
+  await recomputeRoundPayments(roundId);
+}
+
 async function openRoundsAmong(roundIds: string[]): Promise<string[]> {
   if (roundIds.length === 0) return [];
   const open = await prisma.statementRound.findMany({
