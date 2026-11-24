@@ -34,6 +34,7 @@ import UnitPayersPanel from "@/components/UnitPayersPanel";
 import OutOfProvincePanel from "@/components/OutOfProvincePanel";
 import LineGroupsPanel from "@/components/LineGroupsPanel";
 import MemberBankAccountsPanel from "@/components/MemberBankAccountsPanel";
+import LoanSchedulePanel from "@/components/LoanSchedulePanel";
 
 const PAGE_SIZE = 10;
 const EXPORT_PAGE_SIZE = 100;
@@ -343,6 +344,11 @@ export default function Dashboard() {
                 <OrganizationUnitsPanel />
               </div>
             ),
+          },
+          {
+            id: "loan-schedule",
+            label: "ตารางผ่อนชำระ",
+            content: <LoanSchedulePanel />,
           },
           {
             id: "line-users",
