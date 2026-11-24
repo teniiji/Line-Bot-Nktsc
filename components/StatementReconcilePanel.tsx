@@ -182,6 +182,103 @@ const DateTimeCell = ({ iso, suffix }: { iso: string | null; suffix?: string | n
   );
 };
 
+// "ไม่มีเลขบัญชี" on a member's row, with a way to give them one there and
+// then: the account goes into ทะเบียนเลขบัญชี bound to this member, and the
+// open round matches its transfers again, so money from it finds them.
+const AddAccountInline = ({
+  memberNumber,
+  memberName,
+  roundId,
+  onAdded,
+}: {
+  memberNumber: string;
+  memberName: string | null;
+  // null on a closed round: the account is still saved, the round is not touched.
+  roundId: string | null;
+  onAdded: () => Promise<void>;
+}) => {
+  const [open, setOpen] = useState(false);
+  const [value, setValue] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const digits = value.replace(/\D/g, "");
+
+  const save = async () => {
+    if (digits.length < 6) {
+      setError("เลขบัญชีสั้นเกินไป");
+      return;
+    }
+    setSaving(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/member-bank-accounts", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          accountNumber: digits,
+          memberNumber,
+          memberName,
+          note: "เพิ่มจากหน้าเทียบ Statement",
+          ...(roundId ? { roundId } : {}),
+        }),
+      });
+      const body = await res.json().catch(() => null);
+      if (!res.ok) throw new Error(body?.error ?? "บันทึกไม่สำเร็จ");
+      setOpen(false);
+      setValue("");
+      await onAdded();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "บันทึกไม่สำเร็จ");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (!open) {
+    return (
+      <span className="font-sans whitespace-nowrap">
+        <span className="text-amber-700">ไม่มีเลขบัญชี</span>{" "}
+        <button
+          type="button"
+          onClick={() => setOpen(true)}
+          className="text-xs text-sky-700 hover:underline"
+          title="ใส่เลขบัญชีของสมาชิกคนนี้ — บันทึกลงทะเบียนเลขบัญชี และจับคู่ยอดโอนในรอบนี้ใหม่"
+        >
+          ➕ เพิ่มบัญชี
+        </button>
+      </span>
+    );
+  }
+  return (
+    <span className="font-sans inline-flex flex-wrap items-center gap-1">
+      <input
+        value={value}
+        onChange={(e) => setValue(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") save();
+          if (e.key === "Escape") setOpen(false);
+        }}
+        placeholder="เลขบัญชี"
+        autoFocus
+        inputMode="numeric"
+        className="border border-slate-300 rounded px-2 py-0.5 w-36 text-sm font-mono"
+      />
+      <button
+        type="button"
+        onClick={save}
+        disabled={saving || digits.length === 0}
+        className="text-xs px-2 py-0.5 rounded bg-slate-900 text-white disabled:opacity-40"
+      >
+        {saving ? "กำลังบันทึก…" : "บันทึก"}
+      </button>
+      <button type="button" onClick={() => setOpen(false)} className="text-xs text-slate-500 hover:underline">
+        ยกเลิก
+      </button>
+      {error && <span className="block w-full text-xs text-red-600">{error}</span>}
+    </span>
+  );
+};
+
 export default function StatementReconcilePanel() {
   const [rounds, setRounds] = useState<StatementRoundSummary[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -2381,7 +2478,14 @@ export default function StatementReconcilePanel() {
                                     </span>
                                   </span>
                                 ) : (
-                                  <span className="font-sans text-amber-700">ไม่มีเลขบัญชี</span>
+                                  <AddAccountInline
+                                    memberNumber={m.memberNumber}
+                                    memberName={m.name}
+                                    roundId={selected?.closedAt ? null : selectedId}
+                                    onAdded={async () => {
+                                      if (selectedId) await Promise.all([fetchRound(selectedId), fetchRounds()]);
+                                    }}
+                                  />
                                 ))}
                             </td>
                             <td className="px-4 py-2.5 num text-right whitespace-nowrap">

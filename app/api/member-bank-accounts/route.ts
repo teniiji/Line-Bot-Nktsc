@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { normalizeAccountNumber } from "@/lib/statementReconcile";
 import { memberNumberKey } from "@/lib/memberNumber";
-import { rematchRoundsForAccount } from "@/lib/statementRecompute";
+import { rematchRoundAccounts, rematchRoundsForAccount } from "@/lib/statementRecompute";
 
 export const dynamic = "force-dynamic";
 
@@ -96,6 +96,12 @@ export async function POST(request: NextRequest) {
   // Re-reconcile wherever this account's money sits, so re-pointing a binding
   // moves the money instead of leaving the change looking inert.
   const rounds = await rematchRoundsForAccount(accountNumber);
+
+  // Added from a round's member row ("ไม่มีเลขบัญชี" → เพิ่มบัญชี): that round
+  // takes the account straight away even when no money from it has arrived
+  // yet, so the row shows it and a transfer uploaded later finds the member.
+  const roundId = typeof body.roundId === "string" ? body.roundId : null;
+  if (roundId) await rematchRoundAccounts(roundId);
 
   return NextResponse.json({
     id: entry.id,
