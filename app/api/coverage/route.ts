@@ -4,7 +4,7 @@ import { currentSnapshot, loadCoverageRows, ratesOf } from "@/lib/coverageStore"
 
 export const dynamic = "force-dynamic";
 
-const SORTS: CoverageSort[] = ["margin", "debt", "age", "member"];
+const SORTS: CoverageSort[] = ["margin", "debt", "insured", "age", "member"];
 
 // The member list of a coverage round, filtered and paged. With all=1 the
 // whole filtered list comes back (for the CSV export).

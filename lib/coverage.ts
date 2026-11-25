@@ -143,7 +143,7 @@ export function filterCoverage(rows: CoverageRow[], f: CoverageFilters): Coverag
   });
 }
 
-export type CoverageSort = "margin" | "debt" | "age" | "member";
+export type CoverageSort = "margin" | "debt" | "insured" | "age" | "member";
 
 export function sortCoverage(rows: CoverageRow[], sort: CoverageSort = "margin"): CoverageRow[] {
   const out = [...rows];
@@ -152,6 +152,8 @@ export function sortCoverage(rows: CoverageRow[], sort: CoverageSort = "margin")
   switch (sort) {
     case "debt":
       return out.sort((a, b) => b.debt - a.debt || byMember(a, b));
+    case "insured":
+      return out.sort((a, b) => b.insuredSum - a.insuredSum || byMember(a, b));
     case "age":
       return out.sort((a, b) => (b.age ?? -1) - (a.age ?? -1) || byMember(a, b));
     case "member":
@@ -185,7 +187,7 @@ export function totals(rows: CoverageRow[]): CoverageTotals {
     t.total += r.total;
     t.margin += r.margin;
   }
-  for (const k of ["shares", "debt", "total", "margin"] as const) t[k] = round2(t[k]);
+  for (const k of ["shares", "debt", "insuredSum", "total", "margin"] as const) t[k] = round2(t[k]);
   return t;
 }
 
