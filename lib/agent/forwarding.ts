@@ -78,7 +78,7 @@ export function allPlanTargets(plan: DepartmentForwardPlan): string[] {
 // stops working and the only sign is that the old recipients are busy again.
 const FALLBACK_NOTICE =
   "⚠️ ส่งเข้ากลุ่มไม่สำเร็จ (บอทอาจถูกนำออกจากกลุ่มแล้ว) จึงส่งให้คุณโดยตรงแทน — " +
-  "รบกวนตรวจที่แดชบอร์ด > ผู้รับผิดชอบ > กลุ่ม LINE";
+  "รบกวนตรวจที่แดชบอร์ด > ตั้งค่าระบบ > ผู้รับผิดชอบ > กลุ่ม LINE";
 
 // Pushes to the plan's primary, and only if every one of those failed, to
 // the fallback. Returns the same shape as pushToTargets so callers log and

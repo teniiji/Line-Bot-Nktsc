@@ -24,6 +24,7 @@ import CategoryChart from "@/components/CategoryChart";
 import TrendChart from "@/components/TrendChart";
 import ConfirmDialog from "@/components/ConfirmDialog";
 import Tabs from "@/components/Tabs";
+import CollapsibleSections from "@/components/CollapsibleSections";
 import TestDataCleanupPanel from "@/components/TestDataCleanupPanel";
 import DeductionRoundsPanel from "@/components/DeductionRoundsPanel";
 import OrganizationUnitsPanel from "@/components/OrganizationUnitsPanel";
@@ -357,57 +358,81 @@ export default function Dashboard() {
             content: <CoveragePanel />,
           },
           {
-            id: "line-users",
-            label: "สมาชิก LINE",
-            content: (
-              <div className="space-y-6">
-                <LineUsersPanel />
-                <MemberContactPanel />
-                <TestDataCleanupPanel />
-              </div>
-            ),
-          },
-          {
-            id: "contacts",
-            label: "ผู้รับผิดชอบ",
-            content: (
-              <div className="space-y-6">
-                <LineGroupsPanel />
-                <ResponsibleContactsPanel />
-                <DepartmentContactsPanel />
-              </div>
-            ),
-          },
-          {
             id: "settings",
             label: "ตั้งค่าระบบ",
             content: (
-              <div className="space-y-6">
-                <FeatureFlagsPanel />
-                <ControlUnitsPanel />
-                {/* Lists the daily and Statement pages read from, kept here
-                    rather than under the work: most of what is in them is
-                    learned from that work, and they are opened now and then. */}
-                <UnitPayersPanel />
-                <OutOfProvincePanel />
-                <MemberBankAccountsPanel />
-              </div>
+              <CollapsibleSections
+                defaultOpen={["switches"]}
+                sections={[
+                  {
+                    id: "switches",
+                    title: "สวิตช์ระบบและหน่วยคุม",
+                    hint: "เปิด/ปิดการทำงานของบอท การแจ้งเตือนแต่ละแผนก",
+                    content: (
+                      <>
+                        <FeatureFlagsPanel />
+                        <ControlUnitsPanel />
+                      </>
+                    ),
+                  },
+                  {
+                    id: "line-users",
+                    title: "สมาชิก LINE",
+                    hint: "คนที่เคยทักบอท ผูกเลขสมาชิก ปิดบอทรายคน",
+                    content: (
+                      <>
+                        <LineUsersPanel />
+                        <MemberContactPanel />
+                        <TestDataCleanupPanel />
+                      </>
+                    ),
+                  },
+                  {
+                    id: "contacts",
+                    title: "ผู้รับผิดชอบ",
+                    hint: "กลุ่ม LINE เจ้าหน้าที่ตามรหัส และรายแผนก",
+                    content: (
+                      <>
+                        <LineGroupsPanel />
+                        <ResponsibleContactsPanel />
+                        <DepartmentContactsPanel />
+                      </>
+                    ),
+                  },
+                  {
+                    id: "knowledge",
+                    title: "ฐานความรู้",
+                    hint: "ข้อมูลที่บอทใช้ตอบ และลิงก์แบบฟอร์ม",
+                    content: (
+                      <>
+                        <KnowledgePanel />
+                        <FormLinksPanel />
+                      </>
+                    ),
+                  },
+                  {
+                    // Lists the daily and Statement pages read from: most of
+                    // what is in them is learned from that work, and they are
+                    // opened now and then.
+                    id: "directories",
+                    title: "ทะเบียนที่หน้าเงินเข้าและเทียบ Statement ใช้",
+                    hint: "หน่วยงานที่โอนแทนสมาชิก สมาชิกต่างจังหวัด เลขบัญชี",
+                    content: (
+                      <>
+                        <UnitPayersPanel />
+                        <OutOfProvincePanel />
+                        <MemberBankAccountsPanel />
+                      </>
+                    ),
+                  },
+                ]}
+              />
             ),
           },
           {
             id: "bot-conversations",
             label: "บทสนทนาบอท",
             content: <BotConversationsPanel />,
-          },
-          {
-            id: "knowledge",
-            label: "ฐานความรู้",
-            content: (
-              <div className="space-y-6">
-                <KnowledgePanel />
-                <FormLinksPanel />
-              </div>
-            ),
           },
         ]}
       />
