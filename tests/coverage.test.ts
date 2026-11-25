@@ -123,6 +123,13 @@ describe("filter, sort and summary", () => {
     expect(sortCoverage(rows).map((r) => r.memberNumber)).toEqual(["4855", "31107", "22495"]);
   });
 
+  it("sorts by insured sum, largest first", () => {
+    const sorted = sortCoverage(rows, "insured");
+    for (let i = 1; i < sorted.length; i++) {
+      expect(sorted[i - 1].insuredSum).toBeGreaterThanOrEqual(sorted[i].insuredSum);
+    }
+  });
+
   it("filters by status, premium, age and search", () => {
     expect(filterCoverage(rows, { status: "short" }).map((r) => r.memberNumber)).toEqual(["4855"]);
     expect(filterCoverage(rows, { premium: "fail" }).map((r) => r.memberNumber)).toEqual(["31107"]);

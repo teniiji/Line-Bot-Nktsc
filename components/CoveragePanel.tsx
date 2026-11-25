@@ -429,6 +429,7 @@ export default function CoveragePanel() {
             <select value={sort} onChange={(e) => setSort(e.target.value)} className={select}>
               <option value="margin">เรียง: ขาดมากสุดก่อน</option>
               <option value="debt">เรียง: หนี้มากสุดก่อน</option>
+              <option value="insured">เรียง: ทุนประกันมากสุดก่อน</option>
               <option value="age">เรียง: อายุมากสุดก่อน</option>
               <option value="member">เรียง: เลขสมาชิก</option>
             </select>
@@ -439,7 +440,7 @@ export default function CoveragePanel() {
 
           {listTotals && (
             <p className="text-xs text-slate-500 num">
-              {total.toLocaleString("th-TH")} คน · หนี้ {million(listTotals.debt)} · หลักประกัน {million(listTotals.total)} ·
+              {total.toLocaleString("th-TH")} คน · หนี้ {million(listTotals.debt)} · ทุนประกัน {million(listTotals.insuredSum)} · หลักประกัน {million(listTotals.total)} ·
               เหลือ <span className={listTotals.margin < 0 ? "text-red-600" : ""}>{million(listTotals.margin)}</span>
             </p>
           )}
@@ -453,6 +454,7 @@ export default function CoveragePanel() {
                   <th className="text-right">อายุ</th>
                   <th className="text-right">หุ้น</th>
                   <th className="text-right">หนี้</th>
+                  <th className="text-right">ทุนประกัน</th>
                   <th className="text-right">หลักประกันรวม</th>
                   <th className="text-right">เหลือ</th>
                   <th className="text-left pl-3">ฌาปนกิจ</th>
@@ -461,14 +463,14 @@ export default function CoveragePanel() {
               <tbody>
                 {loading && (
                   <tr>
-                    <td colSpan={8} className="py-6 text-center text-slate-400">
+                    <td colSpan={9} className="py-6 text-center text-slate-400">
                       กำลังโหลด…
                     </td>
                   </tr>
                 )}
                 {!loading && rows.length === 0 && (
                   <tr>
-                    <td colSpan={8} className="py-6 text-center text-slate-400">
+                    <td colSpan={9} className="py-6 text-center text-slate-400">
                       ไม่พบรายการ
                     </td>
                   </tr>
@@ -488,6 +490,20 @@ export default function CoveragePanel() {
                         <td className="text-right num">{r.age ?? "—"}</td>
                         <td className="text-right num">{baht(r.shares)}</td>
                         <td className="text-right num">{baht(r.debt)}</td>
+                        <td className="text-right num">
+                          {baht(r.insuredSum)}
+                          {r.premium > 0 && (
+                            <span className="block text-xs text-slate-400">เบี้ย {baht(r.premium)}</span>
+                          )}
+                          {r.premiumDeducted === false && (
+                            <span
+                              className="block text-xs text-red-600"
+                              title="หักเบี้ยประกันจากเงินปันผลไม่ได้ — ต้องตามเก็บเบี้ย"
+                            >
+                              หักจากปันผลไม่ได้
+                            </span>
+                          )}
+                        </td>
                         <td className="text-right num">{baht(r.total)}</td>
                         <td className={`text-right num font-medium ${r.margin < 0 ? "text-red-600" : "text-emerald-700"}`}>
                           {signed(r.margin)}
@@ -502,7 +518,7 @@ export default function CoveragePanel() {
                       </tr>
                       {expanded === r.memberNumber && snapshot && (
                         <tr className="bg-slate-50 border-b">
-                          <td colSpan={8} className="p-4">
+                          <td colSpan={9} className="p-4">
                             <Breakdown r={r} s={snapshot} />
                           </td>
                         </tr>
