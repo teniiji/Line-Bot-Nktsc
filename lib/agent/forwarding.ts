@@ -13,7 +13,7 @@ import { getCategoryDepartment } from "../categoryDepartments";
 import { formatAmount } from "../format";
 import { depositAccountLine } from "../depositNotice";
 import { serviceRequestMessages } from "../serviceRequestMessage";
-import { isFeatureEnabled, departmentNotifyKey } from "../featureFlags";
+import { isFeatureEnabled, departmentNotifyKey, categoryNotifyKey } from "../featureFlags";
 import type { LineUserInfo, PendingServiceInfo } from "./types";
 
 // Picks where to forward, as one or more LINE user IDs (every non-loan
@@ -294,7 +294,10 @@ export async function notifyTransactionForward(
     // Staff-toggleable per-department mute (dashboard > ตั้งค่าระบบ) — the
     // transaction itself is already logged by the time this runs, so muting
     // only skips the push notification, never the record.
-    if (department && !(await isFeatureEnabled(departmentNotifyKey(department)))) {
+    if (
+      (department && !(await isFeatureEnabled(departmentNotifyKey(department)))) ||
+      !(await isFeatureEnabled(categoryNotifyKey(expense.category)))
+    ) {
       await prisma.expense.update({
         where: { id: expense.id },
         data: { forwardStatus: "muted", forwardedTo: null },
