@@ -203,10 +203,30 @@ describe("members without a life policy", () => {
     expect(filterCoverage(mixed, { insured: "" })).toHaveLength(4);
   });
 
-  it("are hidden unless asked for", async () => {
+  it("are shown unless narrowed out", async () => {
     const { parseFilters } = await import("../lib/coverage");
-    expect(parseFilters(new URLSearchParams("")).insured).toBe("yes");
+    expect(parseFilters(new URLSearchParams("")).insured).toBe("");
     expect(parseFilters(new URLSearchParams("insured=all")).insured).toBe("");
+    expect(parseFilters(new URLSearchParams("insured=yes")).insured).toBe("yes");
     expect(parseFilters(new URLSearchParams("insured=no")).insured).toBe("no");
+  });
+});
+
+describe("what could not be deducted", () => {
+  it("reads the file's รายการที่หักไม่ได้", async () => {
+    const { parseUndeducted } = await import("../lib/coverage");
+    expect(parseUndeducted("สสอค สสชสอ ญาติ 2 ราย")).toEqual({ premium: false, associations: ["hasSok", "hasScs"], relatives: 2 });
+    expect(parseUndeducted("ประกัน สสสท")).toEqual({ premium: true, associations: ["hasSst"], relatives: 0 });
+    expect(parseUndeducted(null)).toEqual({ premium: false, associations: [], relatives: 0 });
+  });
+
+  it("filters members whose cremation fee could not be taken", () => {
+    const rows = [m22495, m31107].map((m) => withCollateral(m, DEFAULT_RATES));
+    const failed = withCollateral({ ...m4855, undeducted: "สสชสอ ญาติ 1 ราย" }, DEFAULT_RATES);
+    const all = [...rows.map((r) => ({ ...r, undeducted: null })), failed];
+    expect(filterCoverage(all, { undeducted: "cremation" }).map((r) => r.memberNumber)).toEqual(["4855"]);
+    expect(filterCoverage(all, { undeducted: "relative" }).map((r) => r.memberNumber)).toEqual(["4855"]);
+    expect(filterCoverage(all, { undeducted: "premium" })).toHaveLength(0);
+    expect(summarize(all).cremationFailed).toBe(1);
   });
 });
