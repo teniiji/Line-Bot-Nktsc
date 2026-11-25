@@ -121,7 +121,13 @@ export interface CoverageFilters {
   status?: "short" | "ok" | "";
   premium?: "ok" | "fail" | "";
   associations?: number | null;
+  // Holds the group life policy (ทุนประกัน > 0), or only belongs to a
+  // cremation association. The 2569 file lists both; the tab is about the
+  // first, so that is what it opens on.
+  insured?: "yes" | "no" | "";
 }
+
+export const isInsured = (r: { insuredSum: number }) => r.insuredSum > 0;
 
 export function filterCoverage(rows: CoverageRow[], f: CoverageFilters): CoverageRow[] {
   const q = f.search?.trim().toLowerCase().replace(/\s+/g, "") ?? "";
@@ -139,6 +145,8 @@ export function filterCoverage(rows: CoverageRow[], f: CoverageFilters): Coverag
     if (f.premium === "ok" && r.premiumDeducted !== true) return false;
     if (f.premium === "fail" && r.premiumDeducted !== false) return false;
     if (f.associations != null && r.associations !== f.associations) return false;
+    if (f.insured === "yes" && !isInsured(r)) return false;
+    if (f.insured === "no" && isInsured(r)) return false;
     return true;
   });
 }
@@ -192,7 +200,10 @@ export function totals(rows: CoverageRow[]): CoverageTotals {
 }
 
 export interface CoverageSummary {
+  // Everything below is about members who hold the life policy.
   all: CoverageTotals;
+  // In the file without a policy: cremation associations only.
+  uninsured: CoverageTotals;
   withDebt: CoverageTotals;
   noDebt: CoverageTotals;
   enough: CoverageTotals;
@@ -202,10 +213,12 @@ export interface CoverageSummary {
   bands: (CoverageTotals & { label: string; from: number; to: number; shortCount: number; shortMargin: number })[];
 }
 
-export function summarize(rows: CoverageRow[]): CoverageSummary {
+export function summarize(allRows: CoverageRow[]): CoverageSummary {
+  const rows = allRows.filter(isInsured);
   const short = rows.filter((r) => r.margin < 0);
   return {
     all: totals(rows),
+    uninsured: totals(allRows.filter((r) => !isInsured(r))),
     withDebt: totals(rows.filter((r) => r.debt > 0)),
     noDebt: totals(rows.filter((r) => r.debt <= 0)),
     enough: totals(rows.filter((r) => r.margin >= 0)),
@@ -242,5 +255,6 @@ export function parseFilters(params: URLSearchParams): CoverageFilters {
     status: status === "short" || status === "ok" ? status : "",
     premium: premium === "ok" || premium === "fail" ? premium : "",
     associations: int("assoc"),
+    insured: params.get("insured") === "no" ? "no" : params.get("insured") === "all" ? "" : "yes",
   };
 }

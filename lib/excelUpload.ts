@@ -115,11 +115,15 @@ export async function readAllSheetRows(file: File): Promise<unknown[][][]> {
 
 function sheetRows(sheet: ExcelJS.Worksheet): unknown[][] {
   const rows: unknown[][] = [];
+  // Read once: ExcelJS works columnCount out by walking every row, so asking
+  // it per cell made a sheet's read grow with the square of its rows — a
+  // 7,866-row member file took over a minute and a half.
+  const columnCount = sheet.columnCount;
   sheet.eachRow({ includeEmpty: false }, (row) => {
     const values: unknown[] = [];
     // ExcelJS row.values is 1-based with a leading hole; re-index to 0-based
     // so parsers can use the same column numbers as the source sheets.
-    for (let col = 1; col <= sheet.columnCount; col += 1) {
+    for (let col = 1; col <= columnCount; col += 1) {
       values.push(readCellValue(sheet, row.getCell(col)));
     }
     rows.push(values);
