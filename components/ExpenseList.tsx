@@ -140,7 +140,7 @@ export default function ExpenseList({
                         // needs a different person to fix a different thing.
                         `ส่งแจ้งเตือนให้เจ้าหน้าที่ไม่สำเร็จ (${expense.forwardedTo ?? "-"})` +
                         (expense.forwardError ? `\n\nสาเหตุ: ${expense.forwardError}` : "") +
-                        `\n\nธุรกรรมบันทึกเรียบร้อยแล้ว แต่ไม่มีใครได้รับแจ้ง ตรวจ LINE UserID ของเจ้าหน้าที่ในแท็บ "ผู้รับผิดชอบ"`
+                        `\n\nธุรกรรมบันทึกเรียบร้อยแล้ว แต่ไม่มีใครได้รับแจ้ง ตรวจ LINE UserID ของเจ้าหน้าที่ใน "ตั้งค่าระบบ > ผู้รับผิดชอบ"`
                       }
                     >
                       ⚠️ แจ้งเจ้าหน้าที่ไม่สำเร็จ
@@ -149,7 +149,7 @@ export default function ExpenseList({
                   {expense.forwardStatus === "unconfigured" && (
                     <span
                       className="inline-block text-xs px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 border border-amber-200"
-                      title='ยังไม่ได้ตั้งค่าเจ้าหน้าที่ผู้รับของแผนกนี้ — ธุรกรรมบันทึกแล้วแต่ไม่ได้ส่งแจ้งใคร ตั้งค่าได้ในแท็บ "ผู้รับผิดชอบ"'
+                      title='ยังไม่ได้ตั้งค่าเจ้าหน้าที่ผู้รับของแผนกนี้ — ธุรกรรมบันทึกแล้วแต่ไม่ได้ส่งแจ้งใคร ตั้งค่าได้ใน "ตั้งค่าระบบ > ผู้รับผิดชอบ"'
                     >
                       ยังไม่ตั้งค่าผู้รับ
                     </span>
