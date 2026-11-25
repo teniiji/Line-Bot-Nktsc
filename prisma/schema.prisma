@@ -1168,3 +1168,62 @@ model StaffHandoff {
   @@index([lineUserId, createdAt])
   @@index([status])
 }
+
+// ประกันและหลักประกัน — one import of the insurance/cremation/share-debt
+// workbook. The figures a member's collateral is built from are kept raw;
+// the benefit amounts below are kept with the round they were imported under,
+// so changing next year's rate (or this year's cap) is an edit here rather
+// than a re-import, and an older round still adds up the way it did.
+model CoverageSnapshot {
+  id               String   @id @default(cuid())
+  label            String
+  // The date of the share-and-debt report the figures came from.
+  asOf             DateTime?
+  // The date ages were counted at (the insurer's policy date, not today).
+  ageAsOf          DateTime?
+  benefitSok       Int      @default(600000)
+  benefitScs       Int      @default(600000)
+  benefitSst       Int      @default(450000)
+  benefitSsk       Int      @default(350000)
+  welfarePerPeriod Int      @default(2500)
+  welfareCap       Int      @default(600000)
+  isCurrent        Boolean  @default(false)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+  members          MemberCoverage[]
+}
+
+model MemberCoverage {
+  id              String   @id @default(cuid())
+  snapshotId      String
+  memberNumber    String
+  // As the file had it — MemberRoster is preferred for display when it knows
+  // the member.
+  memberName      String?
+  unitName        String?
+  gender          String?
+  age             Int?
+  // งวดหุ้น — the number of share instalments, used as อายุสมาชิก.
+  sharePeriods    Int?
+  shares          Decimal  @db.Decimal(14, 2)
+  // Null when the share-and-debt report did not carry the member at all,
+  // which is not the same as owing nothing.
+  debt            Decimal? @db.Decimal(14, 2)
+  insuredSum      Int      @default(0)
+  premium         Int      @default(0)
+  // ประกัน (หักจากปันผล): true หักได้, false หักไม่ได้, null not in the
+  // dividend list.
+  premiumDeducted Boolean?
+  hasSok          Boolean  @default(false)
+  hasScs          Boolean  @default(false)
+  hasSst          Boolean  @default(false)
+  hasSsk          Boolean  @default(false)
+  relativeCount   Int      @default(0)
+  relativeFees    Int      @default(0)
+  debtStatus      String?
+  undeducted      String?
+  snapshot        CoverageSnapshot @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
+
+  @@unique([snapshotId, memberNumber])
+  @@index([memberNumber])
+}
