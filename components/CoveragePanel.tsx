@@ -3,6 +3,7 @@
 import { Fragment, useCallback, useEffect, useState } from "react";
 import PanelHelp from "@/components/PanelHelp";
 import MultiSelect from "@/components/MultiSelect";
+import ConfirmDialog from "@/components/ConfirmDialog";
 import { AGE_BANDS, type CoverageRow, type CoverageSummary, type CoverageTotals } from "@/lib/coverage";
 
 // ประกันและหลักประกัน — for each member who holds the group life policy:
@@ -22,6 +23,14 @@ interface Snapshot {
   welfarePerPeriod: number;
   welfareCap: number;
   createdAt: string;
+}
+
+interface SnapshotListItem {
+  id: string;
+  label: string;
+  isCurrent: boolean;
+  createdAt: string;
+  _count: { members: number };
 }
 
 interface ImportResult {
@@ -157,6 +166,16 @@ export default function CoveragePanel() {
   const [premium, setPremium] = useState<"" | "ok" | "fail">("");
   const [assoc, setAssoc] = useState<string>("");
   const [sort, setSort] = useState("margin");
+  // Life-policy holders by default: the tab is about them, and a file that
+  // also lists cremation-only members would otherwise fill the list with
+  // people who have no ทุนประกัน at all.
+  const [insured, setInsured] = useState<"yes" | "no" | "all">("yes");
+
+  // Which round is shown: null is the current one.
+  const [snapshots, setSnapshots] = useState<SnapshotListItem[]>([]);
+  const [viewId, setViewId] = useState<string | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [roundError, setRoundError] = useState<string | null>(null);
 
   const [importOpen, setImportOpen] = useState(false);
   const [importing, setImporting] = useState(false);
@@ -179,19 +198,55 @@ export default function CoveragePanel() {
       if (status) p.set("status", status);
       if (premium) p.set("premium", premium);
       if (assoc) p.set("assoc", assoc);
+      p.set("insured", insured);
+      if (viewId) p.set("snapshot", viewId);
       p.set("sort", sort);
       if (extra) for (const [k, v] of Object.entries(extra)) p.set(k, v);
       return p;
     },
-    [search, band, selectedUnits, status, premium, assoc, sort]
+    [search, band, selectedUnits, status, premium, assoc, sort, insured, viewId]
   );
 
   const fetchSummary = useCallback(async () => {
-    const res = await fetch("/api/coverage/summary");
+    const res = await fetch(`/api/coverage/summary${viewId ? `?snapshot=${encodeURIComponent(viewId)}` : ""}`);
     const body = await res.json();
     setSnapshot(body.snapshot);
     setSummary(body.summary);
+  }, [viewId]);
+
+  const fetchSnapshots = useCallback(async () => {
+    const res = await fetch("/api/coverage/snapshots");
+    const body = await res.json();
+    setSnapshots(body.data ?? []);
   }, []);
+
+  useEffect(() => {
+    fetchSnapshots();
+  }, [fetchSnapshots]);
+
+  const makeCurrent = async () => {
+    if (!snapshot) return;
+    setRoundError(null);
+    const res = await fetch(`/api/coverage/snapshots/${snapshot.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ isCurrent: true }),
+    });
+    if (!res.ok) setRoundError("ตั้งเป็นรอบหลักไม่สำเร็จ");
+    setViewId(null);
+    await fetchSnapshots();
+  };
+
+  const deleteRound = async () => {
+    if (!snapshot) return;
+    setConfirmDelete(false);
+    setRoundError(null);
+    const res = await fetch(`/api/coverage/snapshots/${snapshot.id}`, { method: "DELETE" });
+    if (!res.ok) setRoundError("ลบรอบไม่สำเร็จ");
+    setViewId(null);
+    await fetchSnapshots();
+    await Promise.all([fetchSummary(), fetchList()]);
+  };
 
   const fetchList = useCallback(async () => {
     setLoading(true);
@@ -212,7 +267,7 @@ export default function CoveragePanel() {
   }, [fetchList]);
   useEffect(() => {
     setPage(1);
-  }, [search, band, selectedUnits, status, premium, assoc, sort]);
+  }, [search, band, selectedUnits, status, premium, assoc, sort, insured, viewId]);
 
   const onImport = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -224,7 +279,8 @@ export default function CoveragePanel() {
       setImportResult(res.ok ? body : { error: body.error || "นำเข้าไม่สำเร็จ" });
       if (res.ok) {
         setImportOpen(false);
-        await Promise.all([fetchSummary(), fetchList()]);
+        setViewId(null);
+        await Promise.all([fetchSummary(), fetchList(), fetchSnapshots()]);
       }
     } finally {
       setImporting(false);
@@ -264,6 +320,44 @@ export default function CoveragePanel() {
                 รอบ: <span className="font-medium text-slate-700">{snapshot.label}</span> · หุ้นหนี้ ณ{" "}
                 {thaiDate(snapshot.asOf)} · อายุ ณ {thaiDate(snapshot.ageAsOf)} · นำเข้า {thaiDate(snapshot.createdAt)}
               </p>
+            )}
+            {snapshots.length > 0 && snapshot && (
+              <div className="flex flex-wrap items-center gap-2 mt-2 text-sm">
+                <span className="text-slate-500">ดูรอบ:</span>
+                <select
+                  value={snapshot.id}
+                  onChange={(e) => {
+                    const chosen = snapshots.find((s) => s.id === e.target.value);
+                    setViewId(chosen?.isCurrent ? null : e.target.value);
+                  }}
+                  className={select}
+                >
+                  {snapshots.map((s) => (
+                    <option key={s.id} value={s.id}>
+                      {s.label} · {s._count.members.toLocaleString("th-TH")} ราย · นำเข้า {thaiDate(s.createdAt)}
+                      {s.isCurrent ? " (รอบหลัก)" : ""}
+                    </option>
+                  ))}
+                </select>
+                {!snapshots.find((s) => s.id === snapshot.id)?.isCurrent && (
+                  <button
+                    type="button"
+                    onClick={makeCurrent}
+                    className="px-2 py-1 text-xs rounded border border-blue-300 text-blue-700 hover:bg-blue-50"
+                    title="ให้แท็บนี้เปิดรอบนี้เป็นค่าเริ่มต้น"
+                  >
+                    ตั้งเป็นรอบหลัก
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => setConfirmDelete(true)}
+                  className="px-2 py-1 text-xs rounded border border-red-200 text-red-700 hover:bg-red-50"
+                >
+                  ลบรอบนี้
+                </button>
+                {roundError && <span className="text-xs text-red-600">{roundError}</span>}
+              </div>
             )}
           </div>
           <button
@@ -337,7 +431,16 @@ export default function CoveragePanel() {
       {summary && (
         <>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-            <Card title="ทำประกันชีวิต" value={`${summary.all.count.toLocaleString("th-TH")} คน`} sub={`ทุนรวม ${million(summary.all.insuredSum)}`} />
+            <Card
+              title="ทำประกันชีวิต"
+              value={`${summary.all.count.toLocaleString("th-TH")} คน`}
+              sub={
+                `ทุนรวม ${million(summary.all.insuredSum)}` +
+                (summary.uninsured?.count
+                  ? ` · ไม่มีประกัน (ฌาปนกิจอย่างเดียว) ${summary.uninsured.count.toLocaleString("th-TH")} คน ไม่นับรวม`
+                  : "")
+              }
+            />
             <Card title="มีหนี้" value={`${summary.withDebt.count.toLocaleString("th-TH")} คน`} sub={`หนี้รวม ${million(summary.all.debt)}`} />
             <Card title="หลักประกันไม่พอ" value={`${summary.short.count.toLocaleString("th-TH")} คน`} sub={`หนี้ ${million(summary.short.debt)}`} tone="bad" />
             <Card title="ขาดรวม" value={million(summary.short.margin)} sub={`หักเบี้ยประกันจากปันผลไม่ได้ ${summary.premiumFailed} คน`} tone="bad" />
@@ -408,6 +511,11 @@ export default function CoveragePanel() {
               allLabel="ทุกหน่วยงาน"
               searchPlaceholder="ค้นหาหน่วยงาน"
             />
+            <select value={insured} onChange={(e) => setInsured(e.target.value as typeof insured)} className={select}>
+              <option value="yes">ประกันชีวิต: มีประกัน</option>
+              <option value="no">ไม่มีประกัน (ฌาปนกิจอย่างเดียว)</option>
+              <option value="all">ประกันชีวิต: ทั้งหมด</option>
+            </select>
             <select value={status} onChange={(e) => setStatus(e.target.value as typeof status)} className={select}>
               <option value="">หลักประกัน: ทั้งหมด</option>
               <option value="short">ไม่พอ (หนี้เกิน)</option>
@@ -542,6 +650,19 @@ export default function CoveragePanel() {
           </div>
         </section>
       )}
+
+      <ConfirmDialog
+        open={confirmDelete}
+        title="ลบรอบนี้?"
+        description={
+          snapshot
+            ? `รอบ "${snapshot.label}" และรายชื่อทั้งหมดในรอบนี้จะถูกลบ — ถ้าต้องการกลับมา ต้องนำเข้าไฟล์ใหม่`
+            : undefined
+        }
+        confirmLabel="ลบรอบ"
+        onConfirm={deleteRound}
+        onCancel={() => setConfirmDelete(false)}
+      />
     </div>
   );
 }

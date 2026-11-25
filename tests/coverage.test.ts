@@ -185,3 +185,28 @@ describe("parseCoverageSheet", () => {
     expect(sheet.problems[0].reason).toContain("ซ้ำ");
   });
 });
+
+describe("members without a life policy", () => {
+  const rows = [m22495, m4855, m31107].map((m) => withCollateral(m, DEFAULT_RATES));
+  const cremationOnly = withCollateral({ ...m31107, memberNumber: "99999", insuredSum: 0, premium: 0 }, DEFAULT_RATES);
+  const mixed = [...rows, cremationOnly];
+
+  it("are left out of the policy summary and counted apart", () => {
+    const s = summarize(mixed);
+    expect(s.all.count).toBe(rows.length);
+    expect(s.uninsured.count).toBe(1);
+  });
+
+  it("are filtered in or out of the list", () => {
+    expect(filterCoverage(mixed, { insured: "yes" }).map((r) => r.memberNumber)).not.toContain("99999");
+    expect(filterCoverage(mixed, { insured: "no" }).map((r) => r.memberNumber)).toEqual(["99999"]);
+    expect(filterCoverage(mixed, { insured: "" })).toHaveLength(4);
+  });
+
+  it("are hidden unless asked for", async () => {
+    const { parseFilters } = await import("../lib/coverage");
+    expect(parseFilters(new URLSearchParams("")).insured).toBe("yes");
+    expect(parseFilters(new URLSearchParams("insured=all")).insured).toBe("");
+    expect(parseFilters(new URLSearchParams("insured=no")).insured).toBe("no");
+  });
+});
