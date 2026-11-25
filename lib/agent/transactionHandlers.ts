@@ -94,7 +94,7 @@ export async function finalizeTransaction(
 
     return `Logged: ${formatAmount(expense.amount)} (${expense.category}) on ${expense.date
       .toISOString()
-      .slice(0, 10)} for member ${lineUser.fullName} (${lineUser.memberNumber}).`;
+      .slice(0, 10)} for member ${lineUser.fullName}${lineUser.memberNumber ? ` (${lineUser.memberNumber})` : ""}.`;
   } catch (err) {
     if (
       err instanceof Prisma.PrismaClientKnownRequestError &&
@@ -133,7 +133,9 @@ export const CAPTURE_BEFORE_ASKING =
 export function requirementMessage(next: Requirement): string {
   if (next === "member_info") {
     return (
-      "Still missing: member full name and member number. Ask the user for their ชื่อ-นามสกุล and เลขสมาชิก next, in Thai. Do not log yet." +
+      "Still missing: who the member is. Ask the user for their ชื่อ-นามสกุล and เลขสมาชิก next, in Thai, in one short question — " +
+      "and say that for a deposit the account number to deposit into is enough if they do not remember their member number. " +
+      "When they give only a name, call submit_member_info with just the name: the system looks the member number up itself. Do not log yet." +
       CAPTURE_BEFORE_ASKING
     );
   }
@@ -485,13 +487,17 @@ export async function submitDepositAccount(
   }
 
   const pending = await loadPending(ctx.lineUserId);
-  if (!pending || pending.category !== "ฝากเงิน") {
+  // A member who says "ฝากเงินเข้าบัญชี 300-00-24794" has said what the money
+  // is for as well as where it goes: a payment still waiting on its category
+  // becomes a deposit here, rather than the account number being refused and
+  // asked for again later.
+  if (!pending || (pending.category !== null && pending.category !== "ฝากเงิน")) {
     return "Error: no in-progress ฝากเงิน transaction to attach an account number to.";
   }
 
   const updated = await prisma.pendingTransaction.update({
     where: { id: pending.id },
-    data: { depositAccountNumber: accountNumber, lastActivityAt: new Date() },
+    data: { depositAccountNumber: accountNumber, category: "ฝากเงิน", lastActivityAt: new Date() },
   });
 
   const [lineUser, disabled] = await Promise.all([
