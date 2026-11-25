@@ -95,6 +95,35 @@ export function computeCollateral(m: CoverageInput, rates: CoverageRates = DEFAU
   };
 }
 
+// What the file's "รายการที่หักไม่ได้" says could not be taken from the
+// member: the insurance premium, a cremation association's fee, relatives'
+// fees. Written as space-separated words — "สสอค สสชสอ ญาติ 2 ราย".
+export type AssocKey = "hasSok" | "hasScs" | "hasSst" | "hasSsk";
+const UNDEDUCTED_ASSOC: Record<string, AssocKey> = {
+  สสอค: "hasSok",
+  สสชสอ: "hasScs",
+  สสสท: "hasSst",
+  สสสก: "hasSsk",
+};
+
+export interface Undeducted {
+  premium: boolean;
+  associations: AssocKey[];
+  relatives: number;
+}
+
+export function parseUndeducted(value: string | null | undefined): Undeducted {
+  const text = (value ?? "").replace(/\./g, "");
+  const associations = Object.entries(UNDEDUCTED_ASSOC)
+    .filter(([word]) => new RegExp(`(^|\\s)${word}(\\s|$)`).test(text))
+    .map(([, key]) => key);
+  const relatives = Number(/ญาติ\s*(\d+)/.exec(text)?.[1] ?? (/ญาติ/.test(text) ? 1 : 0));
+  return { premium: /ประกัน/.test(text), associations, relatives };
+}
+
+export const cremationUndeducted = (r: { undeducted: string | null }) =>
+  parseUndeducted(r.undeducted).associations.length > 0;
+
 export function withCollateral(m: CoverageInput, rates: CoverageRates): CoverageRow {
   return { ...m, ...computeCollateral(m, rates) };
 }
@@ -125,6 +154,9 @@ export interface CoverageFilters {
   // cremation association. The 2569 file lists both; the tab is about the
   // first, so that is what it opens on.
   insured?: "yes" | "no" | "";
+  // From "รายการที่หักไม่ได้": anything at all, a cremation association's fee,
+  // relatives' fees, or the insurance premium.
+  undeducted?: "any" | "cremation" | "relative" | "premium" | "";
 }
 
 export const isInsured = (r: { insuredSum: number }) => r.insuredSum > 0;
@@ -147,6 +179,13 @@ export function filterCoverage(rows: CoverageRow[], f: CoverageFilters): Coverag
     if (f.associations != null && r.associations !== f.associations) return false;
     if (f.insured === "yes" && !isInsured(r)) return false;
     if (f.insured === "no" && isInsured(r)) return false;
+    if (f.undeducted) {
+      const u = parseUndeducted(r.undeducted);
+      if (f.undeducted === "any" && !r.undeducted) return false;
+      if (f.undeducted === "cremation" && u.associations.length === 0) return false;
+      if (f.undeducted === "relative" && u.relatives === 0) return false;
+      if (f.undeducted === "premium" && !u.premium) return false;
+    }
     return true;
   });
 }
@@ -209,6 +248,9 @@ export interface CoverageSummary {
   enough: CoverageTotals;
   short: CoverageTotals;
   premiumFailed: number;
+  // Across the whole file, policy holder or not: a cremation fee is owed
+  // either way.
+  cremationFailed: number;
   notInShareReport: number;
   bands: (CoverageTotals & { label: string; from: number; to: number; shortCount: number; shortMargin: number })[];
 }
@@ -224,6 +266,7 @@ export function summarize(allRows: CoverageRow[]): CoverageSummary {
     enough: totals(rows.filter((r) => r.margin >= 0)),
     short: totals(short),
     premiumFailed: rows.filter((r) => r.premiumDeducted === false).length,
+    cremationFailed: allRows.filter(cremationUndeducted).length,
     notInShareReport: rows.filter((r) => r.debtStatus === "ไม่มีในรายงานหุ้นหนี้").length,
     bands: AGE_BANDS.map((b) => {
       const inBand = rows.filter((r) => r.age != null && r.age >= b.from && r.age <= b.to);
@@ -255,6 +298,8 @@ export function parseFilters(params: URLSearchParams): CoverageFilters {
     status: status === "short" || status === "ok" ? status : "",
     premium: premium === "ok" || premium === "fail" ? premium : "",
     associations: int("assoc"),
-    insured: params.get("insured") === "no" ? "no" : params.get("insured") === "all" ? "" : "yes",
+    // Everyone unless narrowed: the list opens on the whole file.
+    insured: params.get("insured") === "yes" ? "yes" : params.get("insured") === "no" ? "no" : "",
+    undeducted: (["any", "cremation", "relative", "premium"] as const).find((v) => v === params.get("undeducted")) ?? "",
   };
 }

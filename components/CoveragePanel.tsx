@@ -4,7 +4,13 @@ import { Fragment, useCallback, useEffect, useState } from "react";
 import PanelHelp from "@/components/PanelHelp";
 import MultiSelect from "@/components/MultiSelect";
 import ConfirmDialog from "@/components/ConfirmDialog";
-import { AGE_BANDS, type CoverageRow, type CoverageSummary, type CoverageTotals } from "@/lib/coverage";
+import {
+  AGE_BANDS,
+  parseUndeducted,
+  type CoverageRow,
+  type CoverageSummary,
+  type CoverageTotals,
+} from "@/lib/coverage";
 
 // ประกันและหลักประกัน — for each member who holds the group life policy:
 // what they owe, and what stands behind it (หุ้น + ทุนประกัน + ฌาปนกิจ of
@@ -166,10 +172,10 @@ export default function CoveragePanel() {
   const [premium, setPremium] = useState<"" | "ok" | "fail">("");
   const [assoc, setAssoc] = useState<string>("");
   const [sort, setSort] = useState("margin");
-  // Life-policy holders by default: the tab is about them, and a file that
-  // also lists cremation-only members would otherwise fill the list with
-  // people who have no ทุนประกัน at all.
-  const [insured, setInsured] = useState<"yes" | "no" | "all">("yes");
+  // The whole file by default; narrowed to policy holders or cremation-only
+  // members from the select.
+  const [insured, setInsured] = useState<"yes" | "no" | "all">("all");
+  const [undeducted, setUndeducted] = useState<"" | "any" | "cremation" | "relative" | "premium">("");
 
   // Which round is shown: null is the current one.
   const [snapshots, setSnapshots] = useState<SnapshotListItem[]>([]);
@@ -199,12 +205,13 @@ export default function CoveragePanel() {
       if (premium) p.set("premium", premium);
       if (assoc) p.set("assoc", assoc);
       p.set("insured", insured);
+      if (undeducted) p.set("undeducted", undeducted);
       if (viewId) p.set("snapshot", viewId);
       p.set("sort", sort);
       if (extra) for (const [k, v] of Object.entries(extra)) p.set(k, v);
       return p;
     },
-    [search, band, selectedUnits, status, premium, assoc, sort, insured, viewId]
+    [search, band, selectedUnits, status, premium, assoc, sort, insured, undeducted, viewId]
   );
 
   const fetchSummary = useCallback(async () => {
@@ -267,7 +274,7 @@ export default function CoveragePanel() {
   }, [fetchList]);
   useEffect(() => {
     setPage(1);
-  }, [search, band, selectedUnits, status, premium, assoc, sort, insured, viewId]);
+  }, [search, band, selectedUnits, status, premium, assoc, sort, insured, undeducted, viewId]);
 
   const onImport = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -443,7 +450,15 @@ export default function CoveragePanel() {
             />
             <Card title="มีหนี้" value={`${summary.withDebt.count.toLocaleString("th-TH")} คน`} sub={`หนี้รวม ${million(summary.all.debt)}`} />
             <Card title="หลักประกันไม่พอ" value={`${summary.short.count.toLocaleString("th-TH")} คน`} sub={`หนี้ ${million(summary.short.debt)}`} tone="bad" />
-            <Card title="ขาดรวม" value={million(summary.short.margin)} sub={`หักเบี้ยประกันจากปันผลไม่ได้ ${summary.premiumFailed} คน`} tone="bad" />
+            <Card
+              title="ขาดรวม"
+              value={million(summary.short.margin)}
+              sub={
+                `หักเบี้ยประกันจากปันผลไม่ได้ ${summary.premiumFailed} คน` +
+                (summary.cremationFailed ? ` · ฌาปนกิจหักไม่ได้ ${summary.cremationFailed} คน` : "")
+              }
+              tone="bad"
+            />
           </div>
 
           <section className="bg-white rounded-lg shadow p-4 overflow-x-auto">
@@ -512,9 +527,16 @@ export default function CoveragePanel() {
               searchPlaceholder="ค้นหาหน่วยงาน"
             />
             <select value={insured} onChange={(e) => setInsured(e.target.value as typeof insured)} className={select}>
-              <option value="yes">ประกันชีวิต: มีประกัน</option>
-              <option value="no">ไม่มีประกัน (ฌาปนกิจอย่างเดียว)</option>
               <option value="all">ประกันชีวิต: ทั้งหมด</option>
+              <option value="yes">มีประกันชีวิต</option>
+              <option value="no">ไม่มีประกัน (ฌาปนกิจอย่างเดียว)</option>
+            </select>
+            <select value={undeducted} onChange={(e) => setUndeducted(e.target.value as typeof undeducted)} className={select}>
+              <option value="">หักไม่ได้: ทั้งหมด</option>
+              <option value="cremation">ฌาปนกิจหักไม่ได้</option>
+              <option value="relative">ค่าบำรุงญาติหักไม่ได้</option>
+              <option value="premium">เบี้ยประกันหักไม่ได้</option>
+              <option value="any">มีรายการหักไม่ได้</option>
             </select>
             <select value={status} onChange={(e) => setStatus(e.target.value as typeof status)} className={select}>
               <option value="">หลักประกัน: ทั้งหมด</option>
@@ -617,11 +639,31 @@ export default function CoveragePanel() {
                           {signed(r.margin)}
                         </td>
                         <td className="pl-3 whitespace-nowrap">
-                          {ASSOC.filter((a) => r[a.key]).map((a) => (
-                            <span key={a.key} className={`inline-block text-xs rounded px-1.5 py-0.5 mr-1 ${a.cls}`}>
-                              {a.label}
-                            </span>
-                          ))}
+                          {(() => {
+                            const u = parseUndeducted(r.undeducted);
+                            return (
+                              <>
+                                {ASSOC.filter((a) => r[a.key] || u.associations.includes(a.key)).map((a) =>
+                                  u.associations.includes(a.key) ? (
+                                    <span
+                                      key={a.key}
+                                      className="inline-block text-xs rounded px-1.5 py-0.5 mr-1 bg-red-100 text-red-700"
+                                      title={`หักค่าบำรุง ${a.label} ไม่ได้`}
+                                    >
+                                      {a.label} ✗
+                                    </span>
+                                  ) : (
+                                    <span key={a.key} className={`inline-block text-xs rounded px-1.5 py-0.5 mr-1 ${a.cls}`}>
+                                      {a.label}
+                                    </span>
+                                  )
+                                )}
+                                {u.relatives > 0 && (
+                                  <span className="block text-xs text-red-600">ค่าบำรุงญาติหักไม่ได้ {u.relatives} ราย</span>
+                                )}
+                              </>
+                            );
+                          })()}
                         </td>
                       </tr>
                       {expanded === r.memberNumber && snapshot && (
