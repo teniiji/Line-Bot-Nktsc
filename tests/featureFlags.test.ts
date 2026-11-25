@@ -56,6 +56,18 @@ describe("DEFAULT_FLAGS", () => {
   });
 
   it("defaults every switch to enabled (unchanged behavior right after deploy)", () => {
-    expect(DEFAULT_FLAGS.every((f) => f.enabled === true)).toBe(true);
+    // Except one turned off on purpose: staff asked for deduction-payment
+    // slips to stop being pushed to the loan officer.
+    expect(
+      DEFAULT_FLAGS.filter((f) => f.key !== "category_notify_ชำระเก็บไม่ได้รายเดือน").every((f) => f.enabled === true)
+    ).toBe(true);
+  });
+});
+
+describe("per-category forwarding", () => {
+  it("lists the deduction-slip switch, off by default", async () => {
+    const { DEFAULT_FLAGS, DEDUCTION_SLIP_NOTIFY, categoryNotifyKey } = await import("../lib/featureFlags");
+    expect(DEDUCTION_SLIP_NOTIFY).toBe(categoryNotifyKey("ชำระเก็บไม่ได้รายเดือน"));
+    expect(DEFAULT_FLAGS.find((f) => f.key === DEDUCTION_SLIP_NOTIFY)?.enabled).toBe(false);
   });
 });

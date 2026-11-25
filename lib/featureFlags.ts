@@ -29,6 +29,18 @@ export function departmentNotifyKey(department: string): string {
   return `dept_notify_${department}`;
 }
 
+// Per-category forwarding, for a category whose slips staff do not need
+// pushed to them even though the department's other notices still matter.
+// ชำระเก็บไม่ได้รายเดือน is the one: those payments are reconciled on
+// เทียบ Statement, and pushing each slip to the member's loan officer only
+// buried the loan requests that share the same chat. Off by default for that
+// category (seeded by migration 20261125100000_deduction_slip_notify); every
+// other category has no row and so stays on.
+export function categoryNotifyKey(category: string): string {
+  return `category_notify_${category}`;
+}
+export const DEDUCTION_SLIP_NOTIFY = categoryNotifyKey("ชำระเก็บไม่ได้รายเดือน");
+
 export const DEFAULT_FLAGS: { key: string; label: string; enabled: boolean }[] = [
   {
     key: MESSAGING_ENABLED,
@@ -49,6 +61,11 @@ export const DEFAULT_FLAGS: { key: string; label: string; enabled: boolean }[] =
     key: MEMBER_LOOKUP_ENABLED,
     label: "ค้นหาเลขสมาชิก (ยืนยันตัวตน)",
     enabled: true,
+  },
+  {
+    key: DEDUCTION_SLIP_NOTIFY,
+    label: "ส่งต่อสลิปชำระเก็บไม่ได้รายเดือนให้เจ้าหน้าที่ (ปิด = บันทึกอย่างเดียว ดูได้ที่หน้าเทียบ Statement / รายการ)",
+    enabled: false,
   },
   {
     key: AFTER_HOURS_ACK_ENABLED,
