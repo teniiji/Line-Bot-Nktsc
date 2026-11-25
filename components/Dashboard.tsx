@@ -35,6 +35,7 @@ import OutOfProvincePanel from "@/components/OutOfProvincePanel";
 import LineGroupsPanel from "@/components/LineGroupsPanel";
 import MemberBankAccountsPanel from "@/components/MemberBankAccountsPanel";
 import LoanSchedulePanel from "@/components/LoanSchedulePanel";
+import CoveragePanel from "@/components/CoveragePanel";
 
 const PAGE_SIZE = 10;
 const EXPORT_PAGE_SIZE = 100;
@@ -349,6 +350,11 @@ export default function Dashboard() {
             id: "loan-schedule",
             label: "ตารางผ่อนชำระ",
             content: <LoanSchedulePanel />,
+          },
+          {
+            id: "coverage",
+            label: "ประกันและหลักประกัน",
+            content: <CoveragePanel />,
           },
           {
             id: "line-users",
