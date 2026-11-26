@@ -4,6 +4,7 @@ import { Fragment, useCallback, useEffect, useState } from "react";
 import PanelHelp from "@/components/PanelHelp";
 import MultiSelect from "@/components/MultiSelect";
 import ConfirmDialog from "@/components/ConfirmDialog";
+import { ACTIONS, ENROLLMENT_PRODUCTS, STATUSES, type EnrollmentProduct } from "@/lib/enrollment";
 import {
   AGE_BANDS,
   parseUndeducted,
@@ -176,6 +177,10 @@ export default function CoveragePanel() {
   // members from the select.
   const [insured, setInsured] = useState<"yes" | "no" | "all">("all");
   const [undeducted, setUndeducted] = useState<"" | "any" | "cremation" | "relative" | "premium">("");
+  // The yearly file with the applications recorded since laid over it
+  // (สมัครประกัน/ฌาปนกิจ), or the file as it was imported.
+  const [withEnrollments, setWithEnrollments] = useState(true);
+  const [changedOnly, setChangedOnly] = useState(false);
 
   // Which round is shown: null is the current one.
   const [snapshots, setSnapshots] = useState<SnapshotListItem[]>([]);
@@ -205,21 +210,26 @@ export default function CoveragePanel() {
       if (premium) p.set("premium", premium);
       if (assoc) p.set("assoc", assoc);
       p.set("insured", insured);
+      if (!withEnrollments) p.set("enrollments", "0");
+      if (changedOnly && withEnrollments) p.set("changed", "1");
       if (undeducted) p.set("undeducted", undeducted);
       if (viewId) p.set("snapshot", viewId);
       p.set("sort", sort);
       if (extra) for (const [k, v] of Object.entries(extra)) p.set(k, v);
       return p;
     },
-    [search, band, selectedUnits, status, premium, assoc, sort, insured, undeducted, viewId]
+    [search, band, selectedUnits, status, premium, assoc, sort, insured, undeducted, viewId, withEnrollments, changedOnly]
   );
 
   const fetchSummary = useCallback(async () => {
-    const res = await fetch(`/api/coverage/summary${viewId ? `?snapshot=${encodeURIComponent(viewId)}` : ""}`);
+    const q = new URLSearchParams();
+    if (viewId) q.set("snapshot", viewId);
+    if (!withEnrollments) q.set("enrollments", "0");
+    const res = await fetch(`/api/coverage/summary?${q}`);
     const body = await res.json();
     setSnapshot(body.snapshot);
     setSummary(body.summary);
-  }, [viewId]);
+  }, [viewId, withEnrollments]);
 
   const fetchSnapshots = useCallback(async () => {
     const res = await fetch("/api/coverage/snapshots");
@@ -274,7 +284,7 @@ export default function CoveragePanel() {
   }, [fetchList]);
   useEffect(() => {
     setPage(1);
-  }, [search, band, selectedUnits, status, premium, assoc, sort, insured, undeducted, viewId]);
+  }, [search, band, selectedUnits, status, premium, assoc, sort, insured, undeducted, viewId, withEnrollments, changedOnly]);
 
   const onImport = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -445,6 +455,10 @@ export default function CoveragePanel() {
                 `ทุนรวม ${million(summary.all.insuredSum)}` +
                 (summary.uninsured?.count
                   ? ` · ไม่มีประกัน (ฌาปนกิจอย่างเดียว) ${summary.uninsured.count.toLocaleString("th-TH")} คน ไม่นับรวม`
+                  : "") +
+                (summary.changedSinceFile
+                  ? ` · รวมสมัคร/ยกเลิกหลังไฟล์ปี ${summary.changedSinceFile.toLocaleString("th-TH")} คน` +
+                    (summary.newSinceFile ? ` (คนใหม่ ${summary.newSinceFile.toLocaleString("th-TH")})` : "")
                   : "")
               }
             />
@@ -531,6 +545,16 @@ export default function CoveragePanel() {
               <option value="yes">มีประกันชีวิต</option>
               <option value="no">ไม่มีประกัน (ฌาปนกิจอย่างเดียว)</option>
             </select>
+            <label className="flex items-center gap-1.5 text-sm text-slate-700" title="นับรวมการสมัครและยกเลิกที่บันทึกในแท็บ สมัครประกัน/ฌาปนกิจ หลังวันที่ของไฟล์ปี (ไม่นับรายการที่ไม่อนุมัติ)">
+              <input type="checkbox" checked={withEnrollments} onChange={(e) => setWithEnrollments(e.target.checked)} />
+              รวมการสมัครหลังไฟล์ปี
+            </label>
+            {withEnrollments && (
+              <label className="flex items-center gap-1.5 text-sm text-slate-700">
+                <input type="checkbox" checked={changedOnly} onChange={(e) => setChangedOnly(e.target.checked)} />
+                เฉพาะที่สมัคร/ยกเลิกใหม่
+              </label>
+            )}
             <select value={undeducted} onChange={(e) => setUndeducted(e.target.value as typeof undeducted)} className={select}>
               <option value="">หักไม่ได้: ทั้งหมด</option>
               <option value="cremation">ฌาปนกิจหักไม่ได้</option>
@@ -616,6 +640,21 @@ export default function CoveragePanel() {
                         <td>
                           {r.memberName}
                           <span className="block text-xs text-slate-400">{r.unitName}</span>
+                          {r.notInFile && (
+                            <span className="block text-xs text-amber-700">ยังไม่มีในไฟล์ปี — หุ้น/หนี้ยังไม่ทราบ</span>
+                          )}
+                          {r.changes?.map((c, i) => (
+                            <span
+                              key={i}
+                              className={`inline-block text-xs rounded px-1.5 py-0.5 mr-1 mt-0.5 ${
+                                c.action === "cancel" ? "bg-slate-200 text-slate-700" : "bg-blue-100 text-blue-800"
+                              }`}
+                              title={`${ACTIONS[c.action as keyof typeof ACTIONS] ?? c.action} ${ENROLLMENT_PRODUCTS[c.product as EnrollmentProduct] ?? c.product} เมื่อ ${thaiDate(c.date)} · ${STATUSES[c.status as keyof typeof STATUSES] ?? c.status}`}
+                            >
+                              {c.action === "cancel" ? "ยกเลิก" : "🆕"} {ENROLLMENT_PRODUCTS[c.product as EnrollmentProduct] ?? c.product}
+                              {c.status === "pending" ? " (รออนุมัติ)" : ""}
+                            </span>
+                          ))}
                         </td>
                         <td className="text-right num">{r.age ?? "—"}</td>
                         <td className="text-right num">{baht(r.shares)}</td>

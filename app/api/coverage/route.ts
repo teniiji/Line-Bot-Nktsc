@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { filterCoverage, parseFilters, sortCoverage, totals, type CoverageSort } from "@/lib/coverage";
-import { currentSnapshot, loadCoverageRows, ratesOf } from "@/lib/coverageStore";
+import { currentSnapshot, enrollmentsSince, loadCoverageRows, ratesOf } from "@/lib/coverageStore";
 
 export const dynamic = "force-dynamic";
 
@@ -13,7 +13,11 @@ export async function GET(request: NextRequest) {
   const snapshot = await currentSnapshot(searchParams.get("snapshot"));
   if (!snapshot) return NextResponse.json({ snapshot: null, data: [], total: 0, units: [] });
 
-  const rows = await loadCoverageRows(snapshot.id, ratesOf(snapshot));
+  const rows = await loadCoverageRows(
+    snapshot.id,
+    ratesOf(snapshot),
+    searchParams.get("enrollments") === "0" ? null : enrollmentsSince(snapshot)
+  );
   const filtered = filterCoverage(rows, parseFilters(searchParams));
   const sortParam = searchParams.get("sort") as CoverageSort | null;
   const sorted = sortCoverage(filtered, sortParam && SORTS.includes(sortParam) ? sortParam : "margin");

@@ -1,3 +1,4 @@
+import type { CoverageChange } from "./coverageEnrollments";
 // ประกันและหลักประกัน — what stands behind a member's debt.
 //
 // The cooperative's question is "if this member died tomorrow, would what is
@@ -52,6 +53,10 @@ export interface CoverageInput {
   relativeFees: number;
   debtStatus: string | null;
   undeducted: string | null;
+  // Applications and cancellations recorded since the yearly file
+  // (lib/coverageEnrollments.ts); absent when the file is shown on its own.
+  changes?: CoverageChange[];
+  notInFile?: boolean;
 }
 
 export interface Collateral {
@@ -157,6 +162,8 @@ export interface CoverageFilters {
   // From "รายการที่หักไม่ได้": anything at all, a cremation association's fee,
   // relatives' fees, or the insurance premium.
   undeducted?: "any" | "cremation" | "relative" | "premium" | "";
+  // Only members with an application or cancellation since the file.
+  changed?: boolean;
 }
 
 export const isInsured = (r: { insuredSum: number }) => r.insuredSum > 0;
@@ -179,6 +186,7 @@ export function filterCoverage(rows: CoverageRow[], f: CoverageFilters): Coverag
     if (f.associations != null && r.associations !== f.associations) return false;
     if (f.insured === "yes" && !isInsured(r)) return false;
     if (f.insured === "no" && isInsured(r)) return false;
+    if (f.changed && !(r.changes?.length)) return false;
     if (f.undeducted) {
       const u = parseUndeducted(r.undeducted);
       if (f.undeducted === "any" && !r.undeducted) return false;
@@ -251,6 +259,10 @@ export interface CoverageSummary {
   // Across the whole file, policy holder or not: a cremation fee is owed
   // either way.
   cremationFailed: number;
+  // Members with an application or cancellation since the file, and those of
+  // them the file does not hold at all.
+  changedSinceFile: number;
+  newSinceFile: number;
   notInShareReport: number;
   bands: (CoverageTotals & { label: string; from: number; to: number; shortCount: number; shortMargin: number })[];
 }
@@ -267,6 +279,8 @@ export function summarize(allRows: CoverageRow[]): CoverageSummary {
     short: totals(short),
     premiumFailed: rows.filter((r) => r.premiumDeducted === false).length,
     cremationFailed: allRows.filter(cremationUndeducted).length,
+    changedSinceFile: allRows.filter((r) => r.changes?.length).length,
+    newSinceFile: allRows.filter((r) => r.notInFile).length,
     notInShareReport: rows.filter((r) => r.debtStatus === "ไม่มีในรายงานหุ้นหนี้").length,
     bands: AGE_BANDS.map((b) => {
       const inBand = rows.filter((r) => r.age != null && r.age >= b.from && r.age <= b.to);
@@ -301,5 +315,6 @@ export function parseFilters(params: URLSearchParams): CoverageFilters {
     // Everyone unless narrowed: the list opens on the whole file.
     insured: params.get("insured") === "yes" ? "yes" : params.get("insured") === "no" ? "no" : "",
     undeducted: (["any", "cremation", "relative", "premium"] as const).find((v) => v === params.get("undeducted")) ?? "",
+    changed: params.get("changed") === "1",
   };
 }
