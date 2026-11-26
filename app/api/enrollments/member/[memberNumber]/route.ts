@@ -2,7 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { memberNumberKey } from "@/lib/memberNumber";
 import { applyEnrollments } from "@/lib/coverageEnrollments";
-import { currentSnapshot, enrollmentsSince, shareReportFor } from "@/lib/coverageStore";
+import { currentSnapshot, enrollmentsSince, ratesOf, shareReportFor } from "@/lib/coverageStore";
+import { DEFAULT_RATES } from "@/lib/coverage";
 import type { CoverageInput } from "@/lib/coverage";
 
 export const dynamic = "force-dynamic";
@@ -17,7 +18,7 @@ export async function GET(_request: NextRequest, { params }: { params: { memberN
     prisma.memberRoster.findUnique({ where: { memberNumber }, select: { memberName: true, unitName: true } }),
     prisma.memberCoverage.findFirst({
       where: { memberNumber, snapshot: { isCurrent: true } },
-      include: { snapshot: { select: { label: true, asOf: true, createdAt: true } } },
+      include: { snapshot: true },
     }),
     prisma.coverageEnrollment.findMany({
       where: { memberNumber },
@@ -78,6 +79,8 @@ export async function GET(_request: NextRequest, { params }: { params: { memberN
     current,
     since,
     snapshot: snapshot ? { label: snapshot.label, asOf: snapshot.asOf } : null,
+    // The round's amounts per association and welfare rate, for คำนวณก่อนกู้.
+    rates: snapshot ? ratesOf(snapshot) : DEFAULT_RATES,
     shares: shareEntry
       ? {
           label: report!.label,
