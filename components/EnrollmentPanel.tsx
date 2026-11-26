@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import PanelHelp from "@/components/PanelHelp";
 import ConfirmDialog from "@/components/ConfirmDialog";
 import EnrollmentDeductionsPanel from "@/components/EnrollmentDeductionsPanel";
+import ApplicantImport from "@/components/ApplicantImport";
 import { DEPARTMENTS } from "@/lib/departments";
 import {
   ACTIONS,
@@ -139,6 +140,7 @@ function EnrollmentRegister() {
 
   const [formOpen, setFormOpen] = useState(false);
   const [approvalOpen, setApprovalOpen] = useState(false);
+  const [applicantsOpen, setApplicantsOpen] = useState(false);
   const [pendingDelete, setPendingDelete] = useState<Enrollment | null>(null);
 
   useEffect(() => {
@@ -248,10 +250,13 @@ function EnrollmentRegister() {
             </PanelHelp>
           </div>
           <div className="flex flex-wrap gap-2">
-            <button type="button" onClick={() => { setFormOpen((v) => !v); setApprovalOpen(false); }} className="px-3 py-1.5 text-sm rounded bg-blue-600 text-white hover:bg-blue-700">
+            <button type="button" onClick={() => { setFormOpen((v) => !v); setApprovalOpen(false); setApplicantsOpen(false); }} className="px-3 py-1.5 text-sm rounded bg-blue-600 text-white hover:bg-blue-700">
               + บันทึกการสมัคร
             </button>
-            <button type="button" onClick={() => { setApprovalOpen((v) => !v); setFormOpen(false); }} className="px-3 py-1.5 text-sm rounded border border-slate-300 hover:bg-slate-50">
+            <button type="button" onClick={() => { setApplicantsOpen((v) => !v); setFormOpen(false); setApprovalOpen(false); }} className="px-3 py-1.5 text-sm rounded border border-blue-300 text-blue-700 hover:bg-blue-50">
+              นำเข้ารายชื่อผู้สมัคร
+            </button>
+            <button type="button" onClick={() => { setApprovalOpen((v) => !v); setFormOpen(false); setApplicantsOpen(false); }} className="px-3 py-1.5 text-sm rounded border border-slate-300 hover:bg-slate-50">
               นำเข้าไฟล์ผลอนุมัติ
             </button>
           </div>
@@ -278,6 +283,19 @@ function EnrollmentRegister() {
               load();
             }}
             onError={setError}
+          />
+        )}
+        {applicantsOpen && (
+          <ApplicantImport
+            onDone={(msg) => {
+              setNotice(msg);
+              setError(null);
+              load();
+            }}
+            onError={(msg) => {
+              setError(msg);
+              setNotice(null);
+            }}
           />
         )}
         {approvalOpen && (
