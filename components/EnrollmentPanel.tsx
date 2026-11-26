@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import PanelHelp from "@/components/PanelHelp";
 import ConfirmDialog from "@/components/ConfirmDialog";
+import EnrollmentDeductionsPanel from "@/components/EnrollmentDeductionsPanel";
 import { DEPARTMENTS } from "@/lib/departments";
 import {
   ACTIONS,
@@ -91,7 +92,37 @@ function csvCell(v: unknown) {
   return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 }
 
+// Two views of the same register: the applications themselves, and what
+// they mean for the monthly รายการหัก and premium collection.
 export default function EnrollmentPanel() {
+  const [view, setView] = useState<"register" | "deductions">("register");
+  return (
+    <div className="space-y-4">
+      <div className="flex gap-2">
+        {(
+          [
+            ["register", "ทะเบียนการสมัคร"],
+            ["deductions", "รายการหัก / เก็บเงิน"],
+          ] as const
+        ).map(([id, label]) => (
+          <button
+            key={id}
+            type="button"
+            onClick={() => setView(id)}
+            className={`px-3 py-1.5 text-sm rounded-full border ${
+              view === id ? "bg-slate-800 text-white border-slate-800" : "bg-white border-slate-300 text-slate-700 hover:bg-slate-50"
+            }`}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+      {view === "register" ? <EnrollmentRegister /> : <EnrollmentDeductionsPanel />}
+    </div>
+  );
+}
+
+function EnrollmentRegister() {
   const [month, setMonth] = useState(thisMonth());
   const [product, setProduct] = useState("");
   const [status, setStatus] = useState("");
