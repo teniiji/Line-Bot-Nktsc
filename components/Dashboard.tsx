@@ -37,6 +37,7 @@ import LineGroupsPanel from "@/components/LineGroupsPanel";
 import MemberBankAccountsPanel from "@/components/MemberBankAccountsPanel";
 import LoanSchedulePanel from "@/components/LoanSchedulePanel";
 import CoveragePanel from "@/components/CoveragePanel";
+import EnrollmentPanel from "@/components/EnrollmentPanel";
 
 const PAGE_SIZE = 10;
 const EXPORT_PAGE_SIZE = 100;
@@ -356,6 +357,11 @@ export default function Dashboard() {
             id: "coverage",
             label: "ประกันและหลักประกัน",
             content: <CoveragePanel />,
+          },
+          {
+            id: "enrollment",
+            label: "สมัครประกัน/ฌาปนกิจ",
+            content: <EnrollmentPanel />,
           },
           {
             id: "settings",
