@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import type { CoverageRates } from "@/lib/coverage";
 import type { ShareDebtContract } from "@/lib/shareDebt";
 import LoanContracts from "@/components/LoanContracts";
+import { LOAN_PRODUCTS, assessEligibility, type LoanProduct } from "@/lib/loanRules";
 import {
   DEFAULT_LOAN_SETTINGS,
   assessLoan,
@@ -88,7 +89,13 @@ export default function LoanCollateralCalculator({ memberNumber }: { memberNumbe
   const [detail, setDetail] = useState<Detail | null>(null);
   const [amount, setAmount] = useState("");
   const [refinance, setRefinance] = useState("");
-  const [term, setTerm] = useState("");
+  const [term, setTerm] = useState("150");
+  // สิทธิกู้ (lib/loanRules.ts): the product, and the salary figures the
+  // report does not carry.
+  const [product, setProduct] = useState<LoanProduct>("ordinary");
+  const [salary, setSalary] = useState("");
+  const [otherDeductions, setOtherDeductions] = useState("");
+  const [neverBorrowed, setNeverBorrowed] = useState(false);
   const [settings, setSettings] = useState<LoanSettings>(DEFAULT_LOAN_SETTINGS);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [draft, setDraft] = useState({ maxCoverAge: "", premiumPerMillion: "" });
@@ -149,6 +156,30 @@ export default function LoanCollateralCalculator({ memberNumber }: { memberNumbe
   };
 
   const holdings = detail ? holdingsOf(detail) : null;
+  const contracts = detail?.shares?.contracts ?? [];
+  const currentRepayments = contracts.reduce((s, c) => s + (c.payment ?? 0), 0);
+  const refinancedRepayments = [...ticked].reduce((s, k) => s + (contracts[k]?.payment ?? 0), 0);
+  // The rule: a loan is renewed only after three instalments have been paid.
+  const tooRecent = [...ticked].map((k) => contracts[k]).filter((c) => c && c.installment != null && c.installment < 3);
+  const eligibility = useMemo(
+    () =>
+      holdings
+        ? assessEligibility({
+            product,
+            amount: money(amount),
+            term: money(term),
+            age: holdings.age,
+            months: holdings.sharePeriods,
+            shares: holdings.shares,
+            salary: money(salary) || null,
+            otherDeductions: money(otherDeductions),
+            currentRepayments,
+            refinancedRepayments,
+            neverBorrowed,
+          })
+        : null,
+    [holdings, product, amount, term, salary, otherDeductions, currentRepayments, refinancedRepayments, neverBorrowed]
+  );
   const result = useMemo(
     () =>
       holdings && detail
@@ -172,8 +203,15 @@ export default function LoanCollateralCalculator({ memberNumber }: { memberNumbe
   const summary = () => {
     if (!result || !detail) return "";
     const lines = [
-      `คำนวณหลักประกันก่อนกู้ — ${detail.memberNumber} ${detail.name ?? ""} (${detail.unitName ?? ""})`,
-      `วงเงินกู้ ${baht(money(amount))} · หักกลบหนี้เดิม ${baht(money(refinance))}${term ? ` · ${term} งวด` : ""}`,
+      `คำนวณก่อนกู้ — ${detail.memberNumber} ${detail.name ?? ""} (${detail.unitName ?? ""})`,
+      `${LOAN_PRODUCTS[product].label} วงเงิน ${baht(money(amount))} · ${term} งวด · หักกลบหนี้เดิม ${baht(money(refinance))}`,
+      ...(eligibility
+        ? [
+            `ผ่อนงวดละ ${baht(eligibility.payment)}${eligibility.fromTable ? " (ตามตารางสหกรณ์)" : " (ประมาณ)"} · ผู้ค้ำ ${eligibility.guarantors} คน${eligibility.sharesNeeded != null ? ` · หุ้นตามตาราง ${baht(eligibility.sharesNeeded)}` : ""}`,
+            ...eligibility.checks.map((c) => `  ${c.state === "ok" ? "✓" : c.state === "fail" ? "✗" : "?"} ${c.label}: ${c.detail}`),
+            `วงเงินสูงสุดตามสิทธิ ${eligibility.maxAmount != null ? baht(eligibility.maxAmount) : "—"}`,
+          ]
+        : []),
       ...[...ticked].map((k) => {
         const c = detail.shares?.contracts?.[k];
         return c ? `  หักกลบสัญญา ${c.contractNo ?? ""} คงเหลือ ${baht(c.balance)}` : "";
@@ -259,6 +297,24 @@ export default function LoanCollateralCalculator({ memberNumber }: { memberNumbe
           )}
         </div>
         <label>
+          <span className="block text-slate-600 mb-1">ประเภทเงินกู้</span>
+          <select
+            value={product}
+            onChange={(e) => {
+              const next = e.target.value as LoanProduct;
+              setProduct(next);
+              setTerm(String(LOAN_PRODUCTS[next].terms[0]));
+            }}
+            className={input}
+          >
+            {(Object.keys(LOAN_PRODUCTS) as LoanProduct[]).map((k) => (
+              <option key={k} value={k}>
+                {LOAN_PRODUCTS[k].label}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label>
           <span className="block text-slate-600 mb-1">วงเงินกู้ใหม่</span>
           <input inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} className={`${input} w-36`} />
         </label>
@@ -267,8 +323,28 @@ export default function LoanCollateralCalculator({ memberNumber }: { memberNumbe
           <input inputMode="decimal" value={refinance} onChange={(e) => setRefinance(e.target.value)} placeholder="0" className={`${input} w-36`} />
         </label>
         <label>
-          <span className="block text-slate-600 mb-1">จำนวนงวด (เดือน)</span>
-          <input inputMode="numeric" value={term} onChange={(e) => setTerm(e.target.value)} placeholder="เช่น 180" className={`${input} w-28`} />
+          <span className="block text-slate-600 mb-1">จำนวนงวด</span>
+          <select value={term} onChange={(e) => setTerm(e.target.value)} className={input}>
+            {LOAN_PRODUCTS[product].terms.map((t) => (
+              <option key={t} value={t}>
+                {t} งวด ({LOAN_PRODUCTS[product].rate}%)
+              </option>
+            ))}
+          </select>
+        </label>
+      </div>
+      <div className="flex flex-wrap items-end gap-3">
+        <label>
+          <span className="block text-slate-600 mb-1">เงินเดือน</span>
+          <input inputMode="decimal" value={salary} onChange={(e) => setSalary(e.target.value)} placeholder="ตามสลิป" className={`${input} w-32`} />
+        </label>
+        <label title="หุ้นรายเดือน ภาษี กบข. เบี้ยประกัน ฌาปนกิจ และหนี้ที่อื่น — ไม่รวมเงินกู้สหกรณ์ (ระบบใช้ยอดชำระรายสัญญาให้)">
+          <span className="block text-slate-600 mb-1">ยอดหักอื่นต่อเดือน (ไม่รวมเงินกู้สหกรณ์)</span>
+          <input inputMode="decimal" value={otherDeductions} onChange={(e) => setOtherDeductions(e.target.value)} placeholder="0" className={`${input} w-40`} />
+        </label>
+        <label className="flex items-center gap-1.5 pb-2">
+          <input type="checkbox" checked={neverBorrowed} onChange={(e) => setNeverBorrowed(e.target.checked)} />
+          ไม่เคยกู้มาก่อน
         </label>
       </div>
 
@@ -285,6 +361,7 @@ export default function LoanCollateralCalculator({ memberNumber }: { memberNumbe
             <span className="text-slate-500">
               {detail.unitName}
               {holdings?.age != null && ` · อายุ ${holdings.age} ปี`}
+              {holdings?.sharePeriods != null && ` · สมาชิก ${holdings.sharePeriods} งวด`}
               {money(term) > 0 && holdings?.age != null && ` · สัญญาจบอายุประมาณ ${Math.ceil(holdings.age + money(term) / 12)} ปี`}
             </span>
           </p>
@@ -293,6 +370,71 @@ export default function LoanCollateralCalculator({ memberNumber }: { memberNumbe
             <div>
               <p className="text-xs text-slate-500 mb-1">ติ๊กสัญญาที่เงินกู้ใหม่จะหักกลบ ระบบใส่ยอดในช่อง &quot;หักกลบหนี้เดิม&quot; ให้</p>
               <LoanContracts contracts={detail.shares.contracts} total={detail.shares.debt} checked={ticked} onToggle={toggleContract} />
+            </div>
+          )}
+
+          {eligibility && (
+            <div className="rounded border border-slate-200 p-3 space-y-2">
+              <div className="flex flex-wrap items-baseline justify-between gap-2">
+                <p className="font-medium">สิทธิกู้และยอดผ่อน · {LOAN_PRODUCTS[product].label}</p>
+                <p className="text-xs text-slate-500">ตามตารางชำระเงินกู้และเงื่อนไขบนเว็บสหกรณ์ (ปี 2569) — คณะกรรมการเงินกู้เป็นผู้อนุมัติ</p>
+              </div>
+              <div className="grid gap-2 sm:grid-cols-4">
+                <div className="rounded bg-slate-50 p-2">
+                  <p className="text-xs text-slate-500">ผ่อนต่องวด</p>
+                  <p className="text-lg font-semibold num">{baht(eligibility.payment)}</p>
+                  <p className="text-xs text-slate-500">{eligibility.fromTable ? "ตามตารางสหกรณ์" : "ประมาณ (ผ่อนเท่ากันทุกงวด)"}</p>
+                </div>
+                <div className="rounded bg-slate-50 p-2">
+                  <p className="text-xs text-slate-500">ผู้ค้ำประกัน</p>
+                  <p className="text-lg font-semibold num">{eligibility.guarantors} คน</p>
+                  {eligibility.sharesNeeded != null && <p className="text-xs text-slate-500">หุ้นตามตาราง {baht(eligibility.sharesNeeded)}</p>}
+                </div>
+                <div className="rounded bg-slate-50 p-2">
+                  <p className="text-xs text-slate-500">เงินเดือนคงเหลือหลังหัก</p>
+                  <p className={`text-lg font-semibold num ${eligibility.remaining != null && eligibility.remaining < 0 ? "text-red-600" : ""}`}>
+                    {eligibility.remaining != null ? baht(eligibility.remaining) : "—"}
+                  </p>
+                  <p className="text-xs text-slate-500">
+                    {eligibility.remainingPct != null ? `${eligibility.remainingPct}%` : "ใส่เงินเดือน"}
+                    {eligibility.requiredPct != null && ` · เกณฑ์ ≥ ${eligibility.requiredPct}%`}
+                  </p>
+                </div>
+                <div className="rounded bg-emerald-50 p-2">
+                  <p className="text-xs text-emerald-800">วงเงินสูงสุดตามสิทธิ</p>
+                  <p className="text-lg font-semibold num text-emerald-900">{eligibility.maxAmount != null ? baht(eligibility.maxAmount) : "ไม่มีสิทธิ"}</p>
+                  {eligibility.maxAmount != null && eligibility.maxAmount !== money(amount) && (
+                    <button type="button" onClick={() => setAmount(String(eligibility.maxAmount))} className="text-xs text-emerald-800 underline">
+                      ใช้วงเงินนี้
+                    </button>
+                  )}
+                </div>
+              </div>
+              <ul className="text-sm space-y-0.5">
+                {eligibility.checks.map((c) => (
+                  <li key={c.label} className={c.state === "fail" ? "text-red-700" : c.state === "unknown" ? "text-amber-700" : "text-slate-700"}>
+                    {c.state === "ok" ? "✓" : c.state === "fail" ? "✗" : "?"} {c.label}: <span className="text-slate-500">{c.detail}</span>
+                  </li>
+                ))}
+                {tooRecent.map((c) => (
+                  <li key={c!.contractNo} className="text-red-700">
+                    ✗ สัญญา {c!.contractNo} ชำระมาแล้ว {c!.installment} งวด — ต้องชำระอย่างน้อย 3 งวดก่อนกู้ใหม่
+                  </li>
+                ))}
+              </ul>
+              {eligibility.capReasons.length > 0 && (
+                <p className="text-xs text-slate-500">เพดานตามระเบียบ {baht(eligibility.capByRules ?? 0)}: {eligibility.capReasons.join(" · ")}</p>
+              )}
+              {currentRepayments > 0 && (
+                <p className="text-xs text-slate-500">
+                  ผ่อนเงินกู้สหกรณ์อยู่ {baht(currentRepayments)}/เดือน{refinancedRepayments ? ` · หักกลบแล้วเหลือ ${baht(currentRepayments - refinancedRepayments)}` : ""}
+                </p>
+              )}
+              {eligibility.notes.map((n) => (
+                <p key={n} className="text-xs text-slate-500">
+                  • {n}
+                </p>
+              ))}
             </div>
           )}
 
