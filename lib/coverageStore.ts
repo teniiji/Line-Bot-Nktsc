@@ -1,6 +1,7 @@
 import { prisma } from "./prisma";
 import { withCollateral, type CoverageInput, type CoverageRates, type CoverageRow } from "./coverage";
 import { applyEnrollments } from "./coverageEnrollments";
+import { applyShareReport } from "./shareDebt";
 
 // The date applications are counted from: the share-and-debt date the file
 // was made at, or its import when it has none.
@@ -33,12 +34,42 @@ export function ratesOf(s: CoverageRates): CoverageRates {
   };
 }
 
+// The share-and-debt report to lay over a round: the latest one, as long as
+// it is not older than the round's own figures.
+export async function shareReportFor(s: { asOf: Date | null }) {
+  return prisma.shareDebtReport.findFirst({
+    where: s.asOf ? { asOf: { gte: s.asOf } } : {},
+    orderBy: [{ asOf: "desc" }, { createdAt: "desc" }],
+    select: { id: true, label: true, asOf: true, memberCount: true, debtColumns: true },
+  });
+}
+
+async function shareEntries(reportId: string) {
+  const entries = await prisma.shareDebtEntry.findMany({
+    where: { reportId },
+    select: { memberNumber: true, shares: true, debt: true, sharePeriods: true },
+  });
+  return new Map(
+    entries.map((e) => [
+      e.memberNumber,
+      {
+        shares: e.shares == null ? null : Number(e.shares),
+        debt: e.debt == null ? null : Number(e.debt),
+        sharePeriods: e.sharePeriods,
+      },
+    ])
+  );
+}
+
 // since: lay the applications recorded after this date over the file (the
 // tab's default); null shows the file as it was imported.
+// shareReportId: then lay that month's shares and debt over the result, so
+// members who applied since the file get their figures too.
 export async function loadCoverageRows(
   snapshotId: string,
   rates: CoverageRates,
-  since: Date | null = null
+  since: Date | null = null,
+  shareReportId: string | null = null
 ): Promise<CoverageRow[]> {
   const members = await prisma.memberCoverage.findMany({ where: { snapshotId } });
 
@@ -84,7 +115,10 @@ export async function loadCoverageRows(
     );
   });
 
-  if (!since) return inputs.map((m) => withCollateral(m, rates));
+  const withShares = async (rows: CoverageInput[]) =>
+    shareReportId ? applyShareReport(rows, await shareEntries(shareReportId)) : rows;
+
+  if (!since) return (await withShares(inputs)).map((m) => withCollateral(m, rates));
   const events = await prisma.coverageEnrollment.findMany({
     where: { applicationDate: { gt: since }, status: { not: "rejected" } },
     select: {
@@ -100,5 +134,5 @@ export async function loadCoverageRows(
       annualPremium: true,
     },
   });
-  return applyEnrollments(inputs, events, since).map((m) => withCollateral(m, rates));
+  return (await withShares(applyEnrollments(inputs, events, since))).map((m) => withCollateral(m, rates));
 }

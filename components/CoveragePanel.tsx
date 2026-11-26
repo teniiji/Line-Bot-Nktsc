@@ -4,6 +4,8 @@ import { Fragment, useCallback, useEffect, useState } from "react";
 import PanelHelp from "@/components/PanelHelp";
 import MultiSelect from "@/components/MultiSelect";
 import ConfirmDialog from "@/components/ConfirmDialog";
+import ShareDebtReports from "@/components/ShareDebtReports";
+import CoverageReconcile from "@/components/CoverageReconcile";
 import { ACTIONS, ENROLLMENT_PRODUCTS, STATUSES, type EnrollmentProduct } from "@/lib/enrollment";
 import {
   AGE_BANDS,
@@ -30,6 +32,13 @@ interface Snapshot {
   welfarePerPeriod: number;
   welfareCap: number;
   createdAt: string;
+}
+
+interface ShareReportInfo {
+  id: string;
+  label: string;
+  asOf: string;
+  memberCount: number;
 }
 
 interface SnapshotListItem {
@@ -117,7 +126,7 @@ function Breakdown({ r, s }: { r: CoverageRow; s: Snapshot }) {
   return (
     <div className="grid gap-6 md:grid-cols-2 text-sm">
       <div className="space-y-1">
-        {line("หุ้น", r.shares)}
+        {line("หุ้น", r.shares, r.fileShares != null && r.fileShares !== r.shares ? `(ไฟล์ปี ${baht(r.fileShares)})` : undefined)}
         {line("ทุนประกันชีวิต", r.insuredSum, r.premium ? `(เบี้ย ${baht(r.premium)})` : undefined)}
         {r.hasSok && line("ฌาปนกิจ สสอค.", s.benefitSok)}
         {r.hasScs && line("ฌาปนกิจ สส.ชสอ.", s.benefitScs)}
@@ -129,7 +138,11 @@ function Breakdown({ r, s }: { r: CoverageRow; s: Snapshot }) {
           `(${r.sharePeriods ?? 0} งวด × ${baht(s.welfarePerPeriod)}${r.welfareCapped ? " · เต็มเพดาน" : ""})`
         )}
         <div className="border-t border-slate-200 pt-1 font-medium">{line("หลักประกันรวม", r.total)}</div>
-        {line("หนี้รวม", r.debt)}
+        {line(
+          "หนี้รวม",
+          r.debt,
+          r.fileShares != null && (r.fileDebt ?? 0) !== r.debt ? `(ไฟล์ปี ${baht(r.fileDebt ?? 0)})` : undefined
+        )}
         <div className={`flex justify-between font-semibold ${r.margin < 0 ? "text-red-600" : "text-emerald-700"}`}>
           <span>เหลือ</span>
           <span className="num">{signed(r.margin)}</span>
@@ -149,6 +162,9 @@ function Breakdown({ r, s }: { r: CoverageRow; s: Snapshot }) {
           </p>
         )}
         {r.debtStatus && <p className="text-amber-700">หมายเหตุ: {r.debtStatus}</p>}
+        {r.notInShareReport && (
+          <p className="text-amber-700">ไม่มีในรายงานหุ้นหนี้ล่าสุด — หุ้นและหนี้ยังเป็นยอดตามไฟล์ปี</p>
+        )}
       </div>
     </div>
   );
@@ -181,6 +197,11 @@ export default function CoveragePanel() {
   // (สมัครประกัน/ฌาปนกิจ), or the file as it was imported.
   const [withEnrollments, setWithEnrollments] = useState(true);
   const [changedOnly, setChangedOnly] = useState(false);
+  // Shares and debt from the latest monthly report, or the yearly file's.
+  const [useShareReport, setUseShareReport] = useState(true);
+  const [shareReport, setShareReport] = useState<ShareReportInfo | null>(null);
+  const [shareReportApplied, setShareReportApplied] = useState(false);
+  const [sharesOpen, setSharesOpen] = useState(false);
 
   // Which round is shown: null is the current one.
   const [snapshots, setSnapshots] = useState<SnapshotListItem[]>([]);
@@ -212,24 +233,28 @@ export default function CoveragePanel() {
       p.set("insured", insured);
       if (!withEnrollments) p.set("enrollments", "0");
       if (changedOnly && withEnrollments) p.set("changed", "1");
+      if (!useShareReport) p.set("shares", "0");
       if (undeducted) p.set("undeducted", undeducted);
       if (viewId) p.set("snapshot", viewId);
       p.set("sort", sort);
       if (extra) for (const [k, v] of Object.entries(extra)) p.set(k, v);
       return p;
     },
-    [search, band, selectedUnits, status, premium, assoc, sort, insured, undeducted, viewId, withEnrollments, changedOnly]
+    [search, band, selectedUnits, status, premium, assoc, sort, insured, undeducted, viewId, withEnrollments, changedOnly, useShareReport]
   );
 
   const fetchSummary = useCallback(async () => {
     const q = new URLSearchParams();
     if (viewId) q.set("snapshot", viewId);
     if (!withEnrollments) q.set("enrollments", "0");
+    if (!useShareReport) q.set("shares", "0");
     const res = await fetch(`/api/coverage/summary?${q}`);
     const body = await res.json();
     setSnapshot(body.snapshot);
     setSummary(body.summary);
-  }, [viewId, withEnrollments]);
+    setShareReport(body.shareReport ?? null);
+    setShareReportApplied(!!body.shareReportApplied);
+  }, [viewId, withEnrollments, useShareReport]);
 
   const fetchSnapshots = useCallback(async () => {
     const res = await fetch("/api/coverage/snapshots");
@@ -284,7 +309,7 @@ export default function CoveragePanel() {
   }, [fetchList]);
   useEffect(() => {
     setPage(1);
-  }, [search, band, selectedUnits, status, premium, assoc, sort, insured, undeducted, viewId, withEnrollments, changedOnly]);
+  }, [search, band, selectedUnits, status, premium, assoc, sort, insured, undeducted, viewId, withEnrollments, changedOnly, useShareReport]);
 
   const onImport = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -335,7 +360,14 @@ export default function CoveragePanel() {
             {snapshot && (
               <p className="text-xs text-slate-500 mt-1">
                 รอบ: <span className="font-medium text-slate-700">{snapshot.label}</span> · หุ้นหนี้ ณ{" "}
-                {thaiDate(snapshot.asOf)} · อายุ ณ {thaiDate(snapshot.ageAsOf)} · นำเข้า {thaiDate(snapshot.createdAt)}
+                {shareReportApplied && shareReport ? (
+                  <span className="text-emerald-700">
+                    {thaiDate(shareReport.asOf)} (รายงานหุ้นหนี้ &quot;{shareReport.label}&quot;)
+                  </span>
+                ) : (
+                  thaiDate(snapshot.asOf)
+                )}{" "}
+                · อายุ ณ {thaiDate(snapshot.ageAsOf)} · นำเข้า {thaiDate(snapshot.createdAt)}
               </p>
             )}
             {snapshots.length > 0 && snapshot && (
@@ -377,14 +409,32 @@ export default function CoveragePanel() {
               </div>
             )}
           </div>
-          <button
-            type="button"
-            onClick={() => setImportOpen((v) => !v)}
-            className="px-3 py-1.5 text-sm rounded bg-blue-600 text-white hover:bg-blue-700"
-          >
-            นำเข้าไฟล์
-          </button>
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={() => setSharesOpen((v) => !v)}
+              className="px-3 py-1.5 text-sm rounded border border-blue-300 text-blue-700 hover:bg-blue-50"
+            >
+              รายงานหุ้นหนี้รายเดือน
+            </button>
+            <button
+              type="button"
+              onClick={() => setImportOpen((v) => !v)}
+              className="px-3 py-1.5 text-sm rounded bg-blue-600 text-white hover:bg-blue-700"
+            >
+              นำเข้าไฟล์ปี
+            </button>
+          </div>
         </div>
+
+        {sharesOpen && (
+          <ShareDebtReports
+            onChange={() => {
+              fetchSummary();
+              fetchList();
+            }}
+          />
+        )}
 
         {importOpen && (
           <form onSubmit={onImport} className="mt-4 grid gap-3 sm:grid-cols-4 items-end text-sm">
@@ -442,7 +492,7 @@ export default function CoveragePanel() {
       </section>
 
       {!snapshot && !loading && (
-        <p className="text-sm text-slate-500">ยังไม่มีข้อมูล — กด &quot;นำเข้าไฟล์&quot; เพื่อเริ่ม</p>
+        <p className="text-sm text-slate-500">ยังไม่มีข้อมูล — กด &quot;นำเข้าไฟล์ปี&quot; เพื่อเริ่ม</p>
       )}
 
       {summary && (
@@ -462,7 +512,15 @@ export default function CoveragePanel() {
                   : "")
               }
             />
-            <Card title="มีหนี้" value={`${summary.withDebt.count.toLocaleString("th-TH")} คน`} sub={`หนี้รวม ${million(summary.all.debt)}`} />
+            <Card
+              title="มีหนี้"
+              value={`${summary.withDebt.count.toLocaleString("th-TH")} คน`}
+              sub={
+                `หนี้รวม ${million(summary.all.debt)}` +
+                (shareReportApplied && shareReport ? ` · ณ ${thaiDate(shareReport.asOf)}` : "") +
+                (summary.notInShareReport ? ` · ไม่มีในรายงานหุ้นหนี้ ${summary.notInShareReport.toLocaleString("th-TH")} คน` : "")
+              }
+            />
             <Card title="หลักประกันไม่พอ" value={`${summary.short.count.toLocaleString("th-TH")} คน`} sub={`หนี้ ${million(summary.short.debt)}`} tone="bad" />
             <Card
               title="ขาดรวม"
@@ -516,6 +574,8 @@ export default function CoveragePanel() {
         </>
       )}
 
+      {snapshot && <CoverageReconcile snapshotId={viewId} />}
+
       {snapshot && (
         <section className="bg-white rounded-lg shadow p-4 space-y-3">
           <div className="flex flex-wrap gap-2 items-center">
@@ -549,6 +609,15 @@ export default function CoveragePanel() {
               <input type="checkbox" checked={withEnrollments} onChange={(e) => setWithEnrollments(e.target.checked)} />
               รวมการสมัครหลังไฟล์ปี
             </label>
+            {shareReport && (
+              <label
+                className="flex items-center gap-1.5 text-sm text-slate-700"
+                title={`ใช้หุ้น หนี้ และงวดหุ้นจากรายงานหุ้นหนี้ "${shareReport.label}" แทนยอดในไฟล์ปี`}
+              >
+                <input type="checkbox" checked={useShareReport} onChange={(e) => setUseShareReport(e.target.checked)} />
+                ใช้หุ้นหนี้ล่าสุด
+              </label>
+            )}
             {withEnrollments && (
               <label className="flex items-center gap-1.5 text-sm text-slate-700">
                 <input type="checkbox" checked={changedOnly} onChange={(e) => setChangedOnly(e.target.checked)} />

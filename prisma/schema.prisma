@@ -1279,3 +1279,34 @@ model AppSetting {
   value     String
   updatedAt DateTime @updatedAt
 }
+
+// The monthly share-and-debt report (รายงานหุ้นหนี้). The coverage tab lays
+// the latest one over the yearly file's shares and debt (lib/shareDebt.ts).
+model ShareDebtReport {
+  id          String   @id @default(cuid())
+  label       String
+  // The date the balances stand at.
+  asOf        DateTime
+  fileName    String?
+  // The headings the debt was read from, joined by " + ".
+  debtColumns String?
+  memberCount Int      @default(0)
+  createdAt   DateTime @default(now())
+  entries     ShareDebtEntry[]
+
+  @@index([asOf])
+}
+
+model ShareDebtEntry {
+  id           String   @id @default(cuid())
+  reportId     String
+  memberNumber String
+  memberName   String?
+  // Null when the report had no such column.
+  shares       Decimal? @db.Decimal(14, 2)
+  debt         Decimal? @db.Decimal(14, 2)
+  sharePeriods Int?
+  report       ShareDebtReport @relation(fields: [reportId], references: [id], onDelete: Cascade)
+
+  @@unique([reportId, memberNumber])
+}
