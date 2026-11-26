@@ -57,6 +57,12 @@ export interface CoverageInput {
   // (lib/coverageEnrollments.ts); absent when the file is shown on its own.
   changes?: CoverageChange[];
   notInFile?: boolean;
+  // With the monthly share-and-debt report laid over the file
+  // (lib/shareDebt.ts): the file's own figures, and whether the report
+  // left the member out.
+  fileShares?: number;
+  fileDebt?: number | null;
+  notInShareReport?: boolean;
 }
 
 export interface Collateral {
@@ -281,7 +287,7 @@ export function summarize(allRows: CoverageRow[]): CoverageSummary {
     cremationFailed: allRows.filter(cremationUndeducted).length,
     changedSinceFile: allRows.filter((r) => r.changes?.length).length,
     newSinceFile: allRows.filter((r) => r.notInFile).length,
-    notInShareReport: rows.filter((r) => r.debtStatus === "ไม่มีในรายงานหุ้นหนี้").length,
+    notInShareReport: rows.filter((r) => r.notInShareReport ?? r.debtStatus === "ไม่มีในรายงานหุ้นหนี้").length,
     bands: AGE_BANDS.map((b) => {
       const inBand = rows.filter((r) => r.age != null && r.age >= b.from && r.age <= b.to);
       const s = inBand.filter((r) => r.margin < 0);

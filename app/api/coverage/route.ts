@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { filterCoverage, parseFilters, sortCoverage, totals, type CoverageSort } from "@/lib/coverage";
-import { currentSnapshot, enrollmentsSince, loadCoverageRows, ratesOf } from "@/lib/coverageStore";
+import { currentSnapshot, enrollmentsSince, loadCoverageRows, ratesOf, shareReportFor } from "@/lib/coverageStore";
 
 export const dynamic = "force-dynamic";
 
@@ -13,10 +13,14 @@ export async function GET(request: NextRequest) {
   const snapshot = await currentSnapshot(searchParams.get("snapshot"));
   if (!snapshot) return NextResponse.json({ snapshot: null, data: [], total: 0, units: [] });
 
+  // shares=0 shows the file's own shares and debt.
+  const shareReport = await shareReportFor(snapshot);
+  const applyShares = !!shareReport && searchParams.get("shares") !== "0";
   const rows = await loadCoverageRows(
     snapshot.id,
     ratesOf(snapshot),
-    searchParams.get("enrollments") === "0" ? null : enrollmentsSince(snapshot)
+    searchParams.get("enrollments") === "0" ? null : enrollmentsSince(snapshot),
+    applyShares ? shareReport.id : null
   );
   const filtered = filterCoverage(rows, parseFilters(searchParams));
   const sortParam = searchParams.get("sort") as CoverageSort | null;
