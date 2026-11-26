@@ -202,3 +202,37 @@ export function applyShareReport<T extends CoverageInput>(
     };
   });
 }
+
+// ---- Figures read in the browser ----------------------------------------------
+// The printed PDF report is read in the browser (lib/shareDebtPdf.ts), which
+// sends only the figures. They are checked again here as anything sent to the
+// server is.
+
+export const MAX_SHARE_ENTRIES = 30000;
+
+const finiteOrNull = (v: unknown): number | null =>
+  v == null || v === "" ? null : typeof v === "number" && Number.isFinite(v) ? v : Number.NaN;
+
+export function cleanShareEntries(raw: unknown): { entries: ShareDebtEntry[] } | { error: string } {
+  if (!Array.isArray(raw) || raw.length === 0) return { error: "ไม่พบรายชื่อสมาชิก" };
+  if (raw.length > MAX_SHARE_ENTRIES) return { error: "รายชื่อมากเกินไป" };
+  const out = new Map<string, ShareDebtEntry>();
+  for (const r of raw) {
+    const e = (r ?? {}) as Record<string, unknown>;
+    const memberNumber = memberNumberKey(typeof e.memberNumber === "string" ? e.memberNumber : "");
+    if (!memberNumber || !isPlausibleMemberNumber(memberNumber)) return { error: "มีเลขสมาชิกที่ไม่ถูกต้อง" };
+    const shares = finiteOrNull(e.shares);
+    const debt = finiteOrNull(e.debt);
+    const periods = finiteOrNull(e.sharePeriods);
+    if ([shares, debt, periods].some((x) => Number.isNaN(x))) return { error: `ยอดของสมาชิก ${memberNumber} ไม่ใช่ตัวเลข` };
+    if (out.has(memberNumber)) continue;
+    out.set(memberNumber, {
+      memberNumber,
+      memberName: typeof e.memberName === "string" ? e.memberName.slice(0, 200) : null,
+      shares: shares == null ? null : round2(shares),
+      debt: debt == null ? null : round2(debt),
+      sharePeriods: periods == null ? null : Math.trunc(periods),
+    });
+  }
+  return { entries: [...out.values()] };
+}
