@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { summarize } from "@/lib/coverage";
-import { currentSnapshot, loadCoverageRows, ratesOf } from "@/lib/coverageStore";
+import { currentSnapshot, enrollmentsSince, loadCoverageRows, ratesOf } from "@/lib/coverageStore";
 
 export const dynamic = "force-dynamic";
 
@@ -11,6 +11,10 @@ export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
   const snapshot = await currentSnapshot(searchParams.get("snapshot"));
   if (!snapshot) return NextResponse.json({ snapshot: null, summary: null });
-  const rows = await loadCoverageRows(snapshot.id, ratesOf(snapshot));
+  const rows = await loadCoverageRows(
+    snapshot.id,
+    ratesOf(snapshot),
+    searchParams.get("enrollments") === "0" ? null : enrollmentsSince(snapshot)
+  );
   return NextResponse.json({ snapshot, summary: summarize(rows) });
 }

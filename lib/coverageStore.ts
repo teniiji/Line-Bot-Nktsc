@@ -1,5 +1,10 @@
 import { prisma } from "./prisma";
-import { withCollateral, type CoverageRates, type CoverageRow } from "./coverage";
+import { withCollateral, type CoverageInput, type CoverageRates, type CoverageRow } from "./coverage";
+import { applyEnrollments } from "./coverageEnrollments";
+
+// The date applications are counted from: the share-and-debt date the file
+// was made at, or its import when it has none.
+export const enrollmentsSince = (s: { asOf: Date | null; createdAt: Date }) => s.asOf ?? s.createdAt;
 
 // Loading a coverage round with its collateral worked out.
 //
@@ -28,7 +33,13 @@ export function ratesOf(s: CoverageRates): CoverageRates {
   };
 }
 
-export async function loadCoverageRows(snapshotId: string, rates: CoverageRates): Promise<CoverageRow[]> {
+// since: lay the applications recorded after this date over the file (the
+// tab's default); null shows the file as it was imported.
+export async function loadCoverageRows(
+  snapshotId: string,
+  rates: CoverageRates,
+  since: Date | null = null
+): Promise<CoverageRow[]> {
   const members = await prisma.memberCoverage.findMany({ where: { snapshotId } });
 
   // The roster is the canonical name and unit; the file's own spelling is the
@@ -46,9 +57,9 @@ export async function loadCoverageRows(snapshotId: string, rates: CoverageRates)
   }
   const byMember = new Map(roster.map((r) => [r.memberNumber, r]));
 
-  return members.map((m) => {
+  const inputs: CoverageInput[] = members.map((m) => {
     const r = byMember.get(m.memberNumber);
-    return withCollateral(
+    return (
       {
         memberNumber: m.memberNumber,
         memberName: r?.memberName ?? m.memberName,
@@ -69,8 +80,25 @@ export async function loadCoverageRows(snapshotId: string, rates: CoverageRates)
         relativeFees: m.relativeFees,
         debtStatus: m.debtStatus,
         undeducted: m.undeducted,
-      },
-      rates
+      }
     );
   });
+
+  if (!since) return inputs.map((m) => withCollateral(m, rates));
+  const events = await prisma.coverageEnrollment.findMany({
+    where: { applicationDate: { gt: since }, status: { not: "rejected" } },
+    select: {
+      memberNumber: true,
+      memberName: true,
+      unitName: true,
+      age: true,
+      product: true,
+      action: true,
+      status: true,
+      applicationDate: true,
+      insuredSum: true,
+      annualPremium: true,
+    },
+  });
+  return applyEnrollments(inputs, events, since).map((m) => withCollateral(m, rates));
 }
