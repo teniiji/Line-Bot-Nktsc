@@ -5,6 +5,7 @@ import PanelHelp from "@/components/PanelHelp";
 import MultiSelect from "@/components/MultiSelect";
 import ConfirmDialog from "@/components/ConfirmDialog";
 import ShareDebtReports from "@/components/ShareDebtReports";
+import LoanCollateralCalculator from "@/components/LoanCollateralCalculator";
 import CoverageReconcile from "@/components/CoverageReconcile";
 import { ACTIONS, ENROLLMENT_PRODUCTS, STATUSES, type EnrollmentProduct } from "@/lib/enrollment";
 import {
@@ -202,6 +203,7 @@ export default function CoveragePanel() {
   const [shareReport, setShareReport] = useState<ShareReportInfo | null>(null);
   const [shareReportApplied, setShareReportApplied] = useState(false);
   const [sharesOpen, setSharesOpen] = useState(false);
+  const [loanOpen, setLoanOpen] = useState(false);
 
   // Which round is shown: null is the current one.
   const [snapshots, setSnapshots] = useState<SnapshotListItem[]>([]);
@@ -412,6 +414,13 @@ export default function CoveragePanel() {
           <div className="flex gap-2">
             <button
               type="button"
+              onClick={() => setLoanOpen((v) => !v)}
+              className="px-3 py-1.5 text-sm rounded bg-emerald-600 text-white hover:bg-emerald-700"
+            >
+              คำนวณก่อนกู้
+            </button>
+            <button
+              type="button"
               onClick={() => setSharesOpen((v) => !v)}
               className="px-3 py-1.5 text-sm rounded border border-blue-300 text-blue-700 hover:bg-blue-50"
             >
@@ -427,6 +436,7 @@ export default function CoveragePanel() {
           </div>
         </div>
 
+        {loanOpen && <LoanCollateralCalculator />}
         {sharesOpen && (
           <ShareDebtReports
             onChange={() => {
