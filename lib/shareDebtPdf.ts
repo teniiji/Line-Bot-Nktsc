@@ -18,7 +18,7 @@
 // columns were read right.
 
 import { isPlausibleMemberNumber, memberNumberKey } from "./memberNumber";
-import type { ShareDebtEntry } from "./shareDebt";
+import type { LoanType, ShareDebtContract, ShareDebtEntry } from "./shareDebt";
 
 export interface PdfTextItem {
   page: number;
@@ -100,6 +100,75 @@ interface Row {
   shares: number | null;
   total: number | null;
   resigned: boolean;
+  contracts: ShareDebtContract[];
+}
+
+// ---- Contracts ------------------------------------------------------------
+// Each loan group prints, per contract: งวด, เลขที่สัญญา, ชำระ/งวด, คงเหลือ.
+// A member's further contracts go on the lines below theirs. The figures
+// end at fixed places; the contract number starts at one.
+const LOAN_GROUPS: { type: LoanType; installment: number; contractStart: number; payment: number; balance: number }[] = [
+  { type: "emergency", installment: 355.5, contractStart: 365.5, payment: 452.8, balance: 506.8 },
+  { type: "ordinary", installment: 524, contractStart: 534.5, payment: 620.1, balance: 675.5 },
+  { type: "special", installment: 690.5, contractStart: 703.8, payment: 794.8, balance: 859.3 },
+];
+const LINE_STEP = 3;
+
+// The font the report prints contract numbers in maps each digit to another
+// character ("สป'*%)3%" is สป601341). The page numbers in the header use the
+// same font — "หน้าที่ : % / &&'" on page 1 of 886 — so each file's own
+// mapping is read from them.
+export function digitCipher(items: PdfTextItem[]): Map<string, string> | null {
+  const map = new Map<string, string>();
+  // A loop, not Math.max(...): a report is a quarter of a million items.
+  let pages = 0;
+  for (const i of items) if (i.page > pages) pages = i.page;
+  for (const it of items) {
+    const m = /:\s*(\S+)\s*\/\s*(\S+)\s*$/.exec(it.text);
+    if (!m || !cleanThai(it.text).startsWith("หน้าที")) continue;
+    const pairs: [string, string][] = [
+      [m[1], String(it.page)],
+      [m[2], String(pages)],
+    ];
+    for (const [shown, real] of pairs) {
+      if (shown.length !== real.length) return null;
+      for (let i = 0; i < shown.length; i++) {
+        const known = map.get(shown[i]);
+        if (known != null && known !== real[i]) return null; // not a cipher after all
+        map.set(shown[i], real[i]);
+      }
+    }
+  }
+  return map.size ? map : null;
+}
+
+// Numbers in the cipher font come with a Thai prefix (สป, สด, พอ, ฉฉ); the
+// ATxxxxxx emergency contracts are printed in plain digits.
+function decodeContract(raw: string, cipher: Map<string, string> | null): string {
+  const s = raw.trim();
+  if (!cipher || !/[\u0E00-\u0E7F]/.test(s)) return s;
+  return [...s].map((ch) => (/[\u0E00-\u0E7F]/.test(ch) ? ch : (cipher.get(ch) ?? ch))).join("");
+}
+
+function contractsOnLine(line: PdfTextItem[], cipher: Map<string, string> | null): ShareDebtContract[] {
+  const out: ShareDebtContract[] = [];
+  for (const g of LOAN_GROUPS) {
+    const at = (end: number) =>
+      line.find((it) => NUMBER.test(it.text.trim()) && Math.abs(it.y + it.width - end) <= TOLERANCE);
+    const balance = at(g.balance);
+    if (!balance) continue;
+    const contract = line.find((it) => !NUMBER.test(it.text.trim()) && Math.abs(it.y - g.contractStart) <= 8);
+    const installment = at(g.installment);
+    const payment = at(g.payment);
+    out.push({
+      type: g.type,
+      contractNo: contract ? decodeContract(contract.text, cipher) : null,
+      installment: installment ? Math.trunc(toNumber(installment.text.trim())) : null,
+      payment: payment ? toNumber(payment.text.trim()) : null,
+      balance: toNumber(balance.text.trim()),
+    });
+  }
+  return out;
 }
 
 export function parseShareDebtPdf(items: PdfTextItem[]): ShareDebtPdf {
@@ -111,6 +180,7 @@ export function parseShareDebtPdf(items: PdfTextItem[]): ShareDebtPdf {
     byPage.set(it.page, list);
   }
 
+  const cipher = digitCipher(items);
   const rows = new Map<string, Row>();
   const order: string[] = [];
   for (const page of [...byPage.keys()].sort((a, b) => a - b)) {
@@ -118,7 +188,7 @@ export function parseShareDebtPdf(items: PdfTextItem[]): ShareDebtPdf {
     const anchors = pageItems
       .filter((it) => /^\d{5,8}$/.test(it.text.trim()) && Math.abs(it.y + it.width - MEMBER_END) <= 4)
       .sort((a, b) => a.x - b.x);
-    for (const anchor of anchors) {
+    for (const [index, anchor] of anchors.entries()) {
       const memberNumber = memberNumberKey(anchor.text.trim());
       if (!memberNumber || !isPlausibleMemberNumber(memberNumber)) continue;
       const line = pageItems.filter((it) => it !== anchor && Math.abs(it.x - anchor.x) <= SAME_LINE);
@@ -127,6 +197,29 @@ export function parseShareDebtPdf(items: PdfTextItem[]): ShareDebtPdf {
         const c = columnOf(it);
         if (c && NUMBER.test(it.text.trim())) figures[c] = toNumber(it.text.trim());
       }
+      // The lines below, up to the next member: further contracts, unless a
+      // unit total or summary (รวม, =, or figures outside the loan columns)
+      // comes first.
+      const next = anchors[index + 1]?.x ?? Infinity;
+      const below = new Map<number, PdfTextItem[]>();
+      for (const it of pageItems) {
+        if (it.x > anchor.x + SAME_LINE && it.x < next - SAME_LINE) {
+          const k = Math.round(it.x / LINE_STEP);
+          below.set(k, [...(below.get(k) ?? []), it]);
+        }
+      }
+      const contracts = contractsOnLine(line, cipher);
+      for (const k of [...below.keys()].sort((a, b) => a - b)) {
+        const l = below.get(k)!;
+        const stops = l.some((it) => {
+          const t = cleanThai(it.text);
+          const c = columnOf(it);
+          return t.includes("รวม") || t.includes("=") || c === "total" || c === "interest" || c === "shares" || it.y + it.width < 300;
+        });
+        if (stops) break;
+        contracts.push(...contractsOnLine(l, cipher));
+      }
+
       const nameItem = line.find((it) => it.y > MEMBER_END && it.y < 200 && /[฀-๿]/.test(it.text));
       const row: Row = {
         memberNumber,
@@ -135,13 +228,18 @@ export function parseShareDebtPdf(items: PdfTextItem[]): ShareDebtPdf {
         shares: figures.shares ?? null,
         total: figures.total ?? null,
         resigned: line.some((it) => it.text.includes("ลาออก")),
+        contracts,
       };
 
       // Printed again at the top of the next page for the rest of its
       // contracts: the first entry, which carries the totals, stands.
       const seen = rows.get(memberNumber);
       if (seen) {
-        if (seen.total == null && row.total != null) rows.set(memberNumber, { ...row, name: seen.name ?? row.name });
+        if (seen.total == null && row.total != null) {
+          rows.set(memberNumber, { ...row, name: seen.name ?? row.name, contracts: [...seen.contracts, ...row.contracts] });
+        } else {
+          seen.contracts.push(...row.contracts);
+        }
         continue;
       }
       rows.set(memberNumber, row);
@@ -163,6 +261,7 @@ export function parseShareDebtPdf(items: PdfTextItem[]): ShareDebtPdf {
       shares: r.shares,
       debt: r.total ?? 0,
       sharePeriods: r.periods == null ? null : Math.trunc(r.periods),
+      contracts: r.contracts,
     };
   });
 
@@ -179,6 +278,13 @@ export function parseShareDebtPdf(items: PdfTextItem[]): ShareDebtPdf {
     check("สมาชิกที่เป็นหนี้", entries.filter((e) => (e.debt ?? 0) > 0).length, report.inDebt),
     check("ทุนเรือนหุ้น", entries.reduce((s, e) => s + (e.shares ?? 0), 0), report.shares),
     check("หนี้รวม", entries.reduce((s, e) => s + (e.debt ?? 0), 0), report.total),
+    ...LOAN_GROUPS.map((g) =>
+      check(
+        `เงินกู้${{ emergency: "ฉุกเฉิน", ordinary: "สามัญ", special: "พิเศษ" }[g.type]}คงเหลือ (รายสัญญา)`,
+        entries.reduce((s, e) => s + (e.contracts ?? []).filter((c) => c.type === g.type).reduce((a, c) => a + c.balance, 0), 0),
+        report[g.type]
+      )
+    ),
   ];
   return {
     entries,
@@ -192,7 +298,7 @@ export function parseShareDebtPdf(items: PdfTextItem[]): ShareDebtPdf {
 function grandTotals(items: PdfTextItem[]) {
   const text = (it: PdfTextItem) => cleanThai(it.text);
   const heading = [...items].reverse().find((it) => text(it).startsWith("รวมทั้งหมด"));
-  const out: { members?: number; inDebt?: number; shares?: number; total?: number } = {};
+  const out: Partial<Record<"members" | "inDebt" | "shares" | "total" | LoanType, number>> = {};
   if (!heading) return out;
 
   const onPage = items.filter((it) => it.page === heading.page);
@@ -201,6 +307,7 @@ function grandTotals(items: PdfTextItem[]) {
     const c = columnOf(it);
     if (c === "shares") out.shares = toNumber(it.text.trim());
     if (c === "total") out.total = toNumber(it.text.trim());
+    if (c === "emergency" || c === "ordinary" || c === "special") out[c] = toNumber(it.text.trim());
   }
 
   // The counts sit on their own lines below it, the figure first on the line.

@@ -66,13 +66,13 @@ export async function GET(_request: NextRequest, { params }: { params: { memberN
   const shareEntry = report
     ? await prisma.shareDebtEntry.findUnique({
         where: { reportId_memberNumber: { reportId: report.id, memberNumber } },
-        select: { shares: true, debt: true, sharePeriods: true },
+        select: { shares: true, debt: true, sharePeriods: true, contracts: true, memberName: true },
       })
     : null;
 
   return NextResponse.json({
     memberNumber,
-    name: roster?.memberName ?? coverage?.memberName ?? enrollments[0]?.memberName ?? null,
+    name: roster?.memberName ?? coverage?.memberName ?? enrollments[0]?.memberName ?? shareEntry?.memberName ?? null,
     unitName: roster?.unitName ?? coverage?.unitName ?? enrollments[0]?.unitName ?? null,
     inRoster: !!roster,
     coverage,
@@ -88,6 +88,8 @@ export async function GET(_request: NextRequest, { params }: { params: { memberN
           shares: shareEntry.shares == null ? null : Number(shareEntry.shares),
           debt: shareEntry.debt == null ? null : Number(shareEntry.debt),
           sharePeriods: shareEntry.sharePeriods,
+          // Each loan contract, when the report was the printed PDF.
+          contracts: Array.isArray(shareEntry.contracts) ? shareEntry.contracts : null,
         }
       : null,
     enrollments,

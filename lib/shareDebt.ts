@@ -18,6 +18,20 @@ import type { CoverageInput } from "./coverage";
 
 export class ShareDebtSheetError extends Error {}
 
+export type LoanType = "emergency" | "ordinary" | "special";
+export const LOAN_TYPES: Record<LoanType, string> = { emergency: "ฉุกเฉิน", ordinary: "สามัญ", special: "พิเศษ" };
+
+// One loan contract as the printed report lists it (lib/shareDebtPdf.ts).
+export interface ShareDebtContract {
+  type: LoanType;
+  contractNo: string | null;
+  // The report's "งวด" for the contract.
+  installment: number | null;
+  // ชำระ/งวด.
+  payment: number | null;
+  balance: number;
+}
+
 export interface ShareDebtEntry {
   memberNumber: string;
   memberName: string | null;
@@ -25,6 +39,8 @@ export interface ShareDebtEntry {
   shares: number | null;
   debt: number | null;
   sharePeriods: number | null;
+  // Only the printed PDF report lists them.
+  contracts?: ShareDebtContract[] | null;
 }
 
 export interface ShareDebtSheet {
@@ -226,7 +242,10 @@ export function cleanShareEntries(raw: unknown): { entries: ShareDebtEntry[] } |
     const periods = finiteOrNull(e.sharePeriods);
     if ([shares, debt, periods].some((x) => Number.isNaN(x))) return { error: `ยอดของสมาชิก ${memberNumber} ไม่ใช่ตัวเลข` };
     if (out.has(memberNumber)) continue;
+    const contracts = cleanContracts(e.contracts);
+    if (contracts === false) return { error: `สัญญาเงินกู้ของสมาชิก ${memberNumber} ไม่ถูกต้อง` };
     out.set(memberNumber, {
+      contracts,
       memberNumber,
       memberName: typeof e.memberName === "string" ? e.memberName.slice(0, 200) : null,
       shares: shares == null ? null : round2(shares),
@@ -235,4 +254,28 @@ export function cleanShareEntries(raw: unknown): { entries: ShareDebtEntry[] } |
     });
   }
   return { entries: [...out.values()] };
+}
+
+const MAX_CONTRACTS = 30;
+
+function cleanContracts(raw: unknown): ShareDebtContract[] | null | false {
+  if (raw == null) return null;
+  if (!Array.isArray(raw) || raw.length > MAX_CONTRACTS) return false;
+  const out: ShareDebtContract[] = [];
+  for (const c of raw) {
+    const r = (c ?? {}) as Record<string, unknown>;
+    if (typeof r.type !== "string" || !(r.type in LOAN_TYPES)) return false;
+    const balance = finiteOrNull(r.balance);
+    const payment = finiteOrNull(r.payment);
+    const installment = finiteOrNull(r.installment);
+    if (balance == null || [balance, payment, installment].some((x) => Number.isNaN(x))) return false;
+    out.push({
+      type: r.type as LoanType,
+      contractNo: typeof r.contractNo === "string" ? r.contractNo.slice(0, 40) : null,
+      installment: installment == null ? null : Math.trunc(installment),
+      payment: payment == null ? null : round2(payment),
+      balance: round2(balance),
+    });
+  }
+  return out;
 }

@@ -2,6 +2,8 @@
 
 import { useEffect, useMemo, useState } from "react";
 import type { CoverageRates } from "@/lib/coverage";
+import type { ShareDebtContract } from "@/lib/shareDebt";
+import LoanContracts from "@/components/LoanContracts";
 import {
   DEFAULT_LOAN_SETTINGS,
   assessLoan,
@@ -41,7 +43,14 @@ interface Detail {
   current: Holdings | null;
   coverage: Holdings | null;
   snapshot: { label: string } | null;
-  shares: { label: string; asOf: string; shares: number | null; debt: number | null; sharePeriods: number | null } | null;
+  shares: {
+    label: string;
+    asOf: string;
+    shares: number | null;
+    debt: number | null;
+    sharePeriods: number | null;
+    contracts: ShareDebtContract[] | null;
+  } | null;
   rates: CoverageRates;
 }
 
@@ -71,10 +80,11 @@ function holdingsOf(d: Detail): MemberHoldings | null {
   };
 }
 
-export default function LoanCollateralCalculator() {
+// memberNumber: open on that member (from ดูรายคน) without the search box.
+export default function LoanCollateralCalculator({ memberNumber }: { memberNumber?: string } = {}) {
   const [query, setQuery] = useState("");
   const [found, setFound] = useState<Found[]>([]);
-  const [selected, setSelected] = useState<string | null>(null);
+  const [selected, setSelected] = useState<string | null>(memberNumber ?? null);
   const [detail, setDetail] = useState<Detail | null>(null);
   const [amount, setAmount] = useState("");
   const [refinance, setRefinance] = useState("");
@@ -83,6 +93,27 @@ export default function LoanCollateralCalculator() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [draft, setDraft] = useState({ maxCoverAge: "", premiumPerMillion: "" });
   const [notice, setNotice] = useState<string | null>(null);
+  // Contracts ticked to be paid off by the new loan; their balances fill
+  // หักกลบหนี้เดิม (which can still be typed over).
+  const [ticked, setTicked] = useState<Set<number>>(new Set());
+
+  useEffect(() => {
+    if (memberNumber) setSelected(memberNumber);
+  }, [memberNumber]);
+  useEffect(() => {
+    setTicked(new Set());
+    setRefinance("");
+  }, [selected]);
+
+  const toggleContract = (i: number) => {
+    const next = new Set(ticked);
+    if (next.has(i)) next.delete(i);
+    else next.add(i);
+    setTicked(next);
+    const contracts = detail?.shares?.contracts ?? [];
+    const sum = [...next].reduce((s, k) => s + Math.max(0, contracts[k]?.balance ?? 0), 0);
+    setRefinance(sum ? String(Math.round(sum * 100) / 100) : "");
+  };
 
   useEffect(() => {
     fetch("/api/coverage/loan-settings")
@@ -143,6 +174,10 @@ export default function LoanCollateralCalculator() {
     const lines = [
       `คำนวณหลักประกันก่อนกู้ — ${detail.memberNumber} ${detail.name ?? ""} (${detail.unitName ?? ""})`,
       `วงเงินกู้ ${baht(money(amount))} · หักกลบหนี้เดิม ${baht(money(refinance))}${term ? ` · ${term} งวด` : ""}`,
+      ...[...ticked].map((k) => {
+        const c = detail.shares?.contracts?.[k];
+        return c ? `  หักกลบสัญญา ${c.contractNo ?? ""} คงเหลือ ${baht(c.balance)}` : "";
+      }),
       ...result.items.map((i) => `  ${i.label}: ${baht(i.amount)}${i.sure ? "" : ` (ไม่นับในยอดมั่นใจได้: ${i.note})`}`),
       `หลักประกันรวม ${baht(result.total)} · มั่นใจได้ ${baht(result.sureTotal)}`,
       `หนี้ปัจจุบัน ${baht(result.debtNow)} → หนี้หลังกู้ ${baht(result.debtAfter)}`,
@@ -199,7 +234,7 @@ export default function LoanCollateralCalculator() {
       )}
 
       <div className="flex flex-wrap items-end gap-3">
-        <div className="relative">
+        <div className={`relative ${memberNumber ? "hidden" : ""}`}>
           <span className="block text-slate-600 mb-1">สมาชิก</span>
           <input
             value={query}
@@ -254,7 +289,14 @@ export default function LoanCollateralCalculator() {
             </span>
           </p>
 
-          <div className="grid gap-4 md:grid-cols-2">
+          {detail.shares?.contracts && detail.shares.contracts.length > 0 && (
+            <div>
+              <p className="text-xs text-slate-500 mb-1">ติ๊กสัญญาที่เงินกู้ใหม่จะหักกลบ ระบบใส่ยอดในช่อง &quot;หักกลบหนี้เดิม&quot; ให้</p>
+              <LoanContracts contracts={detail.shares.contracts} total={detail.shares.debt} checked={ticked} onToggle={toggleContract} />
+            </div>
+          )}
+
+          <div className="grid gap-4 md:grid-cols-2 items-start">
             <table className="w-full">
               <thead className="text-xs text-slate-500 text-left">
                 <tr>
