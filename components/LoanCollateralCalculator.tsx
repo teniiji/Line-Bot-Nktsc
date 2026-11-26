@@ -6,14 +6,20 @@ import type { ShareDebtContract } from "@/lib/shareDebt";
 import LoanContracts from "@/components/LoanContracts";
 import {
   DEFAULT_LOAN_SETTINGS,
+  LOAN_PRODUCTS,
+  assessEntitlement,
   assessLoan,
+  type LoanEntitlement,
   type LoanSettings,
+  type LoanType,
   type MemberHoldings,
 } from "@/lib/loanCollateral";
 
 // คำนวณก่อนกู้ — for the credit desk: a member, the loan asked for and what
 // it pays off, and whether what the member leaves behind would cover the
-// debt after it (lib/loanCollateral.ts).
+// debt after it (lib/loanCollateral.ts); and what the cooperative's rules
+// allow for that loan type, with the monthly payment from its published
+// repayment tables, set against what the collateral covers.
 
 interface Found {
   memberNumber: string;
@@ -89,6 +95,10 @@ export default function LoanCollateralCalculator({ memberNumber }: { memberNumbe
   const [amount, setAmount] = useState("");
   const [refinance, setRefinance] = useState("");
   const [term, setTerm] = useState("");
+  const [loanType, setLoanType] = useState<LoanType>("ordinary");
+  const [rate, setRate] = useState("");
+  const [salary, setSalary] = useState("");
+  const [deductions, setDeductions] = useState("");
   const [settings, setSettings] = useState<LoanSettings>(DEFAULT_LOAN_SETTINGS);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [draft, setDraft] = useState({ maxCoverAge: "", premiumPerMillion: "" });
@@ -148,13 +158,33 @@ export default function LoanCollateralCalculator({ memberNumber }: { memberNumbe
     setFound([]);
   };
 
+  const product = LOAN_PRODUCTS[loanType];
+  // An empty term means the loan type's own (150 for สามัญ…), for the
+  // collateral's age check too.
+  const termMonths = money(term) || product.terms[0];
   const holdings = detail ? holdingsOf(detail) : null;
   const result = useMemo(
     () =>
       holdings && detail
-        ? assessLoan(holdings, { amount: money(amount), refinance: money(refinance), termMonths: money(term) || null }, detail.rates, settings)
+        ? assessLoan(holdings, { amount: money(amount), refinance: money(refinance), termMonths }, detail.rates, settings)
         : null,
-    [holdings, detail, amount, refinance, term, settings]
+    [holdings, detail, amount, refinance, termMonths, settings]
+  );
+  const entitlement = useMemo(
+    () =>
+      assessEntitlement({
+        type: loanType,
+        amount: money(amount),
+        termMonths,
+        rate: rate.trim() ? money(rate) : null,
+        age: holdings?.age ?? null,
+        memberMonths: holdings?.sharePeriods ?? null,
+        shares: holdings?.shares ?? 0,
+        salary: money(salary) || null,
+        otherDeductions: money(deductions) || null,
+        collateralMax: result?.maxLoan ?? null,
+      }),
+    [loanType, amount, termMonths, rate, holdings, salary, deductions, result]
   );
 
   const saveSettings = async () => {
@@ -173,7 +203,13 @@ export default function LoanCollateralCalculator({ memberNumber }: { memberNumbe
     if (!result || !detail) return "";
     const lines = [
       `คำนวณหลักประกันก่อนกู้ — ${detail.memberNumber} ${detail.name ?? ""} (${detail.unitName ?? ""})`,
-      `วงเงินกู้ ${baht(money(amount))} · หักกลบหนี้เดิม ${baht(money(refinance))}${term ? ` · ${term} งวด` : ""}`,
+      `${entitlement.product.label} วงเงินกู้ ${baht(money(amount))} · หักกลบหนี้เดิม ${baht(money(refinance))} · ${entitlement.term} งวด ดอกเบี้ย ${entitlement.rate}%`,
+      `ยอดผ่อน ${baht(entitlement.installment)} บาท/เดือน${entitlement.fromTable ? " (ตามตารางสหกรณ์)" : " (ประมาณ)"}${
+        entitlement.row ? ` · ผู้ค้ำ ${entitlement.row.guarantors} คน` : ""
+      }${entitlement.sharesNeeded != null ? ` · หุ้นต้องมี ${baht(entitlement.sharesNeeded)}` : ""}`,
+      `สิทธิกู้ตามระเบียบ ${baht(entitlement.ruleMax)} · ${entitlement.limits.map((l) => `${l.label} ${baht(l.amount)}`).join(" · ")}`,
+      `กู้ได้สูงสุด ${baht(entitlement.overallMax)}${entitlement.binding === "collateral" ? " (จำกัดด้วยหลักประกัน)" : " (จำกัดด้วยระเบียบ)"}`,
+      ...entitlement.checks.map((c) => `  ${c.ok ? "✓" : "✗"} ${c.label} — ${c.note}`),
       ...[...ticked].map((k) => {
         const c = detail.shares?.contracts?.[k];
         return c ? `  หักกลบสัญญา ${c.contractNo ?? ""} คงเหลือ ${baht(c.balance)}` : "";
@@ -187,7 +223,7 @@ export default function LoanCollateralCalculator({ memberNumber }: { memberNumbe
           ? `ควรเพิ่มทุนประกัน ${baht(result.topUp.insuredSum)} เบี้ยประมาณ ${baht(result.topUp.premium)} บาท/ปี`
           : `เพิ่มทุนประกันไม่ช่วย: ${result.topUp.reason}`
         : "หลักประกันพอ",
-      ...result.warnings.map((w) => `หมายเหตุ: ${w}`),
+      ...[...entitlement.warnings, ...result.warnings].map((w) => `หมายเหตุ: ${w}`),
       `ข้อมูลหุ้นหนี้: ${detail.shares ? `${detail.shares.label} ณ ${thaiDate(detail.shares.asOf)}` : `ไฟล์ปี ${detail.snapshot?.label ?? ""}`}`,
     ];
     return lines.join("\n");
@@ -259,6 +295,24 @@ export default function LoanCollateralCalculator({ memberNumber }: { memberNumbe
           )}
         </div>
         <label>
+          <span className="block text-slate-600 mb-1">ประเภทเงินกู้</span>
+          <select
+            value={loanType}
+            onChange={(e) => {
+              setLoanType(e.target.value as LoanType);
+              setTerm("");
+              setRate("");
+            }}
+            className={`${input} w-64`}
+          >
+            {Object.values(LOAN_PRODUCTS).map((p) => (
+              <option key={p.type} value={p.type}>
+                {p.label}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label>
           <span className="block text-slate-600 mb-1">วงเงินกู้ใหม่</span>
           <input inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} className={`${input} w-36`} />
         </label>
@@ -268,11 +322,44 @@ export default function LoanCollateralCalculator({ memberNumber }: { memberNumbe
         </label>
         <label>
           <span className="block text-slate-600 mb-1">จำนวนงวด (เดือน)</span>
-          <input inputMode="numeric" value={term} onChange={(e) => setTerm(e.target.value)} placeholder="เช่น 180" className={`${input} w-28`} />
+          <input
+            inputMode="numeric"
+            value={term}
+            onChange={(e) => setTerm(e.target.value)}
+            placeholder={product.terms.join(" / ")}
+            list="loan-terms"
+            className={`${input} w-28`}
+          />
+          <datalist id="loan-terms">
+            {product.terms.map((t) => (
+              <option key={t} value={t} />
+            ))}
+          </datalist>
+        </label>
+        <label>
+          <span className="block text-slate-600 mb-1">ดอกเบี้ย %/ปี</span>
+          <input inputMode="decimal" value={rate} onChange={(e) => setRate(e.target.value)} placeholder={String(product.rate)} className={`${input} w-20`} />
+        </label>
+        <label>
+          <span className="block text-slate-600 mb-1">เงินเดือน</span>
+          <input inputMode="decimal" value={salary} onChange={(e) => setSalary(e.target.value)} placeholder="ไม่บังคับ" className={`${input} w-28`} />
+        </label>
+        <label>
+          <span className="block text-slate-600 mb-1">รายการหักอื่นต่อเดือน</span>
+          <input
+            inputMode="decimal"
+            value={deductions}
+            onChange={(e) => setDeductions(e.target.value)}
+            placeholder="หลังหักกลบ"
+            title="ยอดหักจากเงินเดือนที่ยังเหลือหลังกู้ใหม่ เช่น ค่าหุ้น เบี้ยประกัน เงินกู้อื่นที่ไม่ได้หักกลบ"
+            className={`${input} w-32`}
+          />
         </label>
       </div>
 
       {notice && <p className="text-xs text-emerald-700">{notice}</p>}
+
+      {money(amount) > 0 && <EntitlementView e={entitlement} amount={money(amount)} withCollateral={!!result} />}
 
       {detail && !holdings && <p className="text-amber-700">ไม่พบข้อมูลหุ้นหนี้หรือประกันของ {detail.memberNumber} — นำเข้าไฟล์ปีหรือรายงานหุ้นหนี้ก่อน</p>}
 
@@ -396,6 +483,100 @@ export default function LoanCollateralCalculator({ memberNumber }: { memberNumbe
             </div>
           </div>
         </div>
+      )}
+    </div>
+  );
+}
+
+function EntitlementView({ e, amount, withCollateral }: { e: LoanEntitlement; amount: number; withCollateral: boolean }) {
+  return (
+    <div className="rounded border border-slate-200 p-3 space-y-3">
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <p className="font-medium">สิทธิกู้และยอดผ่อน — {e.product.label}</p>
+        <p className="text-xs text-slate-500">
+          ตารางชำระเงินกู้ของสหกรณ์ (ประกาศปี 2569) · ดอกเบี้ย {e.product.rate}% ต่อปี ทุกประเภท ยกเว้นดอกเบี้ยต่ำ
+        </p>
+      </div>
+      <div className="grid gap-4 md:grid-cols-3 items-start">
+        <div className="rounded bg-slate-50 p-3">
+          <p className="text-xs text-slate-500">ยอดผ่อนต่องวด</p>
+          <p className="text-2xl font-semibold num">{baht(e.installment)}</p>
+          <p className="text-xs text-slate-600">
+            {e.term} งวด · {e.rate}% ต่อปี · {e.fromTable ? "ตามตารางสหกรณ์" : "ประมาณ (ต้นและดอกเบี้ยเท่ากันทุกงวด ปัดขึ้นหลักร้อย)"}
+          </p>
+          <p className="text-xs text-slate-500 mt-1">
+            ส่งรวมประมาณ <span className="num">{baht(e.totalPaid)}</span> · ดอกเบี้ยรวมประมาณ <span className="num">{baht(e.totalInterest)}</span>
+          </p>
+          {e.row && (
+            <p className="text-xs text-slate-600 mt-1">
+              ช่วงวงเงินไม่เกิน <span className="num">{baht(e.row.upTo)}</span>: ผู้ค้ำ {e.row.guarantors} คน
+              {e.sharesNeeded != null && (
+                <>
+                  {" "}
+                  · หุ้นต้องมี <span className="num">{baht(e.sharesNeeded)}</span>
+                </>
+              )}
+              {e.row.minMemberMonths != null && <> · อายุสมาชิก {e.row.minMemberMonths} เดือนขึ้นไป</>}
+            </p>
+          )}
+          {e.remainingSalary != null && (
+            <p className="text-xs text-slate-600 mt-1">
+              เงินเดือนคงเหลือหลังผ่อน <span className="num">{baht(e.remainingSalary)}</span>
+            </p>
+          )}
+        </div>
+        <table className="w-full">
+          <thead className="text-xs text-slate-500 text-left">
+            <tr>
+              <th className="py-1">วงเงินสูงสุดตามระเบียบ</th>
+              <th className="text-right">บาท</th>
+            </tr>
+          </thead>
+          <tbody>
+            {e.limits.map((l) => (
+              <tr key={l.key} className={`border-t border-slate-100 align-top ${l.amount === e.ruleMax ? "font-medium" : ""}`}>
+                <td className="py-1.5">
+                  {l.label}
+                  {l.note && <span className="block text-xs font-normal text-slate-400">{l.note}</span>}
+                </td>
+                <td className="text-right num">{baht(l.amount)}</td>
+              </tr>
+            ))}
+            <tr className="border-t-2 border-slate-300 font-medium">
+              <td className="py-1.5">สิทธิกู้ตามระเบียบ</td>
+              <td className="text-right num">{baht(e.ruleMax)}</td>
+            </tr>
+          </tbody>
+        </table>
+        <div className="space-y-2">
+          <div className={`rounded p-2 ${amount > e.overallMax ? "bg-red-50 text-red-700" : "bg-emerald-50 text-emerald-800"}`}>
+            <p className="text-xs">กู้ได้สูงสุด{withCollateral ? " (ระเบียบ + หลักประกันมั่นใจได้)" : " ตามระเบียบ"}</p>
+            <p className="text-lg font-semibold num">{baht(e.overallMax)}</p>
+            <p className="text-xs">
+              {e.binding === "collateral" ? "จำกัดด้วยหลักประกัน" : e.binding === "rule" ? "จำกัดด้วยระเบียบ" : "เลือกสมาชิกเพื่อเทียบหลักประกัน"}
+              {amount > e.overallMax && ` · ขอกู้เกิน ${baht(amount - e.overallMax)}`}
+            </p>
+          </div>
+          {e.checks.map((c) => (
+            <p key={c.label} className={`text-xs ${c.ok ? "text-emerald-700" : "text-red-700"}`}>
+              {c.ok ? "✓" : "✗"} {c.label} <span className="text-slate-500">— {c.note}</span>
+            </p>
+          ))}
+        </div>
+      </div>
+      {(e.warnings.length > 0 || e.product.notes.length > 0) && (
+        <ul className="text-xs space-y-0.5">
+          {e.warnings.map((w) => (
+            <li key={w} className="text-amber-700">
+              ⚠️ {w}
+            </li>
+          ))}
+          {e.product.notes.map((n) => (
+            <li key={n} className="text-slate-500">
+              • {n}
+            </li>
+          ))}
+        </ul>
       )}
     </div>
   );
