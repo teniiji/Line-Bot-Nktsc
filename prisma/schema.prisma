@@ -1227,3 +1227,49 @@ model MemberCoverage {
   @@unique([snapshotId, memberNumber])
   @@index([memberNumber])
 }
+
+// One application to (or cancellation of) group life insurance or a
+// cremation association, recorded the day it is made — by any department —
+// so the cooperative knows who joined between one yearly coverage file and
+// the next (lib/enrollment.ts). Effective from the application date.
+model CoverageEnrollment {
+  id                 String    @id @default(cuid())
+  memberNumber       String
+  memberName         String?
+  unitName           String?
+  age                Int?
+  // life / sok / scs / sst / ssk / relative (ENROLLMENT_PRODUCTS)
+  product            String
+  // enroll / cancel
+  action             String    @default("enroll")
+  applicationDate    DateTime
+  insuredSum         Int?
+  // The year's premium, and the part of it owed for the rest of the policy
+  // year from the application date.
+  annualPremium      Int?
+  proratedPremium    Int?
+  // loan (หักจากเงินกู้) / self (จ่ายเอง)
+  paymentMethod      String?
+  relativeName       String?
+  // pending → approved / rejected, from the insurer's or association's file
+  status             String    @default("pending")
+  statusDate         DateTime?
+  statusSource       String?
+  eligibilityChecked Boolean   @default(false)
+  department         String?
+  recordedBy         String?
+  note               String?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+
+  @@index([applicationDate])
+  @@index([memberNumber])
+  @@index([product, status])
+}
+
+// Small settings staff change from the dashboard, by key.
+model AppSetting {
+  key       String   @id
+  value     String
+  updatedAt DateTime @updatedAt
+}
