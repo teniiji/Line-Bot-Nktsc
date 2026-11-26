@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { checkUploadedFile, describeReadError, readAllSheetRows } from "@/lib/excelUpload";
 import { cleanShareEntries, parseShareDebtSheet, ShareDebtSheetError, type ShareDebtEntry } from "@/lib/shareDebt";
@@ -93,7 +94,7 @@ async function saveReport(r: {
   try {
     for (let i = 0; i < r.entries.length; i += WRITE_CHUNK) {
       await prisma.shareDebtEntry.createMany({
-        data: r.entries.slice(i, i + WRITE_CHUNK).map((e) => ({ ...e, reportId: report.id })),
+        data: r.entries.slice(i, i + WRITE_CHUNK).map((e) => ({ ...e, contracts: e.contracts ? (e.contracts as unknown as Prisma.InputJsonValue) : undefined, reportId: report.id })),
       });
     }
   } catch (err) {

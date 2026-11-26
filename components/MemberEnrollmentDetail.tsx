@@ -2,6 +2,9 @@
 
 import { useEffect, useState } from "react";
 import { ACTIONS, ENROLLMENT_PRODUCTS, PAYMENT_METHODS, STATUSES, type EnrollmentProduct } from "@/lib/enrollment";
+import type { ShareDebtContract } from "@/lib/shareDebt";
+import LoanContracts from "@/components/LoanContracts";
+import LoanCollateralCalculator from "@/components/LoanCollateralCalculator";
 
 // รายคน — everything about one member's insurance and cremation memberships:
 // what they hold today (the yearly file with what was recorded since), every
@@ -63,7 +66,14 @@ interface Detail {
   current: Holdings | null;
   since: string;
   snapshot: { label: string; asOf: string | null } | null;
-  shares: { label: string; asOf: string; shares: number | null; debt: number | null; sharePeriods: number | null } | null;
+  shares: {
+    label: string;
+    asOf: string;
+    shares: number | null;
+    debt: number | null;
+    sharePeriods: number | null;
+    contracts: ShareDebtContract[] | null;
+  } | null;
   enrollments: EnrollmentRow[];
 }
 
@@ -164,6 +174,7 @@ export default function MemberEnrollmentDetail({ memberNumber }: { memberNumber:
 }
 
 function DetailCard({ d }: { d: Detail }) {
+  const [loanOpen, setLoanOpen] = useState(false);
   const h = d.current ?? d.coverage;
   const sinceTime = new Date(d.since).getTime();
   // The latest record of each product, to say where a holding came from.
@@ -181,6 +192,13 @@ function DetailCard({ d }: { d: Detail }) {
   return (
     <div className="space-y-4">
       <section className="bg-white rounded-lg shadow p-4">
+        <button
+          type="button"
+          onClick={() => setLoanOpen((v) => !v)}
+          className="float-right px-3 py-1.5 text-sm rounded bg-emerald-600 text-white hover:bg-emerald-700"
+        >
+          {loanOpen ? "ปิดคำนวณก่อนกู้" : "คำนวณก่อนกู้"}
+        </button>
         <h3 className="text-lg font-semibold">
           <span className="num">{d.memberNumber}</span> {d.name ?? "—"}
           {!d.inRoster && <span className="ml-2 text-xs text-amber-700 font-normal">ไม่พบในทะเบียนสมาชิก</span>}
@@ -202,6 +220,13 @@ function DetailCard({ d }: { d: Detail }) {
             </p>
           )
         )}
+        {d.shares?.contracts && (
+          <div className="mt-3">
+            <p className="text-sm font-medium mb-1">หนี้รายสัญญา</p>
+            <LoanContracts contracts={d.shares.contracts} total={d.shares.debt} />
+          </div>
+        )}
+        {loanOpen && <LoanCollateralCalculator memberNumber={d.memberNumber} />}
       </section>
 
       <section className="bg-white rounded-lg shadow p-4 space-y-2">

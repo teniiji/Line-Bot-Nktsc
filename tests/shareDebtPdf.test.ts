@@ -24,9 +24,15 @@ const member = (page: number, x: number, no: string, name: string, f: { periods?
   at(page, x - 1, 1010.1, "9.00", 30),
 ];
 
-const grandTotal = (page: number, f: { members: string; inDebt: string; shares: string; total: string }) => [
+const grandTotal = (
+  page: number,
+  f: { members: string; inDebt: string; shares: string; total: string; emergency?: string; ordinary?: string; special?: string }
+) => [
   { page, x: 564.6, y: 30, width: 34, text: "รวมทั\u001cงหมด" },
   at(page, 564.5, 340.3, f.shares, 60),
+  at(page, 564.5, 506.8, f.emergency ?? "0.00", 60),
+  at(page, 564.5, 675.5, f.ordinary ?? "0.00", 60),
+  at(page, 564.5, 859.3, f.special ?? "0.00", 60),
   at(page, 563.8, 931.4, f.total, 60),
   { page, x: 592.3, y: 40, width: 70, text: "จํานวนสมาชิกทีเป็นหนี\u001c" },
   at(page, 592.2, 187.3, f.inDebt, 20),
@@ -44,10 +50,13 @@ describe("parseShareDebtPdf", () => {
       // Continued on the next page without totals: ignored.
       ...member(2, 186, "00016261", "", {}),
       ...member(2, 211, "00031230", "นายกฤษณะ เวียงสิมมา", { total: "3,200.00", resigned: true }),
-      ...grandTotal(2, { members: "3", inDebt: "2", shares: "683,960.00", total: "222,200.00" }),
+      ...grandTotal(2, { members: "3", inDebt: "2", shares: "683,960.00", total: "222,200.00", emergency: "400.00" }),
     ];
     const r = parseShareDebtPdf(items);
-    expect(r.entries).toEqual([
+    // Each member line carries 100.00 in the emergency balance column; the
+    // page-2 repeat adds its own to 16261's.
+    expect(r.entries.map((e) => e.contracts?.length)).toEqual([1, 2, 1]);
+    expect(r.entries.map(({ contracts: _c, ...e }) => e)).toEqual([
       { memberNumber: "15885", memberName: "นายลิขิต ลำไธสง", shares: 531200, debt: 219000, sharePeriods: 429 },
       { memberNumber: "16261", memberName: "ว่าที่ร้อยตรีหญิงภุมรินทร์ อินกกผึ้ง", shares: 152760, debt: 0, sharePeriods: 0 },
       { memberNumber: "31230", memberName: "นายกฤษณะ เวียงสิมมา", shares: null, debt: 3200, sharePeriods: null },
@@ -59,6 +68,9 @@ describe("parseShareDebtPdf", () => {
       ["สมาชิกที่เป็นหนี้", 2, 2],
       ["ทุนเรือนหุ้น", 683960, 683960],
       ["หนี้รวม", 222200, 222200],
+      ["เงินกู้ฉุกเฉินคงเหลือ (รายสัญญา)", 400, 400],
+      ["เงินกู้สามัญคงเหลือ (รายสัญญา)", 0, 0],
+      ["เงินกู้พิเศษคงเหลือ (รายสัญญา)", 0, 0],
     ]);
   });
 
@@ -91,12 +103,79 @@ describe("cleanShareEntries", () => {
       ])
     ).toEqual({
       entries: [
-        { memberNumber: "15885", memberName: "ก", shares: 1.23, debt: 2, sharePeriods: 3 },
-        { memberNumber: "31230", memberName: null, shares: null, debt: 3200, sharePeriods: null },
+        { memberNumber: "15885", memberName: "ก", shares: 1.23, debt: 2, sharePeriods: 3, contracts: null },
+        { memberNumber: "31230", memberName: null, shares: null, debt: 3200, sharePeriods: null, contracts: null },
       ],
     });
     expect(cleanShareEntries([])).toHaveProperty("error");
     expect(cleanShareEntries([{ memberNumber: "x" }])).toHaveProperty("error");
     expect(cleanShareEntries([{ memberNumber: "15885", debt: "1e9" }])).toHaveProperty("error");
+  });
+});
+
+describe("contracts in the printed report", () => {
+  // Page numbers in the cipher font: page 1 of 2 is "% / +".
+  const header = (page: number, shown: string) => ({ page, x: 53, y: 964, width: 56, text: `หน้าที\u0016 : ${shown}` });
+  const fig = (page: number, x: number, end: number, text: string, width = 40) => at(page, x, end, text, width);
+  const contract = (page: number, x: number, start: number, text: string) => ({ page, x, y: start, width: 45, text });
+
+  it("reads each contract, decodes its number from the page numbers, and joins a member split over pages", () => {
+    const items = [
+      header(1, "% / +"),
+      header(2, "+ / +"),
+      ...member(1, 186, "00028124", "นางสุภาพร ศรีสุระ", { periods: "149", shares: "566,880.00", total: "4,191,281.75" }).filter(
+        (i) => !(Math.abs(i.y + i.width - 506.8) < 1)
+      ),
+      fig(1, 186, 355.5, "39", 9),
+      contract(1, 186, 365.5, "AT6602872"),
+      fig(1, 186, 452.8, "13,000", 25),
+      fig(1, 186, 506.8, "1,420,073.00", 49),
+      fig(1, 186, 523.1, "26", 9),
+      contract(1, 186, 533.8, "สป+%+"),
+      fig(1, 186, 620.1, "17,200", 25),
+      fig(1, 186, 675.5, "2,333,514.75", 49),
+      // the next line: one more contract
+      fig(1, 210.7, 523.1, "10", 9),
+      contract(1, 210.7, 534.1, "สด%+"),
+      fig(1, 210.7, 620.1, "8,000", 25),
+      fig(1, 210.7, 675.5, "437,694.00", 42),
+      // a unit total below it ends the member's lines
+      { page: 1, x: 235, y: 20, width: 40, text: "รวมหน่วย" },
+      fig(1, 235, 506.8, "9,999,999.00", 49),
+      // printed again on page 2 with the rest
+      at(2, 186.3, 90.1, "00028124", 42.22),
+      fig(2, 186, 859.3, "100.00", 30),
+      contract(2, 186, 703.8, "พอ+"),
+    ];
+    const r = parseShareDebtPdf(items);
+    expect(r.entries).toHaveLength(1);
+    expect(r.entries[0].contracts).toEqual([
+      { type: "emergency", contractNo: "AT6602872", installment: 39, payment: 13000, balance: 1420073 },
+      { type: "ordinary", contractNo: "สป212", installment: 26, payment: 17200, balance: 2333514.75 },
+      { type: "ordinary", contractNo: "สด12", installment: 10, payment: 8000, balance: 437694 },
+      { type: "special", contractNo: "พอ2", installment: null, payment: null, balance: 100 },
+    ]);
+  });
+});
+
+describe("cleanShareEntries with contracts", () => {
+  it("keeps valid contracts and refuses malformed ones", () => {
+    const ok = cleanShareEntries([
+      { memberNumber: "15885", debt: 219000, contracts: [{ type: "ordinary", contractNo: "สป601341", installment: 109, payment: 9000, balance: 219000 }] },
+    ]);
+    expect(ok).toEqual({
+      entries: [
+        {
+          memberNumber: "15885",
+          memberName: null,
+          shares: null,
+          debt: 219000,
+          sharePeriods: null,
+          contracts: [{ type: "ordinary", contractNo: "สป601341", installment: 109, payment: 9000, balance: 219000 }],
+        },
+      ],
+    });
+    expect(cleanShareEntries([{ memberNumber: "15885", contracts: [{ type: "car", balance: 1 }] }])).toHaveProperty("error");
+    expect(cleanShareEntries([{ memberNumber: "15885", contracts: [{ type: "ordinary" }] }])).toHaveProperty("error");
   });
 });
