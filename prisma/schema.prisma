@@ -1259,6 +1259,12 @@ model CoverageEnrollment {
   department         String?
   recordedBy         String?
   note               String?
+  // The deduction month (MMYY) staff put this change into the รายการหัก for,
+  // so the next month's list shows only what is still outstanding.
+  deductionPeriod    String?
+  deductionMarkedAt  DateTime?
+  // When the life premium was collected (by loan deduction or by the member).
+  premiumPaidAt      DateTime?
   createdAt          DateTime  @default(now())
   updatedAt          DateTime  @updatedAt
 
