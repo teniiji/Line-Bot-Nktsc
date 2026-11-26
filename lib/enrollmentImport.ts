@@ -17,6 +17,12 @@ import type { EnrollmentProduct } from "./enrollment";
 
 export class ApplicantSheetError extends Error {}
 
+export const YEARLY_FILE =
+  "ไฟล์นี้เป็นไฟล์ปี (รายชื่อทั้งสหกรณ์ มีคอลัมน์สมาคม หุ้น หนี้) ไม่ใช่รายชื่อผู้สมัคร — นำเข้าที่แท็บ ประกันและหลักประกัน → นำเข้าไฟล์ปี";
+
+// More than this many new applicants in one list is not a round's intake.
+export const UNUSUALLY_MANY = 200;
+
 export interface ApplicantRow {
   rowNumber: number;
   memberNumber: string;
@@ -64,6 +70,13 @@ export function parseApplicantSheet(pages: unknown[][][]): { rows: ApplicantRow[
       // "เลขสมาชิก สอ." — never the association's own number (เลขฌาปนกิจ).
       const member = header.findIndex((c) => c.startsWith("เลขสมาชิก") || c.startsWith("เลขที่สมาชิก") || c === "ทะเบียนสมาชิก");
       if (member < 0) continue;
+      // The yearly coverage file (everyone in the cooperative, a column per
+      // association, shares and debt) is not a list of applicants: read as
+      // one, it would record thousands of members as having just applied.
+      const yearly =
+        header.some((c) => ["สสอค.", "สส.ชสอ.", "สส.สท.", "สส.สก."].map(norm).includes(c)) ||
+        (header.some((c) => c === norm("หนี้รวม")) && header.some((c) => c === norm("หุ้น")));
+      if (yearly) throw new ApplicantSheetError(YEARLY_FILE);
       const fullName = findCol(header, ["ชื่อ-นามสกุล", "ชื่อ-สกุล", "ชื่อสกุล"], true);
       const title = findCol(header, ["คำนำหน้า"]);
       const first = findCol(header, ["ชื่อ"], true);
