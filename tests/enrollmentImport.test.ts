@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   ApplicantSheetError,
   SKIP,
+  YEARLY_FILE,
   parseApplicantSheet,
   planApplicants,
   roundDate,
@@ -117,5 +118,16 @@ describe("planApplicants", () => {
       { ...ctx, product: "life" }
     );
     expect(life[0]).toMatchObject({ action: "skip", reason: SKIP.noLife });
+  });
+});
+
+describe("parseApplicantSheet on the yearly file", () => {
+  it("refuses it, pointing to the yearly import", () => {
+    const yearly = [
+      ["สรุป"],
+      ["เลขสมาชิก", "ชื่อ-สกุล", "หน่วยงาน", "หุ้น", "หนี้รวม", "ทุนประกัน", "เบี้ยประกัน", "สสอค.", "สส.ชสอ.", "สส.สท.", "สส.สก."],
+      [753, "นายกมล ราชบัณฑิต", "หน่วย", 1000, 0, 0, 0, null, null, null, null],
+    ];
+    expect(() => parseApplicantSheet([[["สมาชิกทั้งสหกรณ์"]], yearly])).toThrow(YEARLY_FILE);
   });
 });

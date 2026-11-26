@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { DEPARTMENTS } from "@/lib/departments";
 import { ENROLLMENT_PRODUCTS, PAYMENT_METHODS, type EnrollmentProduct } from "@/lib/enrollment";
-import type { PlannedRow } from "@/lib/enrollmentImport";
+import { UNUSUALLY_MANY, type PlannedRow } from "@/lib/enrollmentImport";
 
 // นำเข้ารายชื่อผู้สมัคร — a round's list of applicants from an association
 // or the insurer, recorded in one go (lib/enrollmentImport.ts). Staff see the
@@ -142,6 +142,12 @@ export default function ApplicantImport({ onDone, onError }: { onDone: (msg: str
               </>
             )}
           </p>
+          {plan.create > UNUSUALLY_MANY && (
+            <p className="text-red-700 bg-red-50 rounded px-3 py-2">
+              ⚠️ จะบันทึกถึง {plan.create.toLocaleString("th-TH")} ราย ซึ่งมากผิดปกติสำหรับผู้สมัครรอบเดียว — ตรวจว่าไฟล์นี้เป็นรายชื่อผู้สมัครรอบใหม่จริง
+              ไม่ใช่รายชื่อสมาชิกทั้งหมด ถ้าไม่ใช่ อย่ากดบันทึก
+            </p>
+          )}
           <label className="flex items-center gap-2 text-xs text-slate-600">
             <input type="checkbox" checked={showSkipped} onChange={(e) => setShowSkipped(e.target.checked)} />
             แสดงรายการที่ข้ามด้วย
