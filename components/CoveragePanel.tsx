@@ -686,7 +686,14 @@ export default function CoveragePanel() {
               <option value="age">เรียง: อายุมากสุดก่อน</option>
               <option value="member">เรียง: เลขสมาชิก</option>
             </select>
-            <button type="button" onClick={exportCsv} className="ml-auto px-3 py-1.5 text-sm rounded border border-slate-300 hover:bg-slate-50">
+            <a
+              href={`/api/coverage/shortfall?${params()}`}
+              title="ไฟล์ Excel พร้อมพิมพ์: ที่ เลขสมาชิก ชื่อ-สกุล หน่วยงาน อายุ หนี้ หลักประกันไม่พอ — ตามตัวกรองที่เลือก เฉพาะคนที่หลักประกันไม่พอ"
+              className="ml-auto px-3 py-1.5 text-sm rounded border border-red-300 text-red-700 hover:bg-red-50"
+            >
+              รายชื่อหลักประกันไม่พอ (Excel)
+            </a>
+            <button type="button" onClick={exportCsv} className="px-3 py-1.5 text-sm rounded border border-slate-300 hover:bg-slate-50">
               ส่งออก CSV
             </button>
           </div>
