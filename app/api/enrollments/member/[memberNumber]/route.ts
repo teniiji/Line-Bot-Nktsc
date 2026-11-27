@@ -90,7 +90,7 @@ export async function GET(_request: NextRequest, { params }: { params: { memberN
   const shareEntry = report
     ? await prisma.shareDebtEntry.findUnique({
         where: { reportId_memberNumber: { reportId: report.id, memberNumber } },
-        select: { shares: true, debt: true, sharePeriods: true, contracts: true, memberName: true },
+        select: { shares: true, debt: true, sharePeriods: true, contracts: true, memberName: true, resigned: true },
       })
     : null;
 
@@ -115,6 +115,8 @@ export async function GET(_request: NextRequest, { params }: { params: { memberN
           sharePeriods: shareEntry.sharePeriods,
           // Each loan contract, when the report was the printed PDF.
           contracts: Array.isArray(shareEntry.contracts) ? shareEntry.contracts : null,
+          // The report prints the member as having left.
+          resigned: shareEntry.resigned,
         }
       : null,
     enrollments,

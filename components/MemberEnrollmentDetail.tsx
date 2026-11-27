@@ -74,6 +74,7 @@ interface Detail {
     debt: number | null;
     sharePeriods: number | null;
     contracts: ShareDebtContract[] | null;
+    resigned?: boolean;
   } | null;
   enrollments: EnrollmentRow[];
   ssc: { label: string; benefit: number; member: { assocNumber: string | null; lastPeriod: string | null; monthly: number | null } | null } | null;
@@ -204,6 +205,11 @@ function DetailCard({ d }: { d: Detail }) {
         <h3 className="text-lg font-semibold">
           <span className="num">{d.memberNumber}</span> {d.name ?? "—"}
           {!d.inRoster && <span className="ml-2 text-xs text-amber-700 font-normal">ไม่พบในทะเบียนสมาชิก</span>}
+          {d.shares?.resigned && (
+            <span className="ml-2 text-xs rounded bg-red-100 text-red-700 px-1.5 py-0.5 font-normal">
+              ลาออกแล้ว (ตามรายงาน {d.shares.label})
+            </span>
+          )}
         </h3>
         <p className="text-sm text-slate-600">
           {d.unitName ?? "—"}

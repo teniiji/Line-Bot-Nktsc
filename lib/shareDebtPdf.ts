@@ -262,6 +262,7 @@ export function parseShareDebtPdf(items: PdfTextItem[]): ShareDebtPdf {
       debt: r.total ?? 0,
       sharePeriods: r.periods == null ? null : Math.trunc(r.periods),
       contracts: r.contracts,
+      resigned: r.resigned,
     };
   });
 
