@@ -22,6 +22,9 @@ export interface CoverageRates {
   benefitSsk: number;
   welfarePerPeriod: number;
   welfareCap: number;
+  // สสค.'s benefit, from its latest member list (lib/sscRoster.ts); 0 when
+  // none has been imported.
+  benefitSsc?: number;
 }
 
 export const DEFAULT_RATES: CoverageRates = {
@@ -63,6 +66,8 @@ export interface CoverageInput {
   fileShares?: number;
   fileDebt?: number | null;
   notInShareReport?: boolean;
+  // A member in their own right of สสค., from its member list.
+  hasSsc?: boolean;
 }
 
 export interface Collateral {
@@ -87,7 +92,8 @@ export function computeCollateral(m: CoverageInput, rates: CoverageRates = DEFAU
     (m.hasSok ? rates.benefitSok : 0) +
     (m.hasScs ? rates.benefitScs : 0) +
     (m.hasSst ? rates.benefitSst : 0) +
-    (m.hasSsk ? rates.benefitSsk : 0);
+    (m.hasSsk ? rates.benefitSsk : 0) +
+    (m.hasSsc ? (rates.benefitSsc ?? 0) : 0);
   const rawWelfare = Math.max(0, m.sharePeriods ?? 0) * rates.welfarePerPeriod;
   const welfare = Math.min(rawWelfare, rates.welfareCap);
   const shares = m.shares || 0;
@@ -102,7 +108,7 @@ export function computeCollateral(m: CoverageInput, rates: CoverageRates = DEFAU
     total,
     debt,
     margin: round2(total - debt),
-    associations: [m.hasSok, m.hasScs, m.hasSst, m.hasSsk].filter(Boolean).length,
+    associations: [m.hasSok, m.hasScs, m.hasSst, m.hasSsk, m.hasSsc].filter(Boolean).length,
   };
 }
 

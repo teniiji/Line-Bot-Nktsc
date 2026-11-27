@@ -1313,3 +1313,35 @@ model ShareDebtEntry {
 
   @@unique([reportId, memberNumber])
 }
+
+// สสค.'s member list (lib/sscRoster.ts): only the members' own current
+// memberships are kept. The coverage tab and คำนวณก่อนกู้ count the latest.
+model AssociationRoster {
+  id          String   @id @default(cuid())
+  association String   @default("ssc")
+  label       String
+  // The death benefit counted as collateral.
+  benefit     Int
+  asOf        DateTime?
+  fileName    String?
+  // What the file held besides: { rows, left, relatives, noMemberNumber, notMember, notPaying }.
+  counts      Json?
+  memberCount Int      @default(0)
+  createdAt   DateTime @default(now())
+  members     AssociationRosterMember[]
+
+  @@index([association, createdAt])
+}
+
+model AssociationRosterMember {
+  id           String  @id @default(cuid())
+  rosterId     String
+  memberNumber String
+  assocNumber  String?
+  name         String?
+  lastPeriod   String?
+  monthly      Int?
+  roster       AssociationRoster @relation(fields: [rosterId], references: [id], onDelete: Cascade)
+
+  @@unique([rosterId, memberNumber])
+}

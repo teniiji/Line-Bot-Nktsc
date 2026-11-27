@@ -33,6 +33,7 @@ interface Holdings {
   hasScs: boolean;
   hasSst: boolean;
   hasSsk: boolean;
+  hasSsc?: boolean;
   undeducted: string | null;
   changes?: { product: string; action: string; status: string }[];
 }
@@ -76,6 +77,7 @@ function holdingsOf(d: Detail): MemberHoldings | null {
     hasScs: !!h?.hasScs,
     hasSst: !!h?.hasSst,
     hasSsk: !!h?.hasSsk,
+    hasSsc: !!h?.hasSsc,
     undeducted: h?.undeducted ?? null,
     pending: (h?.changes ?? []).filter((c) => c.action === "enroll" && c.status === "pending").map((c) => c.product),
   };
