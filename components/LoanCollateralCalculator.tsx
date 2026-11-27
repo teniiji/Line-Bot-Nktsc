@@ -144,11 +144,22 @@ export default function LoanCollateralCalculator({ memberNumber }: { memberNumbe
     return () => clearTimeout(t);
   }, [query, selected]);
 
+  // One member at a time: the previous member's figures go as soon as
+  // another is chosen, and a slow answer for an earlier choice is dropped
+  // rather than shown under the new one.
   useEffect(() => {
-    if (!selected) return setDetail(null);
+    setDetail(null);
+    if (!selected) return;
+    let current = true;
     fetch(`/api/enrollments/member/${encodeURIComponent(selected)}`)
       .then((r) => (r.ok ? r.json() : null))
-      .then(setDetail);
+      .then((d) => {
+        if (current) setDetail(d);
+      })
+      .catch(() => {});
+    return () => {
+      current = false;
+    };
   }, [selected]);
 
   const open = (n: string) => {
@@ -278,7 +289,12 @@ export default function LoanCollateralCalculator({ memberNumber }: { memberNumbe
           <span className="block text-slate-600 mb-1">สมาชิก</span>
           <input
             value={query}
-            onChange={(e) => setQuery(e.target.value)}
+            onChange={(e) => {
+              setQuery(e.target.value);
+              // Typing another member takes the last one off the screen, so
+              // its figures are never read as the new one's.
+              if (selected && e.target.value.trim().replace(/^0+/, "") !== selected) setSelected(null);
+            }}
             onKeyDown={(e) => {
               if (e.key === "Enter" && /^\d+$/.test(query.trim())) open(query.trim().replace(/^0+/, ""));
             }}
