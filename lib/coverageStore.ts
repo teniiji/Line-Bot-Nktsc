@@ -1,5 +1,16 @@
 import { prisma } from "./prisma";
-import { withCollateral, type CoverageInput, type CoverageRates, type CoverageRow } from "./coverage";
+import {
+  filterCoverage,
+  parseFilters,
+  sortCoverage,
+  withCollateral,
+  type CoverageInput,
+  type CoverageRates,
+  type CoverageRow,
+  type CoverageSort,
+} from "./coverage";
+
+export const COVERAGE_SORTS: CoverageSort[] = ["margin", "debt", "insured", "age", "member"];
 import { applyEnrollments } from "./coverageEnrollments";
 import { applyShareReport } from "./shareDebt";
 
@@ -157,4 +168,29 @@ export async function loadCoverageRows(
     },
   });
   return (await withShares(applyEnrollments(inputs, events, since))).map((m) => withCollateral(m, rates));
+}
+
+// A round's rows as the coverage list shows them, filtered and sorted by the
+// same query string: the list, its export and the shortfall file all read
+// the same members.
+export async function queryCoverage(searchParams: URLSearchParams) {
+  const snapshot = await currentSnapshot(searchParams.get("snapshot"));
+  if (!snapshot) return null;
+  // shares=0 shows the file's own shares and debt.
+  const shareReport = await shareReportFor(snapshot);
+  const applyShares = !!shareReport && searchParams.get("shares") !== "0";
+  const ssc = await latestSscRoster();
+  const rows = await loadCoverageRows(
+    snapshot.id,
+    ratesWithSsc(snapshot, ssc),
+    searchParams.get("enrollments") === "0" ? null : enrollmentsSince(snapshot),
+    applyShares ? shareReport.id : null,
+    ssc?.members ?? null
+  );
+  const filtered = filterCoverage(rows, parseFilters(searchParams));
+  const sortParam = searchParams.get("sort") as CoverageSort | null;
+  const sorted = sortCoverage(filtered, sortParam && COVERAGE_SORTS.includes(sortParam) ? sortParam : "margin");
+  // The date the shares and debt are as of.
+  const figuresAsOf = applyShares ? shareReport.asOf : (snapshot.asOf ?? snapshot.createdAt);
+  return { snapshot, rows, sorted, figuresAsOf };
 }
