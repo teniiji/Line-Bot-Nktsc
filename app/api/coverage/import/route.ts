@@ -51,9 +51,17 @@ export async function POST(request: NextRequest) {
     (typeof labelInput === "string" && labelInput.trim()) || checked.file.name.replace(/\.xlsx?$/i, "");
 
   const snapshot = await prisma.$transaction(async (tx) => {
+    // A new round keeps the amounts the last one was set to (each
+    // association's benefit, the welfare rate and cap), not the defaults.
+    const previous = await tx.coverageSnapshot.findFirst({
+      where: { isCurrent: true },
+      orderBy: { createdAt: "desc" },
+      select: { benefitSok: true, benefitScs: true, benefitSst: true, benefitSsk: true, welfarePerPeriod: true, welfareCap: true },
+    });
     await tx.coverageSnapshot.updateMany({ where: { isCurrent: true }, data: { isCurrent: false } });
     return tx.coverageSnapshot.create({
       data: {
+        ...(previous ?? {}),
         label,
         asOf: parseDate(form.get("asOf")),
         ageAsOf: parseDate(form.get("ageAsOf")),

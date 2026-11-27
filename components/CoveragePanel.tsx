@@ -6,6 +6,7 @@ import MultiSelect from "@/components/MultiSelect";
 import ConfirmDialog from "@/components/ConfirmDialog";
 import ShareDebtReports from "@/components/ShareDebtReports";
 import LoanCollateralCalculator from "@/components/LoanCollateralCalculator";
+import CoverageRates from "@/components/CoverageRates";
 import SscRosters from "@/components/SscRosters";
 import CoverageReconcile from "@/components/CoverageReconcile";
 import { ACTIONS, ENROLLMENT_PRODUCTS, STATUSES, type EnrollmentProduct } from "@/lib/enrollment";
@@ -210,6 +211,8 @@ export default function CoveragePanel() {
   const [sharesOpen, setSharesOpen] = useState(false);
   const [loanOpen, setLoanOpen] = useState(false);
   const [sscOpen, setSscOpen] = useState(false);
+  const [ratesOpen, setRatesOpen] = useState(false);
+  const [ssc, setSsc] = useState<{ id: string; label: string; benefit: number } | null>(null);
 
   // Which round is shown: null is the current one.
   const [snapshots, setSnapshots] = useState<SnapshotListItem[]>([]);
@@ -259,6 +262,7 @@ export default function CoveragePanel() {
     const res = await fetch(`/api/coverage/summary?${q}`);
     const body = await res.json();
     setSnapshot(body.snapshot);
+    setSsc(body.ssc ?? null);
     setSummary(body.summary);
     setShareReport(body.shareReport ?? null);
     setShareReportApplied(!!body.shareReportApplied);
@@ -434,6 +438,14 @@ export default function CoveragePanel() {
             </button>
             <button
               type="button"
+              onClick={() => setRatesOpen((v) => !v)}
+              disabled={!snapshot}
+              className="px-3 py-1.5 text-sm rounded border border-blue-300 text-blue-700 hover:bg-blue-50 disabled:opacity-50"
+            >
+              ยอดเงินสงเคราะห์
+            </button>
+            <button
+              type="button"
               onClick={() => setSscOpen((v) => !v)}
               className="px-3 py-1.5 text-sm rounded border border-blue-300 text-blue-700 hover:bg-blue-50"
             >
@@ -457,6 +469,18 @@ export default function CoveragePanel() {
         </div>
 
         {loanOpen && <LoanCollateralCalculator />}
+        {ratesOpen && snapshot && (
+          <CoverageRates
+            key={`${snapshot.id}:${ssc?.id ?? ""}`}
+            snapshot={snapshot}
+            ssc={ssc}
+            onSaved={() => {
+              fetchSummary();
+              fetchList();
+              fetchSnapshots();
+            }}
+          />
+        )}
         {sscOpen && (
           <SscRosters
             onChange={() => {
