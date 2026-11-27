@@ -34,6 +34,24 @@ export function ratesOf(s: CoverageRates): CoverageRates {
   };
 }
 
+// The latest สสค. member list: who belongs in their own right, and the
+// benefit it pays.
+export async function latestSscRoster() {
+  const roster = await prisma.associationRoster.findFirst({
+    where: { association: "ssc" },
+    orderBy: { createdAt: "desc" },
+    select: { id: true, label: true, benefit: true, asOf: true, memberCount: true, createdAt: true },
+  });
+  if (!roster) return null;
+  const members = await prisma.associationRosterMember.findMany({ where: { rosterId: roster.id }, select: { memberNumber: true } });
+  return { ...roster, members: new Set(members.map((m) => m.memberNumber)) };
+}
+
+// The round's rates with สสค.'s benefit added.
+export function ratesWithSsc(s: CoverageRates, ssc: { benefit: number } | null): CoverageRates {
+  return { ...ratesOf(s), benefitSsc: ssc?.benefit ?? 0 };
+}
+
 // The share-and-debt report to lay over a round: the latest one, as long as
 // it is not older than the round's own figures.
 export async function shareReportFor(s: { asOf: Date | null }) {
@@ -69,7 +87,8 @@ export async function loadCoverageRows(
   snapshotId: string,
   rates: CoverageRates,
   since: Date | null = null,
-  shareReportId: string | null = null
+  shareReportId: string | null = null,
+  sscMembers: Set<string> | null = null
 ): Promise<CoverageRow[]> {
   const members = await prisma.memberCoverage.findMany({ where: { snapshotId } });
 
@@ -115,8 +134,11 @@ export async function loadCoverageRows(
     );
   });
 
-  const withShares = async (rows: CoverageInput[]) =>
-    shareReportId ? applyShareReport(rows, await shareEntries(shareReportId)) : rows;
+  const withShares = async (rows: CoverageInput[]) => {
+    const out: CoverageInput[] = shareReportId ? applyShareReport(rows, await shareEntries(shareReportId)) : rows;
+    if (sscMembers) for (const m of out) m.hasSsc = sscMembers.has(m.memberNumber);
+    return out;
+  };
 
   if (!since) return (await withShares(inputs)).map((m) => withCollateral(m, rates));
   const events = await prisma.coverageEnrollment.findMany({

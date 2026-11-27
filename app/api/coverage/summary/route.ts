@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { summarize } from "@/lib/coverage";
-import { currentSnapshot, enrollmentsSince, loadCoverageRows, ratesOf, shareReportFor } from "@/lib/coverageStore";
+import { currentSnapshot, enrollmentsSince, latestSscRoster, loadCoverageRows, ratesWithSsc, shareReportFor } from "@/lib/coverageStore";
 
 export const dynamic = "force-dynamic";
 
@@ -14,11 +14,19 @@ export async function GET(request: NextRequest) {
   // shares=0 shows the file's own shares and debt.
   const shareReport = await shareReportFor(snapshot);
   const applyShares = !!shareReport && searchParams.get("shares") !== "0";
+  const ssc = await latestSscRoster();
   const rows = await loadCoverageRows(
     snapshot.id,
-    ratesOf(snapshot),
+    ratesWithSsc(snapshot, ssc),
     searchParams.get("enrollments") === "0" ? null : enrollmentsSince(snapshot),
-    applyShares ? shareReport.id : null
+    applyShares ? shareReport.id : null,
+    ssc?.members ?? null
   );
-  return NextResponse.json({ snapshot, shareReport, shareReportApplied: applyShares, summary: summarize(rows) });
+  return NextResponse.json({
+    snapshot: { ...snapshot, benefitSsc: ssc?.benefit ?? 0 },
+    shareReport,
+    shareReportApplied: applyShares,
+    ssc: ssc ? { label: ssc.label, benefit: ssc.benefit, memberCount: ssc.memberCount, createdAt: ssc.createdAt } : null,
+    summary: summarize(rows),
+  });
 }

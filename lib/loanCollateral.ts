@@ -37,6 +37,8 @@ export interface MemberHoldings {
   hasScs: boolean;
   hasSst: boolean;
   hasSsk: boolean;
+  // สสค., from its member list.
+  hasSsc?: boolean;
   undeducted: string | null;
   // Products held only through an application still waiting for approval.
   pending: string[];
@@ -74,11 +76,12 @@ export interface LoanAssessment {
   warnings: string[];
 }
 
-const ASSOC: { key: AssocKey; product: string; label: string; rate: keyof CoverageRates }[] = [
+const ASSOC: { key: AssocKey | "hasSsc"; product: string; label: string; rate: keyof CoverageRates }[] = [
   { key: "hasSok", product: "sok", label: "ฌาปนกิจ สสอค.", rate: "benefitSok" },
   { key: "hasScs", product: "scs", label: "ฌาปนกิจ สส.ชสอ.", rate: "benefitScs" },
   { key: "hasSst", product: "sst", label: "ฌาปนกิจ สส.สท.", rate: "benefitSst" },
   { key: "hasSsk", product: "ssk", label: "ฌาปนกิจ สส.สก.", rate: "benefitSsk" },
+  { key: "hasSsc", product: "ssc", label: "ฌาปนกิจ สสค.", rate: "benefitSsc" },
 ];
 
 const round2 = (x: number) => Math.round(x * 100) / 100;
@@ -111,8 +114,8 @@ export function assessLoan(
     if (!m[a.key]) continue;
     const reasons: string[] = [];
     if (m.pending.includes(a.product)) reasons.push("ใบสมัครยังรออนุมัติ");
-    if (undeducted.associations.includes(a.key)) reasons.push("หักค่าบำรุงไม่ได้");
-    items.push({ key: a.product, label: a.label, amount: rates[a.rate], sure: reasons.length === 0, note: reasons.join(" · ") || null });
+    if (a.key !== "hasSsc" && undeducted.associations.includes(a.key)) reasons.push("หักค่าบำรุงไม่ได้");
+    items.push({ key: a.product, label: a.label, amount: rates[a.rate] ?? 0, sure: reasons.length === 0, note: reasons.join(" · ") || null });
   }
 
   const rawWelfare = Math.max(0, m.sharePeriods ?? 0) * rates.welfarePerPeriod;

@@ -49,6 +49,7 @@ interface Holdings {
   hasScs: boolean;
   hasSst: boolean;
   hasSsk: boolean;
+  hasSsc?: boolean;
   relativeCount: number;
   relativeFees: number;
   undeducted: string | null;
@@ -75,6 +76,7 @@ interface Detail {
     contracts: ShareDebtContract[] | null;
   } | null;
   enrollments: EnrollmentRow[];
+  ssc: { label: string; benefit: number; member: { assocNumber: string | null; lastPeriod: string | null; monthly: number | null } | null } | null;
 }
 
 const input = "border border-slate-300 rounded px-2 py-1.5 text-sm bg-white";
@@ -265,6 +267,13 @@ function DetailCard({ d }: { d: Detail }) {
                   <td className="text-xs text-slate-500 text-right">{source(product, !!d.coverage?.[key])}</td>
                 </tr>
               ))}
+              <tr className="border-t border-slate-100">
+                <td className="py-1.5">สสค.</td>
+                <td>{h.hasSsc ? "✅ เป็นสมาชิก" : <span className="text-slate-400">— ไม่ได้เป็นสมาชิก</span>}</td>
+                <td className="text-xs text-slate-500 text-right">
+                  {d.ssc ? (d.ssc.member ? `รายชื่อ ${d.ssc.label}${d.ssc.member.lastPeriod ? ` · ส่งถึงงวด ${d.ssc.member.lastPeriod}` : ""}` : `ไม่อยู่ในรายชื่อ ${d.ssc.label}`) : "ยังไม่ได้นำเข้ารายชื่อ สสค."}
+                </td>
+              </tr>
               <tr className="border-t border-slate-100">
                 <td className="py-1.5">{ENROLLMENT_PRODUCTS.relative}</td>
                 <td>

@@ -6,6 +6,7 @@ import MultiSelect from "@/components/MultiSelect";
 import ConfirmDialog from "@/components/ConfirmDialog";
 import ShareDebtReports from "@/components/ShareDebtReports";
 import LoanCollateralCalculator from "@/components/LoanCollateralCalculator";
+import SscRosters from "@/components/SscRosters";
 import CoverageReconcile from "@/components/CoverageReconcile";
 import { ACTIONS, ENROLLMENT_PRODUCTS, STATUSES, type EnrollmentProduct } from "@/lib/enrollment";
 import {
@@ -30,6 +31,8 @@ interface Snapshot {
   benefitScs: number;
   benefitSst: number;
   benefitSsk: number;
+  // สสค., from its member list (0 when none imported).
+  benefitSsc?: number;
   welfarePerPeriod: number;
   welfareCap: number;
   createdAt: string;
@@ -96,13 +99,13 @@ function downloadCsv(rows: CoverageRow[], label: string) {
   const head = [
     "เลขสมาชิก", "ชื่อ-สกุล", "หน่วยงาน", "อายุ", "งวดหุ้น", "หุ้น", "หนี้รวม", "ทุนประกัน",
     "ฌาปนกิจ (เจ้าตัว)", "สวัสดิการสหกรณ์", "หลักประกันรวม", "หลักประกันเหลือ",
-    "สสอค", "สส.ชสอ", "สส.สท", "สส.สก", "ประกัน (หักจากปันผล)", "รายการที่หักไม่ได้",
+    "สสอค", "สส.ชสอ", "สส.สท", "สส.สก", "สสค", "ประกัน (หักจากปันผล)", "รายการที่หักไม่ได้",
   ];
   const lines = rows.map((r) =>
     [
       r.memberNumber, r.memberName, r.unitName, r.age, r.sharePeriods, r.shares, r.debt, r.insuredSum,
       r.cremation, r.welfare, r.total, r.margin,
-      r.hasSok ? "✓" : "", r.hasScs ? "✓" : "", r.hasSst ? "✓" : "", r.hasSsk ? "✓" : "",
+      r.hasSok ? "✓" : "", r.hasScs ? "✓" : "", r.hasSst ? "✓" : "", r.hasSsk ? "✓" : "", r.hasSsc ? "✓" : "",
       r.premiumDeducted == null ? "" : r.premiumDeducted ? "หักได้" : "หักไม่ได้", r.undeducted,
     ].map(csvCell).join(",")
   );
@@ -133,6 +136,7 @@ function Breakdown({ r, s }: { r: CoverageRow; s: Snapshot }) {
         {r.hasScs && line("ฌาปนกิจ สส.ชสอ.", s.benefitScs)}
         {r.hasSst && line("ฌาปนกิจ สส.สท.", s.benefitSst)}
         {r.hasSsk && line("ฌาปนกิจ สส.สก.", s.benefitSsk)}
+        {r.hasSsc && line("ฌาปนกิจ สสค.", s.benefitSsc ?? 0)}
         {line(
           "สวัสดิการสหกรณ์",
           r.welfare,
@@ -204,6 +208,7 @@ export default function CoveragePanel() {
   const [shareReportApplied, setShareReportApplied] = useState(false);
   const [sharesOpen, setSharesOpen] = useState(false);
   const [loanOpen, setLoanOpen] = useState(false);
+  const [sscOpen, setSscOpen] = useState(false);
 
   // Which round is shown: null is the current one.
   const [snapshots, setSnapshots] = useState<SnapshotListItem[]>([]);
@@ -350,7 +355,7 @@ export default function CoveragePanel() {
               <p>
                 หลักประกันรวม = หุ้น + ทุนประกันชีวิต + เงินสงเคราะห์ฌาปนกิจเฉพาะสมาคมที่เจ้าตัวเป็นสมาชิก
                 {snapshot &&
-                  ` (สสอค ${baht(snapshot.benefitSok)} / สส.ชสอ ${baht(snapshot.benefitScs)} / สส.สท ${baht(snapshot.benefitSst)} / สส.สก ${baht(snapshot.benefitSsk)})`}{" "}
+                  ` (สสอค ${baht(snapshot.benefitSok)} / สส.ชสอ ${baht(snapshot.benefitScs)} / สส.สท ${baht(snapshot.benefitSst)} / สส.สก ${baht(snapshot.benefitSsk)}${snapshot.benefitSsc ? ` / สสค ${baht(snapshot.benefitSsc)}` : ""})`}{" "}
                 + สวัสดิการสหกรณ์ (งวดหุ้น × {baht(snapshot?.welfarePerPeriod ?? 2500)} ไม่เกิน{" "}
                 {baht(snapshot?.welfareCap ?? 600000)}) ฌาปนกิจของญาติไม่นับ
               </p>
@@ -421,6 +426,13 @@ export default function CoveragePanel() {
             </button>
             <button
               type="button"
+              onClick={() => setSscOpen((v) => !v)}
+              className="px-3 py-1.5 text-sm rounded border border-blue-300 text-blue-700 hover:bg-blue-50"
+            >
+              รายชื่อ สสค.
+            </button>
+            <button
+              type="button"
               onClick={() => setSharesOpen((v) => !v)}
               className="px-3 py-1.5 text-sm rounded border border-blue-300 text-blue-700 hover:bg-blue-50"
             >
@@ -437,6 +449,14 @@ export default function CoveragePanel() {
         </div>
 
         {loanOpen && <LoanCollateralCalculator />}
+        {sscOpen && (
+          <SscRosters
+            onChange={() => {
+              fetchSummary();
+              fetchList();
+            }}
+          />
+        )}
         {sharesOpen && (
           <ShareDebtReports
             onChange={() => {
@@ -775,6 +795,9 @@ export default function CoveragePanel() {
                                       {a.label}
                                     </span>
                                   )
+                                )}
+                                {r.hasSsc && (
+                                  <span className="inline-block text-xs rounded px-1.5 py-0.5 mr-1 bg-rose-100 text-rose-800">สสค</span>
                                 )}
                                 {u.relatives > 0 && (
                                   <span className="block text-xs text-red-600">ค่าบำรุงญาติหักไม่ได้ {u.relatives} ราย</span>

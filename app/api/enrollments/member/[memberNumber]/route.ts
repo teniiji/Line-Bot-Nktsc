@@ -54,12 +54,36 @@ export async function GET(_request: NextRequest, { params }: { params: { memberN
         undeducted: coverage.undeducted,
       }
     : null;
-  const current =
+  // สสค. comes from its own member list, not the yearly file.
+  const sscRoster = await prisma.associationRoster.findFirst({
+    where: { association: "ssc" },
+    orderBy: { createdAt: "desc" },
+    select: { id: true, label: true, benefit: true },
+  });
+  const sscMember = sscRoster
+    ? await prisma.associationRosterMember.findUnique({
+        where: { rosterId_memberNumber: { rosterId: sscRoster.id, memberNumber } },
+        select: { assocNumber: true, lastPeriod: true, monthly: true },
+      })
+    : null;
+  if (fileRow) fileRow.hasSsc = !!sscMember;
+  const currentRow =
     applyEnrollments(
       fileRow ? [fileRow] : [],
       enrollments.map((e) => ({ ...e, applicationDate: e.applicationDate })),
       since
     )[0] ?? null;
+  // A member of สสค. only, with nothing in the yearly file, still holds it.
+  const current = currentRow
+    ? { ...currentRow, hasSsc: !!sscMember }
+    : sscMember
+      ? {
+          memberNumber, memberName: null, unitName: null, gender: null, age: null, sharePeriods: null, shares: 0,
+          debt: null, insuredSum: 0, premium: 0, premiumDeducted: null, hasSok: false, hasScs: false, hasSst: false,
+          hasSsk: false, relativeCount: 0, relativeFees: 0, debtStatus: null, undeducted: null, hasSsc: true,
+          changes: [], notInFile: true,
+        }
+      : null;
 
   // The latest month's shares and debt, when a report has been imported.
   const report = await shareReportFor({ asOf: snapshot?.asOf ?? null });
@@ -80,7 +104,8 @@ export async function GET(_request: NextRequest, { params }: { params: { memberN
     since,
     snapshot: snapshot ? { label: snapshot.label, asOf: snapshot.asOf } : null,
     // The round's amounts per association and welfare rate, for คำนวณก่อนกู้.
-    rates: snapshot ? ratesOf(snapshot) : DEFAULT_RATES,
+    rates: { ...(snapshot ? ratesOf(snapshot) : DEFAULT_RATES), benefitSsc: sscRoster?.benefit ?? 0 },
+    ssc: sscRoster ? { label: sscRoster.label, benefit: sscRoster.benefit, member: sscMember } : null,
     shares: shareEntry
       ? {
           label: report!.label,
