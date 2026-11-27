@@ -100,7 +100,14 @@ export default function SscRosters({ onChange }: { onChange: () => void }) {
         </label>
         <label>
           <span className="block text-slate-600 mb-1">เงินสงเคราะห์ (นับเป็นหลักประกัน)</span>
-          <input name="benefit" inputMode="numeric" defaultValue="270000" required className={`${input} w-32`} />
+          <input
+            key={rosters[0]?.id ?? "none"}
+            name="benefit"
+            inputMode="numeric"
+            defaultValue={String(rosters[0]?.benefit ?? 270000)}
+            required
+            className={`${input} w-32`}
+          />
         </label>
         <label>
           <span className="block text-slate-600 mb-1">ข้อมูล ณ วันที่</span>

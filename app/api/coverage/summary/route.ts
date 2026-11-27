@@ -16,7 +16,7 @@ export async function GET(request: NextRequest) {
     snapshot: { ...snapshot, benefitSsc: ssc?.benefit ?? 0 },
     shareReport,
     shareReportApplied: applyShares,
-    ssc: ssc ? { label: ssc.label, benefit: ssc.benefit, memberCount: ssc.memberCount, createdAt: ssc.createdAt } : null,
+    ssc: ssc ? { id: ssc.id, label: ssc.label, benefit: ssc.benefit, memberCount: ssc.memberCount, createdAt: ssc.createdAt } : null,
     // Members left out because the report says they have left.
     resigned,
     summary: summarize(rows),
