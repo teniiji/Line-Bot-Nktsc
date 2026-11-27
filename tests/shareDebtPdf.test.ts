@@ -57,9 +57,9 @@ describe("parseShareDebtPdf", () => {
     // page-2 repeat adds its own to 16261's.
     expect(r.entries.map((e) => e.contracts?.length)).toEqual([1, 2, 1]);
     expect(r.entries.map(({ contracts: _c, ...e }) => e)).toEqual([
-      { memberNumber: "15885", memberName: "นายลิขิต ลำไธสง", shares: 531200, debt: 219000, sharePeriods: 429 },
-      { memberNumber: "16261", memberName: "ว่าที่ร้อยตรีหญิงภุมรินทร์ อินกกผึ้ง", shares: 152760, debt: 0, sharePeriods: 0 },
-      { memberNumber: "31230", memberName: "นายกฤษณะ เวียงสิมมา", shares: null, debt: 3200, sharePeriods: null },
+      { memberNumber: "15885", memberName: "นายลิขิต ลำไธสง", shares: 531200, debt: 219000, sharePeriods: 429, resigned: false },
+      { memberNumber: "16261", memberName: "ว่าที่ร้อยตรีหญิงภุมรินทร์ อินกกผึ้ง", shares: 152760, debt: 0, sharePeriods: 0, resigned: false },
+      { memberNumber: "31230", memberName: "นายกฤษณะ เวียงสิมมา", shares: null, debt: 3200, sharePeriods: null, resigned: true },
     ]);
     expect(r.resigned).toBe(1);
     expect(r.ok).toBe(true);
@@ -99,12 +99,12 @@ describe("cleanShareEntries", () => {
       cleanShareEntries([
         { memberNumber: "00015885", memberName: "ก", shares: 1.234, debt: 2, sharePeriods: 3.7 },
         { memberNumber: "15885", shares: 9, debt: 9, sharePeriods: 9 },
-        { memberNumber: "31230", shares: null, debt: 3200, sharePeriods: null },
+        { memberNumber: "31230", shares: null, debt: 3200, sharePeriods: null, resigned: true },
       ])
     ).toEqual({
       entries: [
-        { memberNumber: "15885", memberName: "ก", shares: 1.23, debt: 2, sharePeriods: 3, contracts: null },
-        { memberNumber: "31230", memberName: null, shares: null, debt: 3200, sharePeriods: null, contracts: null },
+        { memberNumber: "15885", memberName: "ก", shares: 1.23, debt: 2, sharePeriods: 3, contracts: null, resigned: false },
+        { memberNumber: "31230", memberName: null, shares: null, debt: 3200, sharePeriods: null, contracts: null, resigned: true },
       ],
     });
     expect(cleanShareEntries([])).toHaveProperty("error");
@@ -172,6 +172,7 @@ describe("cleanShareEntries with contracts", () => {
           debt: 219000,
           sharePeriods: null,
           contracts: [{ type: "ordinary", contractNo: "สป601341", installment: 109, payment: 9000, balance: 219000 }],
+          resigned: false,
         },
       ],
     });

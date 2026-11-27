@@ -171,7 +171,7 @@ export default function ShareDebtReports({ onChange }: { onChange: () => void })
               {result.checks ? (
                 <p className="text-xs mt-1">
                   อ่านจาก PDF: หุ้นจากช่องทุนเรือนหุ้น · หนี้จากช่องรวม · งวดหุ้นจากช่องหุ้น/เดือน
-                  {!!result.resigned && ` · ลาออก ${result.resigned} ราย`} · ใครไม่มียอดหุ้นหรืองวดหุ้นในรายงาน ใช้ตามไฟล์ปี
+                  {!!result.resigned && ` · ลาออก ${result.resigned} ราย (ไม่นับในแท็บประกันและหลักประกัน)`} · ใครไม่มียอดหุ้นหรืองวดหุ้นในรายงาน ใช้ตามไฟล์ปี
                 </p>
               ) : (
               <p className="text-xs mt-1">

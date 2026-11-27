@@ -41,6 +41,9 @@ export interface ShareDebtEntry {
   sharePeriods: number | null;
   // Only the printed PDF report lists them.
   contracts?: ShareDebtContract[] | null;
+  // The report marks the member as having left (ลาออกวันที่ …). Only the
+  // printed PDF says so.
+  resigned?: boolean;
 }
 
 export interface ShareDebtSheet {
@@ -251,6 +254,7 @@ export function cleanShareEntries(raw: unknown): { entries: ShareDebtEntry[] } |
       shares: shares == null ? null : round2(shares),
       debt: debt == null ? null : round2(debt),
       sharePeriods: periods == null ? null : Math.trunc(periods),
+      resigned: e.resigned === true,
     });
   }
   return { entries: [...out.values()] };

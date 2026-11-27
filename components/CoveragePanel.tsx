@@ -206,6 +206,7 @@ export default function CoveragePanel() {
   const [useShareReport, setUseShareReport] = useState(true);
   const [shareReport, setShareReport] = useState<ShareReportInfo | null>(null);
   const [shareReportApplied, setShareReportApplied] = useState(false);
+  const [resigned, setResigned] = useState<{ count: number; label: string } | null>(null);
   const [sharesOpen, setSharesOpen] = useState(false);
   const [loanOpen, setLoanOpen] = useState(false);
   const [sscOpen, setSscOpen] = useState(false);
@@ -261,6 +262,7 @@ export default function CoveragePanel() {
     setSummary(body.summary);
     setShareReport(body.shareReport ?? null);
     setShareReportApplied(!!body.shareReportApplied);
+    setResigned(body.resigned ?? null);
   }, [viewId, withEnrollments, useShareReport]);
 
   const fetchSnapshots = useCallback(async () => {
@@ -375,6 +377,12 @@ export default function CoveragePanel() {
                   thaiDate(snapshot.asOf)
                 )}{" "}
                 · อายุ ณ {thaiDate(snapshot.ageAsOf)} · นำเข้า {thaiDate(snapshot.createdAt)}
+                {resigned && resigned.count > 0 && (
+                  <span className="text-amber-700">
+                    {" "}
+                    · ไม่รวมสมาชิกที่ลาออก {resigned.count.toLocaleString("th-TH")} คน (ตามรายงาน &quot;{resigned.label}&quot;)
+                  </span>
+                )}
               </p>
             )}
             {snapshots.length > 0 && snapshot && (

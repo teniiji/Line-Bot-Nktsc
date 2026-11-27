@@ -1309,6 +1309,8 @@ model ShareDebtEntry {
   // The member's loan contracts, when the report lists them (the printed PDF):
   // [{ type, contractNo, installment, payment, balance }] — lib/shareDebt.ts.
   contracts    Json?
+  // Printed "ลาออกวันที่ …" in the report: left out of the coverage tab.
+  resigned     Boolean  @default(false)
   report       ShareDebtReport @relation(fields: [reportId], references: [id], onDelete: Cascade)
 
   @@unique([reportId, memberNumber])

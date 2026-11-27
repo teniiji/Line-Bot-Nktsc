@@ -170,27 +170,61 @@ export async function loadCoverageRows(
   return (await withShares(applyEnrollments(inputs, events, since))).map((m) => withCollateral(m, rates));
 }
 
-// A round's rows as the coverage list shows them, filtered and sorted by the
-// same query string: the list, its export and the shortfall file all read
-// the same members.
-export async function queryCoverage(searchParams: URLSearchParams) {
-  const snapshot = await currentSnapshot(searchParams.get("snapshot"));
-  if (!snapshot) return null;
-  // shares=0 shows the file's own shares and debt.
+// Members the share-and-debt report prints as having left (ลาออกวันที่ …).
+export async function resignedMembers(reportId: string): Promise<Set<string>> {
+  const rows = await prisma.shareDebtEntry.findMany({ where: { reportId, resigned: true }, select: { memberNumber: true } });
+  return new Set(rows.map((r) => r.memberNumber));
+}
+
+// Leave out the members who have left: their debt is settled on leaving, not
+// carried as a shortfall.
+export function dropResigned<T extends { memberNumber: string }>(rows: T[], resigned: Set<string> | null) {
+  if (!resigned?.size) return { rows, dropped: [] as T[] };
+  const kept: T[] = [];
+  const dropped: T[] = [];
+  for (const r of rows) (resigned.has(r.memberNumber) ? dropped : kept).push(r);
+  return { rows: kept, dropped };
+}
+
+// A round with everything laid over it, as every view of the coverage tab
+// sees it: the latest share-and-debt report (unless shares=0), the
+// applications since the file (unless enrollments=0), สสค., and without the
+// members the report says have left — whether or not its figures are used.
+export async function loadRound(
+  snapshot: NonNullable<Awaited<ReturnType<typeof currentSnapshot>>>,
+  searchParams: URLSearchParams
+) {
   const shareReport = await shareReportFor(snapshot);
   const applyShares = !!shareReport && searchParams.get("shares") !== "0";
   const ssc = await latestSscRoster();
-  const rows = await loadCoverageRows(
+  const all = await loadCoverageRows(
     snapshot.id,
     ratesWithSsc(snapshot, ssc),
     searchParams.get("enrollments") === "0" ? null : enrollmentsSince(snapshot),
     applyShares ? shareReport.id : null,
     ssc?.members ?? null
   );
+  const { rows, dropped } = dropResigned(all, shareReport ? await resignedMembers(shareReport.id) : null);
+  return {
+    shareReport,
+    applyShares,
+    ssc,
+    rows,
+    resigned: shareReport ? { count: dropped.length, label: shareReport.label } : null,
+  };
+}
+
+// A round's rows as the coverage list shows them, filtered and sorted by the
+// same query string: the list, its export and the shortfall file all read
+// the same members.
+export async function queryCoverage(searchParams: URLSearchParams) {
+  const snapshot = await currentSnapshot(searchParams.get("snapshot"));
+  if (!snapshot) return null;
+  const { shareReport, applyShares, rows } = await loadRound(snapshot, searchParams);
   const filtered = filterCoverage(rows, parseFilters(searchParams));
   const sortParam = searchParams.get("sort") as CoverageSort | null;
   const sorted = sortCoverage(filtered, sortParam && COVERAGE_SORTS.includes(sortParam) ? sortParam : "margin");
   // The date the shares and debt are as of.
-  const figuresAsOf = applyShares ? shareReport.asOf : (snapshot.asOf ?? snapshot.createdAt);
+  const figuresAsOf = applyShares && shareReport ? shareReport.asOf : (snapshot.asOf ?? snapshot.createdAt);
   return { snapshot, rows, sorted, figuresAsOf };
 }

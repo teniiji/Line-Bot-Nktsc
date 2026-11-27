@@ -52,6 +52,7 @@ interface Detail {
     debt: number | null;
     sharePeriods: number | null;
     contracts: ShareDebtContract[] | null;
+    resigned?: boolean;
   } | null;
   rates: CoverageRates;
 }
@@ -369,6 +370,12 @@ export default function LoanCollateralCalculator({ memberNumber }: { memberNumbe
       {notice && <p className="text-xs text-emerald-700">{notice}</p>}
 
       {detail && !holdings && <p className="text-amber-700">ไม่พบข้อมูลหุ้นหนี้หรือประกันของ {detail.memberNumber} — นำเข้าไฟล์ปีหรือรายงานหุ้นหนี้ก่อน</p>}
+
+      {detail?.shares?.resigned && (
+        <p className="rounded bg-red-50 text-red-700 p-2">
+          สมาชิก {detail.memberNumber} ลาออกแล้วตามรายงาน {detail.shares.label} — ไม่อยู่ในรายชื่อแท็บประกันและหลักประกัน
+        </p>
+      )}
 
       {detail && result && (
         <div className="space-y-3">
